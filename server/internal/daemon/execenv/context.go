@@ -1005,6 +1005,27 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 		fmt.Fprintf(&b, "> %s\n\n", ctx.HandoffNote)
 	}
 
+	// Previous agent's checkpoint: machine-readable state left by the last
+	// agent to work on this issue. Use this to resume work instead of
+	// re-reading the full comment history from scratch.
+	hasPrevState := ctx.WorkingBranch != "" || ctx.AgentStatus != "" || len(ctx.HandoffSummary) > 0
+	if hasPrevState {
+		b.WriteString("## Previous Agent State\n\n")
+		b.WriteString("The previous agent recorded the following checkpoint before this handoff:\n\n")
+		if ctx.WorkingBranch != "" {
+			fmt.Fprintf(&b, "- **Working branch:** `%s` — run `git fetch && git checkout %s` before continuing.\n", ctx.WorkingBranch, ctx.WorkingBranch)
+		}
+		if ctx.AgentStatus != "" {
+			fmt.Fprintf(&b, "- **Progress stage:** `%s`\n", ctx.AgentStatus)
+		}
+		if len(ctx.HandoffSummary) > 0 {
+			b.WriteString("- **Checkpoint summary:**\n\n```json\n")
+			b.Write(ctx.HandoffSummary)
+			b.WriteString("\n```\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Quick Start\n\n")
 	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
 

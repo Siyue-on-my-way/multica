@@ -103,6 +103,22 @@ func buildPromptBody(task Task, provider string) string {
 		b.WriteString("You were handed this issue with a handoff note. Treat it as the assigner's scoping instruction for this run; follow it before doing anything broader, and do not reply to it as if it were a comment:\n\n")
 		fmt.Fprintf(&b, "> %s\n\n", task.HandoffNote)
 	}
+	// Previous agent checkpoint: if the prior agent recorded its state via
+	// `multica issue update --working-branch / --agent-status / --handoff-summary`,
+	// resume from there rather than re-reading the full comment history.
+	if task.WorkingBranch != "" || task.AgentStatus != "" || len(task.HandoffSummary) > 0 {
+		b.WriteString("The previous agent left a checkpoint. Resume from it:\n\n")
+		if task.WorkingBranch != "" {
+			fmt.Fprintf(&b, "- Working branch: `%s` — run `git fetch && git checkout %s` first.\n", task.WorkingBranch, task.WorkingBranch)
+		}
+		if task.AgentStatus != "" {
+			fmt.Fprintf(&b, "- Progress stage: `%s`\n", task.AgentStatus)
+		}
+		if len(task.HandoffSummary) > 0 {
+			fmt.Fprintf(&b, "- Checkpoint: %s\n", string(task.HandoffSummary))
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list %s --roots-only --summary --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. Your runtime workflow file documents the rest of the read surface, including pagination and `--since` for incremental polling.\n", task.IssueID)
 	return b.String()

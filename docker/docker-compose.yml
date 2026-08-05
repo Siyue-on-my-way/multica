@@ -1,0 +1,66 @@
+name: multica
+
+services:
+  multica-postgres:
+    image: pgvector/pgvector:pg17
+    env_file:
+      - ./.env
+    volumes:
+      - ./volumes/pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  multica-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ./volumes/redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  multica-backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      multica-postgres:
+        condition: service_healthy
+      multica-redis:
+        condition: service_healthy
+    volumes:
+      - ./volumes/backend_uploads:/app/data/uploads
+    env_file:
+      - ./.env
+    restart: unless-stopped
+
+  multica-frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+    depends_on:
+      - multica-backend
+    env_file:
+      - ./.env
+    restart: unless-stopped
+
+  multica-nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "0.0.0.0:${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - multica-frontend
+      - multica-backend
+    restart: unless-stopped

@@ -361,6 +361,13 @@ type AgentTaskResponse struct {
 	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
+	// Handoff state written by the previous agent via `multica issue update`.
+	// Populated at claim time from the issue row so the new agent can resume
+	// without re-reading the full comment history. omitempty so old daemons
+	// and non-handoff runs produce no extra wire bytes.
+	WorkingBranch  string          `json:"working_branch,omitempty"`   // git branch the previous agent was on
+	AgentStatus    string          `json:"agent_status,omitempty"`     // machine-readable progress stage (e.g. "coding")
+	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`  // structured JSON checkpoint
 	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
 	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under

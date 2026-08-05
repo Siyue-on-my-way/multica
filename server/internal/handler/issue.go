@@ -49,8 +49,11 @@ type IssueResponse struct {
 	// Stage groups sub-issues under the same parent into ordered barrier
 	// groups (null = unstaged). See issue_child_done.go for how a closed
 	// stage gates the child-done -> parent wake.
-	Stage     *int32  `json:"stage"`
-	StartDate *string `json:"start_date"`
+	Stage          *int32          `json:"stage"`
+	WorkingBranch  *string         `json:"working_branch"`
+	AgentStatus    *string         `json:"agent_status"`
+	HandoffSummary json.RawMessage `json:"handoff_summary"`
+	StartDate      *string         `json:"start_date"`
 	DueDate   *string `json:"due_date"`
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
@@ -2385,8 +2388,11 @@ type CreateIssueRequest struct {
 	AssigneeID    *string  `json:"assignee_id"`
 	ParentIssueID *string  `json:"parent_issue_id"`
 	ProjectID     *string  `json:"project_id"`
-	Stage         *int32   `json:"stage,omitempty"`
-	StartDate     *string  `json:"start_date"`
+	Stage          *int32          `json:"stage,omitempty"`
+	WorkingBranch  *string         `json:"working_branch,omitempty"`
+	AgentStatus    *string         `json:"agent_status,omitempty"`
+	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`
+	StartDate      *string         `json:"start_date"`
 	DueDate       *string  `json:"due_date"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	// LabelIDs are issue-scoped labels to attach to the new issue in the same
@@ -2618,6 +2624,9 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		OriginType:     originType,
 		OriginID:       originID,
 		Stage:          ptrToInt4(req.Stage),
+		WorkingBranch:  ptrToText(req.WorkingBranch),
+		AgentStatus:    ptrToText(req.AgentStatus),
+		HandoffSummary: req.HandoffSummary,
 		AttachmentIDs:  attachmentIDs,
 		LabelIDs:       labelIDs,
 		AllowDuplicate: req.AllowDuplicate,
@@ -2680,18 +2689,21 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateIssueRequest struct {
-	Title         *string  `json:"title"`
-	Description   *string  `json:"description"`
-	Status        *string  `json:"status"`
-	Priority      *string  `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	Position      *float64 `json:"position"`
-	StartDate     *string  `json:"start_date"`
-	DueDate       *string  `json:"due_date"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
-	Stage         *int32   `json:"stage"`
+	Title          *string  `json:"title"`
+	Description    *string  `json:"description"`
+	Status         *string  `json:"status"`
+	Priority       *string  `json:"priority"`
+	AssigneeType   *string  `json:"assignee_type"`
+	AssigneeID     *string  `json:"assignee_id"`
+	Position       *float64 `json:"position"`
+	StartDate      *string  `json:"start_date"`
+	DueDate        *string  `json:"due_date"`
+	ParentIssueID  *string  `json:"parent_issue_id"`
+	ProjectID      *string  `json:"project_id"`
+	Stage          *int32   `json:"stage"`
+	WorkingBranch  *string          `json:"working_branch"`
+	AgentStatus    *string          `json:"agent_status"`
+	HandoffSummary json.RawMessage  `json:"handoff_summary"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -2738,14 +2750,17 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
-		ID:            prevIssue.ID,
-		AssigneeType:  prevIssue.AssigneeType,
-		AssigneeID:    prevIssue.AssigneeID,
-		StartDate:     prevIssue.StartDate,
-		DueDate:       prevIssue.DueDate,
-		ParentIssueID: prevIssue.ParentIssueID,
-		ProjectID:     prevIssue.ProjectID,
-		Stage:         prevIssue.Stage,
+		ID:             prevIssue.ID,
+		AssigneeType:   prevIssue.AssigneeType,
+		AssigneeID:     prevIssue.AssigneeID,
+		StartDate:      prevIssue.StartDate,
+		DueDate:        prevIssue.DueDate,
+		ParentIssueID:  prevIssue.ParentIssueID,
+		ProjectID:      prevIssue.ProjectID,
+		Stage:          prevIssue.Stage,
+		WorkingBranch:  prevIssue.WorkingBranch,
+		AgentStatus:    prevIssue.AgentStatus,
+		HandoffSummary: prevIssue.HandoffSummary,
 	}
 
 	// COALESCE fields — only set when explicitly provided
@@ -3298,14 +3313,17 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		params := db.UpdateIssueParams{
-			ID:            prevIssue.ID,
-			AssigneeType:  prevIssue.AssigneeType,
-			AssigneeID:    prevIssue.AssigneeID,
-			StartDate:     prevIssue.StartDate,
-			DueDate:       prevIssue.DueDate,
-			ParentIssueID: prevIssue.ParentIssueID,
-			ProjectID:     prevIssue.ProjectID,
-			Stage:         prevIssue.Stage,
+			ID:             prevIssue.ID,
+			AssigneeType:   prevIssue.AssigneeType,
+			AssigneeID:     prevIssue.AssigneeID,
+			StartDate:      prevIssue.StartDate,
+			DueDate:        prevIssue.DueDate,
+			ParentIssueID:  prevIssue.ParentIssueID,
+			ProjectID:      prevIssue.ProjectID,
+			Stage:          prevIssue.Stage,
+			WorkingBranch:  prevIssue.WorkingBranch,
+			AgentStatus:    prevIssue.AgentStatus,
+			HandoffSummary: prevIssue.HandoffSummary,
 		}
 
 		if req.Updates.Title != nil {
@@ -3422,6 +3440,27 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				params.Stage = pgtype.Int4{Int32: *req.Updates.Stage, Valid: true}
 			} else {
 				params.Stage = pgtype.Int4{Valid: false} // explicit null = unstage
+			}
+		}
+		if _, ok := rawUpdates["working_branch"]; ok {
+			if req.Updates.WorkingBranch != nil {
+				params.WorkingBranch = pgtype.Text{String: *req.Updates.WorkingBranch, Valid: true}
+			} else {
+				params.WorkingBranch = pgtype.Text{Valid: false}
+			}
+		}
+		if _, ok := rawUpdates["agent_status"]; ok {
+			if req.Updates.AgentStatus != nil {
+				params.AgentStatus = pgtype.Text{String: *req.Updates.AgentStatus, Valid: true}
+			} else {
+				params.AgentStatus = pgtype.Text{Valid: false}
+			}
+		}
+		if _, ok := rawUpdates["handoff_summary"]; ok {
+			if req.Updates.HandoffSummary != nil {
+				params.HandoffSummary = req.Updates.HandoffSummary
+			} else {
+				params.HandoffSummary = nil
 			}
 		}
 

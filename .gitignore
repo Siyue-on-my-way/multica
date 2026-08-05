@@ -74,3 +74,6 @@ data/
 .kilo
 .idea
 .gstack/
+
+# docker volumes (runtime data, never commit)
+docker/volumes/

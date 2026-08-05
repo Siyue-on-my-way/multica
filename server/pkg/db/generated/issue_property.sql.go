@@ -120,7 +120,7 @@ UPDATE issue
 SET properties = properties - $1::text,
     updated_at = now()
 WHERE id = $2::uuid AND workspace_id = $3::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary
 `
 
 type DeleteIssuePropertyValueParams struct {
@@ -159,6 +159,9 @@ func (q *Queries) DeleteIssuePropertyValue(ctx context.Context, arg DeleteIssueP
 		&i.Metadata,
 		&i.Stage,
 		&i.Properties,
+		&i.WorkingBranch,
+		&i.AgentStatus,
+		&i.HandoffSummary,
 	)
 	return i, err
 }
@@ -266,7 +269,7 @@ UPDATE issue
 SET properties = jsonb_set(properties, ARRAY[$1::text], $2::jsonb, true),
     updated_at = now()
 WHERE id = $3::uuid AND workspace_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary
 `
 
 type SetIssuePropertyValueParams struct {
@@ -313,6 +316,9 @@ func (q *Queries) SetIssuePropertyValue(ctx context.Context, arg SetIssuePropert
 		&i.Metadata,
 		&i.Stage,
 		&i.Properties,
+		&i.WorkingBranch,
+		&i.AgentStatus,
+		&i.HandoffSummary,
 	)
 	return i, err
 }

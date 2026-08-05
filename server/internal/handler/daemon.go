@@ -1756,6 +1756,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
+			// Inject handoff state written by the previous agent so the new
+			// agent can resume without re-reading the full comment history.
+			if issue.WorkingBranch.Valid {
+				resp.WorkingBranch = issue.WorkingBranch.String
+			}
+			if issue.AgentStatus.Valid {
+				resp.AgentStatus = issue.AgentStatus.String
+			}
+			if len(issue.HandoffSummary) > 0 {
+				resp.HandoffSummary = issue.HandoffSummary
+			}
 
 			// Squad-leader briefing injection: keyed off the task being a
 			// leader-task (is_leader_task) carrying a squad_id — NOT off the

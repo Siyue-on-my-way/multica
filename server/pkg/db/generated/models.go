@@ -649,6 +649,9 @@ type Issue struct {
 	Metadata           []byte             `json:"metadata"`
 	Stage              pgtype.Int4        `json:"stage"`
 	Properties         []byte             `json:"properties"`
+	WorkingBranch      pgtype.Text        `json:"working_branch"`
+	AgentStatus        pgtype.Text        `json:"agent_status"`
+	HandoffSummary     []byte             `json:"handoff_summary"`
 }
 
 type IssueDependency struct {

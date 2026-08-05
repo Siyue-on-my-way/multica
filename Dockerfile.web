@@ -1,6 +1,9 @@
 # --- Dependencies ---
 FROM node:22-alpine AS deps
 
+# 替换为阿里云镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
 WORKDIR /app
 
 # Copy workspace config and all package.json files for dependency resolution
@@ -14,13 +17,21 @@ COPY packages/views/package.json packages/views/
 COPY packages/tsconfig/package.json packages/tsconfig/
 COPY packages/eslint-config/package.json packages/eslint-config/
 
+# 设置 npm 淘宝镜像源
+RUN npm config set registry https://registry.npmmirror.com
+
 RUN corepack enable && \
     PNPM_VERSION="$(node -p 'require("./package.json").packageManager')" && \
     corepack prepare "$PNPM_VERSION" --activate
+# 设置 pnpm 淘宝镜像源
+RUN pnpm config set registry https://registry.npmmirror.com
 RUN pnpm install --frozen-lockfile
 
 # --- Build ---
 FROM node:22-alpine AS builder
+
+# 替换为阿里云镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 WORKDIR /app
 
@@ -39,6 +50,8 @@ COPY package.json turbo.json pnpm-workspace.yaml ./
 COPY apps/web/ apps/web/
 COPY packages/ packages/
 
+# 设置 pnpm 淘宝镜像源
+RUN pnpm config set registry https://registry.npmmirror.com
 # Re-link after source overlay (fixes any symlinks overwritten by COPY)
 RUN pnpm install --frozen-lockfile --offline
 
@@ -52,10 +65,13 @@ RUN pnpm --filter @multica/web build
 # --- Runtime ---
 FROM node:22-alpine AS runner
 
+# 替换为阿里云镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV REMOTE_API_URL=http://backend:8080
+ENV REMOTE_API_URL=http://multica-backend:8080
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs

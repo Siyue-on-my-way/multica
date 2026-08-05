@@ -106,6 +106,15 @@ type Task struct {
 	QuickCreateDueDate            string                 `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
 	HandoffNote                   string                 `json:"handoff_note,omitempty"`                     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
+	// Handoff state written by the previous agent via `multica issue update`.
+	// WorkingBranch is the git branch the previous agent was on; the new
+	// agent should git-fetch and checkout before continuing work.
+	// AgentStatus is the machine-readable progress stage (e.g. "coding").
+	// HandoffSummary is a structured JSON checkpoint (current_progress,
+	// next_steps, unresolved_issues).
+	WorkingBranch  string          `json:"working_branch,omitempty"`
+	AgentStatus    string          `json:"agent_status,omitempty"`
+	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text

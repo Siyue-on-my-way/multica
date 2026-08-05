@@ -1030,6 +1030,7 @@ type ListAgentBuilderSessionsByCreatorRow struct {
 // neither is also wrong: a session opened and abandoned untouched is not a
 // draft, and would put an empty row in front of the user on every accidental
 // entry into the flow.
+//
 // The stored draft rides along instead of needing its own fetch: the studio
 // renders this list beside the conversation it is switching between, so the
 // configuration for the row the user picks has to be in hand at click time.

@@ -503,6 +503,9 @@ func init() {
 	issueUpdateCmd.Flags().String("parent", "", "Parent issue ID (use --parent \"\" to clear)")
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
+	issueUpdateCmd.Flags().String("working-branch", "", "Git branch the agent is currently working on (e.g. feat/issue-SIY-2); pass empty string to clear")
+	issueUpdateCmd.Flags().String("agent-status", "", "Machine-readable agent progress stage (e.g. analyzing, coding, in_review); pass empty string to clear")
+	issueUpdateCmd.Flags().String("handoff-summary", "", "JSON checkpoint for the next agent (e.g. '{\"current_progress\":\"...\",\"next_steps\":[...]}'); pass empty string to clear")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue status
@@ -1344,9 +1347,33 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetFloat64("position")
 		body["position"] = v
 	}
+	if cmd.Flags().Changed("working-branch") {
+		v, _ := cmd.Flags().GetString("working-branch")
+		if v == "" {
+			body["working_branch"] = nil
+		} else {
+			body["working_branch"] = v
+		}
+	}
+	if cmd.Flags().Changed("agent-status") {
+		v, _ := cmd.Flags().GetString("agent-status")
+		if v == "" {
+			body["agent_status"] = nil
+		} else {
+			body["agent_status"] = v
+		}
+	}
+	if cmd.Flags().Changed("handoff-summary") {
+		v, _ := cmd.Flags().GetString("handoff-summary")
+		if v == "" {
+			body["handoff_summary"] = nil
+		} else {
+			body["handoff_summary"] = json.RawMessage(v)
+		}
+	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
+		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, --working-branch, --agent-status, --handoff-summary, etc.")
 	}
 
 	var result map[string]any

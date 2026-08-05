@@ -296,3 +296,65 @@ contract above: the `pull-requests` CLI and route, the PR response field list,
 notify, the stage column / `stageBarrierClosed` barrier and the `--stage` /
 `issue children` CLI, and the metadata CLI. Re-derive before depending on an
 exact line.
+
+## Checkpoint protocol (Agent Handoff)
+
+When you finish a meaningful unit of work — or when you're about to be
+re-assigned to a different runtime — record your state so the next agent can
+resume without re-reading the full comment history.
+
+### When to write a checkpoint
+
+Write a checkpoint at any of these moments:
+
+1. You complete a sub-task and are about to start a different phase
+   (e.g. finish analysis, about to start coding).
+2. You're blocked and leaving the issue for human review.
+3. You're about to end a long-running session (post final comment, then
+   checkpoint).
+
+### How to write a checkpoint
+
+Use three `multica issue update` flags together. All three are optional
+individually, but writing all available information helps the most:
+
+```bash
+multica issue update <issue-id> \
+  --working-branch "feat/issue-SIY-2" \
+  --agent-status "coding" \
+  --handoff-summary '{"current_progress":"Completed AST analysis. PR draft opened.","next_steps":["run integration tests","address review comments"],"unresolved_issues":"flaky test in auth_test.go line 42"}'
+```
+
+Field semantics:
+
+| Flag | Meaning |
+|------|---------|
+| `--working-branch` | The git branch you are working on. The next agent will `git fetch && git checkout` this before continuing. Pass `""` to clear if no branch is relevant. |
+| `--agent-status` | A short machine-readable stage label. Suggested values: `analyzing`, `coding`, `in_review`, `blocked`, `done`. Pass `""` to clear. |
+| `--handoff-summary` | A JSON object with keys: `current_progress` (string), `next_steps` (string[]), `unresolved_issues` (string). Pass `""` to clear. |
+
+### What NOT to put in the checkpoint
+
+- Secrets, tokens, or credentials.
+- Large log output or raw tool results — those belong in issue comments.
+- Speculation or guesses — only record verified facts.
+- Content that duplicates the issue description.
+
+### How the next agent reads the checkpoint
+
+The next agent automatically receives `working_branch`, `agent_status`, and
+`handoff_summary` in its `issue_context.md` and opening prompt. It will see a
+**## Previous Agent State** section and is instructed to resume from the
+checkpoint instead of starting from scratch.
+
+The next agent should:
+1. Read the checkpoint from `issue_context.md`.
+2. Run `git fetch && git checkout <working_branch>` if a branch is specified.
+3. Continue from `next_steps` without re-doing `current_progress`.
+4. Clear stale checkpoint fields once the handoff is complete:
+   ```bash
+   multica issue update <issue-id> \
+     --working-branch "" \
+     --agent-status "coding" \
+     --handoff-summary ""
+   ```

@@ -62,11 +62,14 @@ type IssueCreateParams struct {
 	CreatorID     pgtype.UUID
 	ParentIssueID pgtype.UUID
 	ProjectID     pgtype.UUID
-	StartDate     pgtype.Date
-	DueDate       pgtype.Date
-	OriginType    pgtype.Text
-	OriginID      pgtype.UUID
-	AttachmentIDs []pgtype.UUID
+	StartDate      pgtype.Date
+	DueDate        pgtype.Date
+	OriginType     pgtype.Text
+	OriginID       pgtype.UUID
+	WorkingBranch  pgtype.Text
+	AgentStatus    pgtype.Text
+	HandoffSummary []byte
+	AttachmentIDs  []pgtype.UUID
 	// LabelIDs are the issue-scoped labels to attach to the new issue. They
 	// are validated and written inside the create transaction (see Create),
 	// so the issue is never committed with a partial or wrong label set. An
@@ -271,28 +274,34 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			DueDate:       p.DueDate,
 			Number:        issueNumber,
 			ProjectID:     projectID,
-			OriginType:    p.OriginType,
-			OriginID:      p.OriginID,
-			Stage:         p.Stage,
+			OriginType:     p.OriginType,
+			OriginID:       p.OriginID,
+			Stage:          p.Stage,
+			WorkingBranch:  p.WorkingBranch,
+			AgentStatus:    p.AgentStatus,
+			HandoffSummary: p.HandoffSummary,
 		})
 	} else {
 		issue, err = qtx.CreateIssue(ctx, db.CreateIssueParams{
-			WorkspaceID:   p.WorkspaceID,
-			Title:         p.Title,
-			Description:   p.Description,
-			Status:        p.Status,
-			Priority:      p.Priority,
-			AssigneeType:  p.AssigneeType,
-			AssigneeID:    p.AssigneeID,
-			CreatorType:   p.CreatorType,
-			CreatorID:     p.CreatorID,
-			ParentIssueID: p.ParentIssueID,
-			Position:      newPosition,
-			StartDate:     p.StartDate,
-			DueDate:       p.DueDate,
-			Number:        issueNumber,
-			ProjectID:     projectID,
-			Stage:         p.Stage,
+			WorkspaceID:    p.WorkspaceID,
+			Title:          p.Title,
+			Description:    p.Description,
+			Status:         p.Status,
+			Priority:       p.Priority,
+			AssigneeType:   p.AssigneeType,
+			AssigneeID:     p.AssigneeID,
+			CreatorType:    p.CreatorType,
+			CreatorID:      p.CreatorID,
+			ParentIssueID:  p.ParentIssueID,
+			Position:       newPosition,
+			StartDate:      p.StartDate,
+			DueDate:        p.DueDate,
+			Number:         issueNumber,
+			ProjectID:      projectID,
+			Stage:          p.Stage,
+			WorkingBranch:  p.WorkingBranch,
+			AgentStatus:    p.AgentStatus,
+			HandoffSummary: p.HandoffSummary,
 		})
 	}
 	if err != nil {

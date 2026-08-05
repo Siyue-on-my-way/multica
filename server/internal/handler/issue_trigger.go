@@ -35,9 +35,20 @@ func (h *Handler) issueTriggerProbe(r *http.Request, actorType, actorID, workspa
 // WillEnqueueRun, carrying an optional handoff note into the run's opening
 // context. The squad path still flows through enqueueSquadLeaderTask so the
 // leader access gate and pending dedup stay in one place.
+//
+// When the new assignee is an agent and the LLM layer is configured,
+// compressHandoffContext is called synchronously before enqueueing: it reads the
+// issue's recent comment history, asks the LLM to produce a structured
+// HandoffSummary, and writes it back to the issue so the new task picks it up
+// at claim time. This is best-effort — any failure is logged and the enqueue
+// proceeds regardless.
 func (h *Handler) dispatchIssueRun(ctx context.Context, issue db.Issue, trigger service.IssueRunTrigger, actorType, actorID, handoffNote string) {
 	switch trigger.AssigneeType {
 	case "agent":
+		// Compress comment history into a structured HandoffSummary so the new
+		// agent can resume without re-reading the full timeline. No-op when the
+		// LLM is not configured or the issue already has a summary.
+		h.compressHandoffContext(ctx, issue)
 		// The member who performed this assign/promote is the accountable human
 		// for the run (MUL-4302 §4). An agent actor is not a human, so only a
 		// member actor is threaded; otherwise attribution falls back to the chain.

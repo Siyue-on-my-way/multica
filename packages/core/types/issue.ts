@@ -62,6 +62,13 @@ export interface Issue {
   // Custom property values keyed by property definition id. Always present
   // in responses (empty object when unset), mirroring `metadata`.
   properties: IssuePropertyValues;
+  // Agent handoff state. Written by the active agent via
+  // `multica issue update --working-branch / --agent-status / --handoff-summary`.
+  // All three are optional (null/absent when no checkpoint has been written).
+  working_branch?: string | null;
+  agent_status?: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handoff_summary?: Record<string, any> | null;
   reactions?: IssueReaction[];
   labels?: Label[];
   created_at: string;
