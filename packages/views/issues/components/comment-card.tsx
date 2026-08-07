@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -48,20 +48,34 @@ const highlightedCommentBackgroundClass =
 const stickyHeaderFadeClass =
   "after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-1 after:bg-[inherit] after:[mask-image:linear-gradient(to_bottom,#000,transparent)] after:[-webkit-mask-image:linear-gradient(to_bottom,#000,transparent)]";
 
+// 用户提问：浅红色背景 (混合 10% 的红色)
+const userCommentBgClass = "bg-[color-mix(in_srgb,var(--card)_90%,#ef4444_10%)]";
+
+// 辅助函数，根据 actor_type 获取对应的背景色
+function getActorBgClass(actorType: string | undefined) {
+  if (actorType === "member") return userCommentBgClass;
+  // Agent 回答恢复默认底色 (bg-card)
+  return "bg-card";
+}
+
 function StickyHeaderShell({
   className,
   sticky = true,
   highlighted,
+  actorType,
   children,
 }: {
   className?: string;
   sticky?: boolean;
   highlighted?: boolean;
+  actorType?: string;
   children: ReactNode;
 }) {
+  const baseBgClass = getActorBgClass(actorType);
+
   if (!sticky) {
     return (
-      <div className={cn(highlighted && highlightedCommentBackgroundClass, className)}>
+      <div className={cn(baseBgClass, highlighted && highlightedCommentBackgroundClass, className)}>
         {children}
       </div>
     );
@@ -72,7 +86,7 @@ function StickyHeaderShell({
       className={cn(
         "sticky top-0 z-10 transition-colors duration-700",
         !highlighted && stickyHeaderFadeClass,
-        highlighted ? highlightedCommentBackgroundClass : "bg-card",
+        highlighted ? highlightedCommentBackgroundClass : baseBgClass,
         className,
       )}
     >
@@ -270,6 +284,7 @@ function TaskCommentRetryButton({
 }) {
   const { t } = useT("issues");
   const [retrying, setRetrying] = useState(false);
+  const [freshRetrying, setFreshRetrying] = useState(false);
 
   const handleRetry = async () => {
     if (retrying) return;
@@ -291,14 +306,32 @@ function TaskCommentRetryButton({
     }
   };
 
+  const handleFreshSessionRetry = async () => {
+    if (freshRetrying) return;
+    setFreshRetrying(true);
+    try {
+      await api.rerunIssue(issueId, taskId, true);
+    } catch (e) {
+      toast.error(
+        dispatchReasonCode(e) === "invocation_not_allowed"
+          ? t(($) => $.execution_log.retry_blocked)
+          : e instanceof Error
+            ? e.message
+            : t(($) => $.execution_log.fresh_session_retry_failed),
+      );
+    } finally {
+      setFreshRetrying(false);
+    }
+  };
+
   return (
-    <div className={cn("flex", className)}>
+    <div className={cn("flex gap-2", className)}>
       <Button
         type="button"
         size="sm"
         variant="outline"
         onClick={handleRetry}
-        disabled={retrying}
+        disabled={retrying || freshRetrying}
         aria-label={t(($) => $.execution_log.retry_task_aria)}
       >
         {retrying ? (
@@ -307,6 +340,21 @@ function TaskCommentRetryButton({
           <RotateCcw className="h-3.5 w-3.5" />
         )}
         {t(($) => $.execution_log.retry_task_tooltip)}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={handleFreshSessionRetry}
+        disabled={retrying || freshRetrying}
+        aria-label={t(($) => $.execution_log.fresh_session_retry_aria)}
+      >
+        {freshRetrying ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+        )}
+        {t(($) => $.execution_log.fresh_session_retry_tooltip)}
       </Button>
     </div>
   );
@@ -559,7 +607,7 @@ function CommentRow({
   const reactions = entry.reactions ?? [];
 
   return (
-    <div className="py-1.5">
+    <div className={cn("py-1.5", getActorBgClass(entry.actor_type))}>
       {/* Header pins to the timeline's scroll parent within this reply's own
           row box, so a LONG reply keeps its
           author + actions visible while you scroll its body, then releases once
@@ -567,6 +615,7 @@ function CommentRow({
           highlight state while it occludes the body scrolling underneath. */}
       <StickyHeaderShell
         highlighted={isHighlighted}
+        actorType={entry.actor_type}
         className="flex items-center gap-2.5 px-4 pt-1 pb-1.5"
       >
         <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="md" enableHoverCard showStatusDot />
@@ -852,11 +901,12 @@ function CommentCardImpl({
             That is what keeps exactly one header pinned at a time: without this
             wrapper the header's containing block is the whole thread and it
             stays stuck behind every reply. */}
-        <div className={cn("transition-colors duration-700", isHighlighted && highlightedCommentBackgroundClass)}>
+        <div className={cn("transition-colors duration-700", getActorBgClass(entry.actor_type), isHighlighted && highlightedCommentBackgroundClass)}>
           {/* Header — always visible, acts as toggle */}
           <StickyHeaderShell
             sticky={stickyHeader}
             highlighted={isHighlighted}
+            actorType={entry.actor_type}
             className="px-4 py-3"
           >
             <div className="flex items-center gap-2.5">

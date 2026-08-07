@@ -952,7 +952,7 @@ export function IssueDetailSkeleton() {
         {/* Same scrollbar-gutter as the loaded scroller below, so the skeleton
             column doesn't shift sideways when real content mounts. */}
         <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
-          <div className="mx-auto w-full max-w-4xl px-8 py-8 space-y-6">
+          <div className="mx-auto w-full max-w-7xl px-8 py-8 space-y-6">
             <Skeleton className="h-8 w-3/4" />
             <div className="space-y-2">
               <Skeleton className="h-4 w-full" />
@@ -2383,7 +2383,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           data-tab-scroll-root
           className="relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
         >
-        <div className="mx-auto w-full max-w-4xl px-8 py-8">
+        <div className="mx-auto w-full max-w-7xl px-8 py-8">
           {titleLazy.active && (
             <div className={titleLazy.ready ? undefined : "hidden"}>
               <TitleEditor

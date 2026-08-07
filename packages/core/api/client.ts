@@ -1933,10 +1933,13 @@ export class ApiClient {
     });
   }
 
-  async rerunIssue(issueId: string, taskId?: string): Promise<AgentTask> {
+  async rerunIssue(issueId: string, taskId?: string, withContextCompress?: boolean): Promise<AgentTask> {
+    const body: Record<string, unknown> = {};
+    if (taskId) body.task_id = taskId;
+    if (withContextCompress) body.with_context_compress = true;
     return this.fetch(`/api/issues/${issueId}/rerun`, {
       method: "POST",
-      body: JSON.stringify(taskId ? { task_id: taskId } : {}),
+      body: JSON.stringify(body),
     });
   }
 

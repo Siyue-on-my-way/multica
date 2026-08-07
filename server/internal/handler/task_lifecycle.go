@@ -107,6 +107,12 @@ type RerunIssueRequest struct {
 	// assignee — so clicking retry on row that belonged to a now-displaced
 	// agent re-fires that same agent, not the new assignee.
 	TaskID string `json:"task_id,omitempty"`
+	// WithContextCompress, when true, runs the LLM-based comment-history
+	// compression before enqueueing the new task, exactly as a cross-agent
+	// handoff does. Use this when the session must start fresh AND the new
+	// run should benefit from a compact context summary (e.g. after switching
+	// the LLM gateway while a session was in progress).
+	WithContextCompress bool `json:"with_context_compress,omitempty"`
 }
 
 // RerunIssue manually re-enqueues an agent run for the issue. By default it
@@ -163,6 +169,15 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
 	canInvoke := func(agent db.Agent) bool {
 		return h.canInvokeAgent(r.Context(), agent, actorType, actorID, originatorUserID, workspaceID)
+	}
+
+	// When the caller asks for context compression (e.g. "fresh session retry"
+	// after switching the LLM gateway), run the same LLM summarisation that a
+	// cross-agent handoff triggers. This clears the previous handoff_summary
+	// guard only when it was auto-generated; a manually written checkpoint is
+	// respected (compressHandoffContext checks len(issue.HandoffSummary) == 0).
+	if req.WithContextCompress {
+		h.compressHandoffContext(r.Context(), issue)
 	}
 
 	task, err := h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, canInvoke)

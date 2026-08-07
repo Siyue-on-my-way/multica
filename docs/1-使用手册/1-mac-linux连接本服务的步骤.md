@@ -99,7 +99,7 @@ multica config set app_url http://8.148.26.166:2080
 ### 第四步：使用 Token 登录
 
 ```bash
-multica login --token=
+multica login
 ```
 
 按提示粘贴刚复制的 PAT 并回车（`--token=` 为空值时会交互式提示输入，Token 不会留在 Shell 历史中）。

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, Square, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, MessageSquarePlus, Square, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -369,6 +369,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t } = useT("issues");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
+  const [freshRetrying, setFreshRetrying] = useState(false);
   const label = useStatusLabel(task.status);
   const trigger = useTriggerText(task);
   const time = task.completed_at ? timeAgo(task.completed_at) : "—";
@@ -406,6 +407,24 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     }
   };
 
+  const handleFreshSessionRetry = async () => {
+    if (freshRetrying) return;
+    setFreshRetrying(true);
+    try {
+      await api.rerunIssue(issueId, task.id, true);
+    } catch (e) {
+      toast.error(
+        dispatchReasonCode(e) === "invocation_not_allowed"
+          ? t(($) => $.execution_log.retry_blocked)
+          : e instanceof Error
+            ? e.message
+            : t(($) => $.execution_log.fresh_session_retry_failed),
+      );
+    } finally {
+      setFreshRetrying(false);
+    }
+  };
+
   return (
     <RowShell task={task}>
       <TriggerText text={trigger} />
@@ -424,7 +443,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
                 <button
                   type="button"
                   onClick={handleRetry}
-                  disabled={retrying}
+                  disabled={retrying || freshRetrying}
                   aria-label={t(($) => $.execution_log.retry_task_aria)}
                 />
               }
@@ -437,6 +456,28 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
               )}
             </TooltipTrigger>
             <TooltipContent>{t(($) => $.execution_log.retry_task_tooltip)}</TooltipContent>
+          </Tooltip>
+        )}
+        {canRetry && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={handleFreshSessionRetry}
+                  disabled={retrying || freshRetrying}
+                  aria-label={t(($) => $.execution_log.fresh_session_retry_aria)}
+                />
+              }
+              className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {freshRetrying ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <MessageSquarePlus className="h-3.5 w-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>{t(($) => $.execution_log.fresh_session_retry_tooltip)}</TooltipContent>
           </Tooltip>
         )}
       </RowActions>
