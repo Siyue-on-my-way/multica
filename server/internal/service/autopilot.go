@@ -306,7 +306,7 @@ func (s *AutopilotService) ensureWebhookCreateIssueTask(ctx context.Context, aut
 	if err != nil {
 		return fmt.Errorf("dispatch for webhook delivery: load linked issue: %w", err)
 	}
-	if issue.Status != "todo" && issue.Status != "in_progress" {
+	if issue.Status != "in_progress" {
 		return nil
 	}
 	if autopilot.AssigneeType == "squad" {
@@ -611,7 +611,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		return fmt.Errorf("increment issue counter: %w", err)
 	}
 
-	newPosition, err := issueposition.NextTopPosition(ctx, tx, ap.WorkspaceID, "todo")
+	newPosition, err := issueposition.NextTopPosition(ctx, tx, ap.WorkspaceID, "in_progress")
 	if err != nil {
 		return fmt.Errorf("get next issue position: %w", err)
 	}
@@ -620,7 +620,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		WorkspaceID:  ap.WorkspaceID,
 		Title:        title,
 		Description:  description,
-		Status:       "todo",
+		Status:       "in_progress",
 		Priority:     "none",
 		AssigneeType: pgtype.Text{String: ap.AssigneeType, Valid: true},
 		AssigneeID:   ap.AssigneeID,

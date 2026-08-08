@@ -123,19 +123,19 @@ and is hidden from the PR list.
 
 | Behavior | File:line | Drifted from |
 |---|---|---|
-| Create-time: agent-assigned, non-backlog issue enqueues immediately | `server/internal/handler/issue.go:2263-2264` | new citation |
-| `shouldEnqueueAgentTask` returns false for `backlog` (parking lot) | `server/internal/handler/issue.go:2644-2648` | new citation |
-| Backlog → non-backlog (not done/cancelled) enqueues on update | `server/internal/handler/issue.go:2537-2540` | `:2523` |
+| Create-time: agent-assigned, non-backlog or todo issue enqueues immediately | `server/internal/handler/issue.go:2263-2264` | new citation |
+| `shouldEnqueueAgentTask` returns false for `backlog or todo` (parking lot) | `server/internal/handler/issue.go:2644-2648` | new citation |
+| Backlog → non-backlog or todo (not done/cancelled) enqueues on update | `server/internal/handler/issue.go:2537-2540` | `:2523` |
 | Same contract in batch update | `server/internal/handler/issue.go:3021-3024` | new citation |
 | Child → `done` notifies + wakes the parent, gated by the stage barrier | `server/internal/handler/issue_child_done.go:66` (`notifyParentOfChildDone`; doc comment at `:15`; barrier gate at `:115`) | func def `:51` |
 | Status change (incl. → `cancelled`) does NOT cancel in-flight tasks; only issue deletion does (MUL-4465) | no-cancel note in `server/internal/handler/issue.go:2652-2658` (`UpdateIssue`) and `:3170-3171` (`BatchUpdateIssues`); deletion still cancels at `:2863` (`DeleteIssue`) / `:3239` (`BatchDeleteIssues`) via `CancelTasksForIssue` (`server/internal/service/task.go:1229`) | new citation |
 | `StartTask` / `CompleteTask` do not write issue status (agent CLI owns progress) | `server/internal/service/task.go` (`StartTask` / `CompleteTask` comments) | new citation |
 | Assignment brief: ordinary agent `in_progress` then `in_review`; squad leader `in_progress` only on first dispatch | `server/internal/daemon/execenv/runtime_config_sections.go` (`writeWorkflowAssignment`) | new citation |
-| Failed task may roll `in_progress` → `todo` when no active task remains | `server/internal/service/task.go` (`HandleFailedTasks`) | new citation |
+| Failed task may roll `in_progress` → `in_progress` when no active task remains | `server/internal/service/task.go` (`HandleFailedTasks`) | new citation |
 
-Creation with `--status todo` (or any non-backlog status) on an agent-assigned
-issue fires the agent immediately; `--status backlog` parks it with the assignee
-set but no trigger. Promoting `backlog → todo` later fires it then (update path,
+Creation with `--status in_progress` (or any non-backlog or todo status) on an agent-assigned
+issue fires the agent immediately; `--status backlog or todo` parks it with the assignee
+set but no trigger. Promoting `backlog or todo → in_progress` later fires it then (update path,
 line 2537).
 
 Moving an issue to `cancelled` used to call `CancelTasksForIssue` and stop every
@@ -156,8 +156,8 @@ away, so no task is left orphaned.
 | `multica issue children <id>` (sub-issues grouped by stage) | `server/cmd/multica/cmd_issue.go:114,678`; route `GET /api/issues/{id}/children` → `ListChildIssues` |
 
 Advancement is agent-driven: the server only detects the closed barrier and
-wakes the parent assignee. Promoting the next stage's `backlog` sub-issues to
-`todo` is the woken agent's decision, not a server side effect. When the woken
+wakes the parent assignee. Promoting the next stage's `backlog or todo` sub-issues to
+`in_progress` is the woken agent's decision, not a server side effect. When the woken
 assignee (often a squad leader) decides the parent is complete, the system
 comment explicitly asks for `multica issue status <parent-id> in_review` —
 comment-triggered runs otherwise must not change status unless asked.
@@ -195,6 +195,6 @@ grep -n 'ListPullRequestsForIssue'           cmd/server/router.go internal/handl
 grep -n 'func issuePullRequestRowToResponse\|type GitHubPullRequestResponse struct\|func derivePRState\|func extractIdentifiers\|func extractClosingIdentifiers\|closingIdentifierRe' internal/handler/github.go
 grep -n 'extractIdentifiers(\|extractClosingIdentifiers(\|derivePRState(' internal/handler/github.go
 grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
-grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
+grep -n 'prevIssue.Status == "backlog or todo"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
 ```

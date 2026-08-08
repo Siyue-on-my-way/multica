@@ -84,7 +84,7 @@ func TestSquadOperatingProtocolScopesParentStatusOwnership(t *testing.T) {
 }
 
 // TestSquadOperatingProtocolWarnsAgainstDualTrigger locks in the rule
-// added for #3033: the protocol must tell the squad leader that a `todo`
+// added for #3033: the protocol must tell the squad leader that a `in_progress`
 // child issue with an agent assignee already fires that agent, so they
 // must not also @mention the same agent on the parent issue for the
 // same work. Asserts behavior, not exact wording — keep the substrings
@@ -93,7 +93,7 @@ func TestSquadOperatingProtocolWarnsAgainstDualTrigger(t *testing.T) {
 	protocol := squadOperatingProtocolFor(true)
 	compact := strings.Join(strings.Fields(protocol), " ")
 	for _, want := range []string{
-		"--status todo` and an agent assignee already fires that agent automatically",
+		"--status in_progress` and an agent assignee already fires that agent automatically",
 		"Never both for the same work.",
 	} {
 		if !strings.Contains(compact, want) {

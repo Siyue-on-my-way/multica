@@ -97,8 +97,8 @@ func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput,
 	var source RunEnqueueSource
 	switch {
 	case in.IsCreate || in.AssigneeChanged:
-		// Backlog is the parking lot: assigning into backlog never starts a run.
-		if issue.Status == "backlog" {
+		// Backlog and Todo are parking lots: assigning into them never starts a run.
+		if issue.Status == "backlog" || issue.Status == "todo" {
 			return IssueRunTrigger{}, false
 		}
 		source = RunSourceAssign
@@ -164,12 +164,12 @@ func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput,
 }
 
 func isParkedIssueStatus(status string) bool {
-	return status == "backlog" || status == "blocked"
+	return status == "backlog" || status == "blocked" || status == "todo"
 }
 
 func isRunnableIssueStatus(status string) bool {
 	switch status {
-	case "todo", "in_progress", "in_review":
+	case "in_progress", "in_review":
 		return true
 	default:
 		return false

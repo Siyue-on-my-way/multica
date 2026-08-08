@@ -3965,7 +3965,7 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 // HandleFailedTasks runs the post-failure side effects for a batch of
 // freshly-failed tasks: optional auto-retry, task:failed event broadcast,
 // agent status reconciliation, and (when an issue has no remaining active
-// task and isn't being retried) resetting the issue back to todo so the
+// task and isn't being retried) resetting the issue back to backlog so the
 // daemon can pick it up again.
 //
 // All callers that surface a task as failed — sweepers, FailTask,
@@ -3983,7 +3983,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 
 	for _, t := range tasks {
 		// Auto-retry first so the issue stays in_progress rather than
-		// flapping todo → in_progress within a tick.
+		// flapping backlog → in_progress within a tick.
 		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
 			retried++
 			if t.IssueID.Valid {
@@ -4015,7 +4015,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 					} else if !hasActive {
 						updatedIssue, updateErr := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 							ID:          t.IssueID,
-							Status:      "todo",
+							Status:      "backlog",
 							WorkspaceID: issue.WorkspaceID,
 						})
 						if updateErr != nil {

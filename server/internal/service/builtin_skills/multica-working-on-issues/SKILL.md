@@ -1,6 +1,6 @@
 ---
 name: multica-working-on-issues
-description: "Use when acting on a Multica issue beyond what the brief covers: PR linking vs close intent, reading a linked PR's real state, metadata keys, status-change side effects, sub-issue todo vs backlog."
+description: "Use when acting on a Multica issue beyond what the brief covers: PR linking vs close intent, reading a linked PR's real state, metadata keys, status-change side effects, sub-issue in_progress vs backlog or todo."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -186,12 +186,12 @@ multica issue property unset <issue-id> --name Environment
 A status change is not cosmetic — the server enqueues or skips agent work based
 on it. These are the contracts, not advice:
 
-- **`backlog`** parks an agent-assigned issue: the assignee is set but no task
-  fires. Moving `backlog → todo` (or any non-done/non-cancelled status) enqueues
+- **`backlog or todo`** parks an agent-assigned issue: the assignee is set but no task
+  fires. Moving `backlog or todo → in_progress` (or any non-done/non-cancelled status) enqueues
   the assigned agent then.
 - **`in_progress` / `in_review` on assignment runs** are agent-managed CLI
   mutations, not `StartTask` / `CompleteTask` side effects. The assignment
-  runtime brief asks ordinary agents for `todo`/`backlog` → `in_progress` then
+  runtime brief asks ordinary agents for `in_progress`/`backlog or todo` → `in_progress` then
   `in_review` when they have delivered. Squad leaders share the opening
   `in_progress` step on the first assignment turn, keep the parent there while
   members work, and only move to `in_review` when a later re-trigger confirms
@@ -206,29 +206,29 @@ on it. These are the contracts, not advice:
   flight — a run in progress keeps going (MUL-4465). To stop a running task,
   cancel the task itself.
 - **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
-  `todo` when no active task / retry remains — that is the main server-owned
+  `in_progress` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.
 
-## Sub-issues: `todo` starts work now, `backlog` parks it
+## Sub-issues: `in_progress` starts work now, `backlog or todo` parks it
 
 On an agent-assigned issue, create status decides whether the assignee fires
-immediately. A non-backlog status (e.g. `todo`) enqueues the agent at create
-time; `backlog` sets the assignee without triggering.
+immediately. A non-backlog or todo status (e.g. `in_progress`) enqueues the agent at create
+time; `backlog or todo` sets the assignee without triggering.
 
 Parallel children — all start now:
 
 ```bash
-multica issue create --title "..." --parent <issue-id> --assignee <agent> --status todo
+multica issue create --title "..." --parent <issue-id> --assignee <agent> --status in_progress
 ```
 
 Strictly serial children — park later steps, promote one at a time:
 
 ```bash
-multica issue create --title "Step 2: ..." --parent <issue-id> --assignee <agent> --status backlog
-multica issue status <child-id> todo   # promote when the previous step is truly done
+multica issue create --title "Step 2: ..." --parent <issue-id> --assignee <agent> --status backlog or todo
+multica issue status <child-id> in_progress   # promote when the previous step is truly done
 ```
 
-Creating every serial step as `todo` enqueues the whole chain at once.
+Creating every serial step as `in_progress` enqueues the whole chain at once.
 
 ### Stages: order sub-issues into barrier groups
 
@@ -242,14 +242,14 @@ child.
 
 Advancement is agent-driven: the server only detects the closed barrier and
 wakes the parent assignee, who then decides whether to promote the next stage's
-`backlog` sub-issues to `todo`.
+`backlog or todo` sub-issues to `in_progress`.
 
 ```bash
 # Stage 1 runs now; later stages parked until promoted
-multica issue create --title "Research A" --parent <id> --assignee <agent> --stage 1 --status todo
-multica issue create --title "Research B" --parent <id> --assignee <agent> --stage 1 --status todo
-multica issue create --title "Build"      --parent <id> --assignee <agent> --stage 2 --status backlog
-multica issue create --title "Ship"       --parent <id> --assignee <agent> --stage 3 --status backlog
+multica issue create --title "Research A" --parent <id> --assignee <agent> --stage 1 --status in_progress
+multica issue create --title "Research B" --parent <id> --assignee <agent> --stage 1 --status in_progress
+multica issue create --title "Build"      --parent <id> --assignee <agent> --stage 2 --status backlog or todo
+multica issue create --title "Ship"       --parent <id> --assignee <agent> --stage 3 --status backlog or todo
 ```
 
 When both Stage 1 sub-issues finish you (the parent assignee) are woken with a
@@ -257,12 +257,12 @@ When both Stage 1 sub-issues finish you (the parent assignee) are woken with a
 
 ```bash
 multica issue children <parent-id>             # sub-issues grouped by stage
-multica issue status <stage-2-child-id> todo   # promote when its deps are met
+multica issue status <stage-2-child-id> in_progress   # promote when its deps are met
 ```
 
 Read each sub-issue's description before promoting and only promote items whose
 stated dependencies are met; if a description conflicts with the parent's
-breakdown, leave it `backlog` and comment to confirm first.
+breakdown, leave it `backlog or todo` and comment to confirm first.
 
 ## Incorrect → correct
 
@@ -277,14 +277,14 @@ Serial / phased sub-issues (don't start the whole chain at once):
 
 ```bash
 # incorrect — all fire immediately, no ordering
-multica issue create --title "Step 2" --parent <issue-id> --assignee <agent> --status todo
-multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --status todo
+multica issue create --title "Step 2" --parent <issue-id> --assignee <agent> --status in_progress
+multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --status in_progress
 
 # correct — stage them; Stage 1 runs, later stages park and are promoted as
 # each stage's barrier closes
-multica issue create --title "Step 1" --parent <issue-id> --assignee <agent> --stage 1 --status todo
-multica issue create --title "Step 2" --parent <issue-id> --assignee <agent> --stage 2 --status backlog
-multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --stage 3 --status backlog
+multica issue create --title "Step 1" --parent <issue-id> --assignee <agent> --stage 1 --status in_progress
+multica issue create --title "Step 2" --parent <issue-id> --assignee <agent> --stage 2 --status backlog or todo
+multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --stage 3 --status backlog or todo
 ```
 
 ## References
@@ -292,7 +292,7 @@ multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --s
 `references/working-on-issues-source-map.md` — accurate `file:line` for every
 contract above: the `pull-requests` CLI and route, the PR response field list,
 `derivePRState`, the two-path link (`extractIdentifiers`) vs close-intent
-(`extractClosingIdentifiers`) proof, the backlog enqueue lines, child-done
+(`extractClosingIdentifiers`) proof, the backlog or todo enqueue lines, child-done
 notify, the stage column / `stageBarrierClosed` barrier and the `--stage` /
 `issue children` CLI, and the metadata CLI. Re-derive before depending on an
 exact line.

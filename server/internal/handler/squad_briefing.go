@@ -125,12 +125,12 @@ const squadOperatingProtocolHardRules = `Hard rules:
   rather than silently doing the work.
 - ALWAYS call ` + "`" + `multica squad activity` + "`" + ` before ending your turn —
   even when the outcome is no_action.
-- A child issue you create with ` + "`" + `--status todo` + "`" + ` and an agent assignee
+- A child issue you create with ` + "`" + `--status in_progress` + "`" + ` and an agent assignee
   already fires that agent automatically — the assignment IS the trigger.
   If you also @mention the same agent on this parent issue for the same
   work, the agent runs twice in parallel (once from the mention, once
   from the assignment). Pick exactly one path: either delegate by
-  @mention on this issue, or create a ` + "`" + `todo` + "`" + ` child issue assigned to
+  @mention on this issue, or create a ` + "`" + `in_progress` + "`" + ` child issue assigned to
   them. Never both for the same work.`
 
 // squadOperatingProtocolFor assembles the protocol, selecting the parent-status
