@@ -374,6 +374,8 @@
     "copy_action": "복사",
     "copied_toast": "복사했습니다",
     "edit_action": "수정",
+    "show_more": "더 보기",
+    "show_less": "접기",
     "update_failed": "댓글을 업데이트하지 못했습니다",
     "send_failed": "댓글을 보내지 못했습니다",
     "posted_partial_trigger_other": "댓글이 게시되었지만 {{count}}개의 멘션이 트리거되지 않았습니다",
@@ -412,6 +414,7 @@
     "trigger_click_to_restore": "이번에는 시작하지 않습니다. 클릭하면 복원됩니다.",
     "trigger_preview_title": "전송 후 시작할 대상",
     "trigger_chip_aria": "{{name}} 트리거: {{state}}",
+    "collapse_thread_action": "스레드 접기",
     "resolve": {
       "resolve_thread_action": "스레드 해결",
       "unresolve_thread_action": "스레드 해결 취소",

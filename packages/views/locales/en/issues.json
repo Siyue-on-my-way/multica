@@ -381,6 +381,8 @@
     "copy_action": "Copy",
     "copied_toast": "Copied",
     "edit_action": "Edit",
+    "show_more": "Show more",
+    "show_less": "Show less",
     "update_failed": "Failed to update comment",
     "send_failed": "Failed to send comment",
     "posted_partial_trigger_one": "Comment posted, but {{count}} mention wasn't triggered",
@@ -422,6 +424,7 @@
     "trigger_click_to_restore": "Won't start this time. Click to restore.",
     "trigger_preview_title": "Will start when sent",
     "trigger_chip_aria": "{{name}} trigger: {{state}}",
+    "collapse_thread_action": "Collapse thread",
     "resolve": {
       "resolve_thread_action": "Resolve thread",
       "unresolve_thread_action": "Unresolve thread",

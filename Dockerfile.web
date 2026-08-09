@@ -20,9 +20,9 @@ COPY packages/eslint-config/package.json packages/eslint-config/
 # 设置 npm 淘宝镜像源
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN corepack enable && \
-    PNPM_VERSION="$(node -p 'require("./package.json").packageManager')" && \
-    corepack prepare "$PNPM_VERSION" --activate
+# Use npm to install pnpm globally to avoid corepack network issues
+RUN npm install -g pnpm@10.28.2
+
 # 设置 pnpm 淘宝镜像源
 RUN pnpm config set registry https://registry.npmmirror.com
 RUN pnpm install --frozen-lockfile
@@ -38,9 +38,9 @@ WORKDIR /app
 # Activate the same pnpm version declared by the repository before the
 # offline frozen install validates package-manager metadata in pnpm-lock.yaml.
 COPY package.json ./
-RUN corepack enable && \
-    PNPM_VERSION="$(node -p 'require("./package.json").packageManager')" && \
-    corepack prepare "$PNPM_VERSION" --activate
+# 设置 npm 淘宝镜像源
+RUN npm config set registry https://registry.npmmirror.com
+RUN npm install -g pnpm@10.28.2
 
 # Copy installed dependencies (preserves pnpm symlink structure)
 COPY --from=deps /app ./

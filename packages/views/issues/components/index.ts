@@ -6,6 +6,7 @@ export { IssueDetail, IssueDetailSkeleton } from "./issue-detail";
 export { IssueDetailRoute } from "./issue-detail-route";
 export { IssuesPage } from "./issues-page";
 export { CommentCard } from "./comment-card";
+export { CommentFold } from "./comment-fold";
 export { CommentInput } from "./comment-input";
 export { ReplyInput } from "./reply-input";
 export { IssueMentionCard } from "./issue-mention-card";

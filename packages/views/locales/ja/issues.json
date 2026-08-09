@@ -374,6 +374,8 @@
     "copy_action": "コピー",
     "copied_toast": "コピーしました",
     "edit_action": "編集",
+    "show_more": "もっと見る",
+    "show_less": "折りたたむ",
     "update_failed": "コメントを更新できませんでした",
     "send_failed": "コメントを送信できませんでした",
     "posted_partial_trigger_other": "コメントを投稿しましたが、{{count}} 件のメンションはトリガーされませんでした",
@@ -412,6 +414,7 @@
     "trigger_click_to_restore": "今回は開始しません。クリックで元に戻せます。",
     "trigger_preview_title": "送信後に開始する対象",
     "trigger_chip_aria": "{{name}} のトリガー: {{state}}",
+    "collapse_thread_action": "スレッドを折りたたむ",
     "resolve": {
       "resolve_thread_action": "スレッドを解決",
       "unresolve_thread_action": "スレッドの解決を取り消す",

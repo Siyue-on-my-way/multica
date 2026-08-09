@@ -547,7 +547,7 @@ func selectGrokAuthMethod(methods []string, haveAPIKey bool) (string, error) {
 		return grokAuthMethodCachedToken, nil
 	}
 	if offered[grokAuthMethodAPIKey] {
-		return "", fmt.Errorf("Grok advertised only API-key authentication, but XAI_API_KEY is not set")
+		return "", fmt.Errorf("Grok advertised only API-key authentication, but XAI_API_KEY is not set. Please set it in your environment or run `grok login` in the container.")
 	}
 	advertised := make([]string, 0, len(offered))
 	for method := range offered {
@@ -555,9 +555,9 @@ func selectGrokAuthMethod(methods []string, haveAPIKey bool) (string, error) {
 	}
 	sort.Strings(advertised)
 	if len(advertised) == 0 {
-		return "", fmt.Errorf("Grok advertised no usable authentication methods; set XAI_API_KEY or run `grok login`")
+		return "", fmt.Errorf("Grok advertised no usable authentication methods; set XAI_API_KEY or run `grok login` in the container")
 	}
-	return "", fmt.Errorf("Grok advertised unsupported authentication methods %q; update Multica or authenticate with XAI_API_KEY / `grok login`", advertised)
+	return "", fmt.Errorf("Grok advertised unsupported authentication methods %q; update Multica or authenticate with XAI_API_KEY / `grok login` in the container", advertised)
 }
 
 // waitForGrokNotificationQuiescence gives the ACP stdout reader a bounded
