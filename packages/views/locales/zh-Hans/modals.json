@@ -50,6 +50,27 @@
     "toast_failed": "添加子 issue 失败",
     "toast_success": "已添加 {{identifier}} 为子 issue"
   },
+  "suggest_subissues": {
+    "title": "生成子issue",
+    "description": "AI 将这条回复拆解成一个或多个子issue，创建前可编辑或取消勾选。",
+    "loading": "正在拆解子issue…",
+    "load_failed": "生成子issue失败，请重试。",
+    "empty": "这条回复中没有识别到可执行的子issue。",
+    "title_placeholder": "子issue标题",
+    "stage_parallel": "Stage {{stage}} · 可并行",
+    "stage_depends": "Stage {{stage}} · 依赖 Stage {{prevStage}}",
+    "parent_label": "父issue：{{identifier}}",
+    "parent_unset": "设置父issue…",
+    "description_toggle": "描述",
+    "cancel": "取消",
+    "create_single": "创建子issue",
+    "create_batch_one": "批量创建已勾选的 {{count}} 个子issue",
+    "create_batch_other": "批量创建已勾选的 {{count}} 个子issue",
+    "toast_created_one": "已创建 {{count}} 个子issue",
+    "toast_created_other": "已创建 {{count}} 个子issue",
+    "toast_partial_failed_one": "{{count}} 个子issue创建失败",
+    "toast_partial_failed_other": "{{count}} 个子issue创建失败"
+  },
   "run_confirm": {
     "title_assign": "确认指派？",
     "assign_single": "将这个 issue 指派给 {{name}}；符合运行条件时会立即开始处理。",

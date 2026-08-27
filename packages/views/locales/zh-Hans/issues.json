@@ -415,6 +415,7 @@
     "trigger_preview_title": "发送后将开始",
     "trigger_chip_aria": "{{name}} 触发状态：{{state}}",
     "collapse_thread_action": "折叠讨论",
+    "generate_subissues_action": "生成子issue",
     "resolve": {
       "resolve_thread_action": "解决该讨论",
       "unresolve_thread_action": "重新打开讨论",

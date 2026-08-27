@@ -68,6 +68,33 @@ export interface MoveIssueRequest
   after_id: string | null;
 }
 
+/** Body for `POST /api/issues/{id}/suggest-subissues`. Exactly one of
+ *  comment_id / text must be set. */
+export interface SuggestSubIssuesRequest {
+  comment_id?: string;
+  text?: string;
+}
+
+/** One AI-proposed sub-issue in the "生成子issue" preview panel. Not yet
+ *  created — the panel lets the user edit/uncheck before a batch of
+ *  `createIssue` calls turns confirmed rows into real issues. */
+export interface SubIssueSuggestion {
+  title: string;
+  description: string;
+  /** Ordered barrier group (>= 1): same-stage rows can run in parallel,
+   *  later stages depend on earlier ones finishing. */
+  stage: number;
+  depends_on_titles: string[];
+  /** Present only when the model's pick matched a real candidate parent. */
+  suggested_parent_identifier: string | null;
+  suggested_parent_issue_id: string | null;
+  confidence: number;
+}
+
+export interface SuggestSubIssuesResponse {
+  subissues: SubIssueSuggestion[];
+}
+
 /** Inputs to `POST /api/issues/preview-trigger`. A nil prospective field means
  *  "leave unchanged"; `isCreate` previews a not-yet-persisted issue. */
 export interface IssueTriggerPreviewParams {

@@ -415,6 +415,7 @@
     "trigger_preview_title": "送信後に開始する対象",
     "trigger_chip_aria": "{{name}} のトリガー: {{state}}",
     "collapse_thread_action": "スレッドを折りたたむ",
+    "generate_subissues_action": "サブイシューを生成",
     "resolve": {
       "resolve_thread_action": "スレッドを解決",
       "unresolve_thread_action": "スレッドの解決を取り消す",

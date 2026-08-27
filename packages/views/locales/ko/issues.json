@@ -415,6 +415,7 @@
     "trigger_preview_title": "전송 후 시작할 대상",
     "trigger_chip_aria": "{{name}} 트리거: {{state}}",
     "collapse_thread_action": "스레드 접기",
+    "generate_subissues_action": "하위 이슈 생성",
     "resolve": {
       "resolve_thread_action": "스레드 해결",
       "unresolve_thread_action": "스레드 해결 취소",

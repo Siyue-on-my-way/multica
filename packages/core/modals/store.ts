@@ -13,6 +13,7 @@ type ModalType =
   | "issue-add-child"
   | "issue-delete-confirm"
   | "issue-run-confirm"
+  | "suggest-subissues"
   | null;
 
 interface ModalStore {

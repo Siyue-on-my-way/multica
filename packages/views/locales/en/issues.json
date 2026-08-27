@@ -425,6 +425,7 @@
     "trigger_preview_title": "Will start when sent",
     "trigger_chip_aria": "{{name}} trigger: {{state}}",
     "collapse_thread_action": "Collapse thread",
+    "generate_subissues_action": "Generate sub-issues",
     "resolve": {
       "resolve_thread_action": "Resolve thread",
       "unresolve_thread_action": "Unresolve thread",

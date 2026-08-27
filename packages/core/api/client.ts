@@ -50,6 +50,8 @@ import type {
   CommentTriggerPreview,
   IssueTriggerPreview,
   IssueTriggerPreviewParams,
+  SuggestSubIssuesRequest,
+  SuggestSubIssuesResponse,
   Reaction,
   IssueReaction,
   Workspace,
@@ -852,6 +854,13 @@ export class ApiClient {
     attachment_ids?: string[];
   }): Promise<{ task_id: string }> {
     return this.fetch("/api/issues/quick-create", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async suggestSubIssues(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubIssuesResponse> {
+    return this.fetch(`/api/issues/${issueId}/suggest-subissues`, {
       method: "POST",
       body: JSON.stringify(data),
     });

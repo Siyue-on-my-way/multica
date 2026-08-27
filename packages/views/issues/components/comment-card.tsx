@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, ListChevronsDownUp, ListTree, Copy, Loader2, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -40,6 +40,7 @@ import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import type { TimelineEntry, Attachment } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
+import { useModalStore } from "@multica/core/modals";
 import { useT } from "../../i18n";
 import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
@@ -622,6 +623,7 @@ function CommentRow({
   const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
   const canDeleteEntry = isOwn || canModerate;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const openModal = useModalStore((s) => s.open);
 
   const reactions = entry.reactions ?? [];
   const contentPreview = (entry.content ?? "").replace(/\n/g, " ").slice(0, 80);
@@ -695,6 +697,12 @@ function CommentRow({
                   <Copy className="h-3.5 w-3.5" />
                   {t(($) => $.comment.copy_action)}
                 </DropdownMenuItem>
+                {entry.actor_type === "agent" && (
+                  <DropdownMenuItem onClick={() => openModal("suggest-subissues", { issueId, commentId: entry.id })}>
+                    <ListTree className="h-3.5 w-3.5" />
+                    {t(($) => $.comment.generate_subissues_action)}
+                  </DropdownMenuItem>
+                )}
                 {onResolveToggle && (
                   <>
                     <DropdownMenuSeparator />
@@ -903,6 +911,7 @@ function CommentCardImpl({
   const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
   const canDeleteEntry = isOwn || canModerate;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const openModal = useModalStore((s) => s.open);
 
   const allNestedReplies = replies;
 
@@ -1033,6 +1042,12 @@ function CommentCardImpl({
                         <Copy className="h-3.5 w-3.5" />
                         {t(($) => $.comment.copy_action)}
                       </DropdownMenuItem>
+                      {entry.actor_type === "agent" && (
+                        <DropdownMenuItem onClick={() => openModal("suggest-subissues", { issueId, commentId: entry.id })}>
+                          <ListTree className="h-3.5 w-3.5" />
+                          {t(($) => $.comment.generate_subissues_action)}
+                        </DropdownMenuItem>
+                      )}
                       {onResolveToggle && (
                         <>
                           <DropdownMenuSeparator />

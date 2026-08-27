@@ -50,6 +50,27 @@
     "toast_failed": "サブイシューを追加できませんでした",
     "toast_success": "{{identifier}} をサブイシューとして追加しました"
   },
+  "suggest_subissues": {
+    "title": "サブイシューを生成",
+    "description": "AIがこの返信を1件以上のサブイシューに分解します。作成前に編集・選択解除できます。",
+    "loading": "サブイシューに分解しています…",
+    "load_failed": "サブイシューの生成に失敗しました。再試行してください。",
+    "empty": "この返信から実行可能なサブイシューは見つかりませんでした。",
+    "title_placeholder": "サブイシューのタイトル",
+    "stage_parallel": "Stage {{stage}} · 並行実行可能",
+    "stage_depends": "Stage {{stage}} · Stage {{prevStage}} に依存",
+    "parent_label": "親イシュー: {{identifier}}",
+    "parent_unset": "親イシューを設定…",
+    "description_toggle": "説明",
+    "cancel": "キャンセル",
+    "create_single": "サブイシューを作成",
+    "create_batch_one": "選択した {{count}} 件のサブイシューを作成",
+    "create_batch_other": "選択した {{count}} 件のサブイシューを作成",
+    "toast_created_one": "{{count}} 件のサブイシューを作成しました",
+    "toast_created_other": "{{count}} 件のサブイシューを作成しました",
+    "toast_partial_failed_one": "{{count}} 件のサブイシューの作成に失敗しました",
+    "toast_partial_failed_other": "{{count}} 件のサブイシューの作成に失敗しました"
+  },
   "run_confirm": {
     "title_assign": "割り当てを確認しますか？",
     "assign_single": "このイシューを {{name}} に割り当てます。実行条件を満たす場合はすぐに作業を開始します。",
