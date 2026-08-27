@@ -415,6 +415,7 @@
     "trigger_preview_title": "전송 후 시작할 대상",
     "trigger_chip_aria": "{{name}} 트리거: {{state}}",
     "collapse_thread_action": "스레드 접기",
+    "generate_subissues_action": "하위 이슈 생성",
     "resolve": {
       "resolve_thread_action": "스레드 해결",
       "unresolve_thread_action": "스레드 해결 취소",
@@ -560,7 +561,11 @@
     "remove_parent_issue": "상위 이슈 제거",
     "remove_parent_issue_success": "상위 이슈를 제거했습니다",
     "add_sub_issue": "하위 이슈 추가...",
-    "delete_issue": "이슈 삭제"
+    "delete_issue": "이슈 삭제",
+    "compact_context": "컨텍스트 압축 후 재시작",
+    "compact_context_success": "컨텍스트를 압축하고 새 세션을 시작했습니다",
+    "compact_context_failed": "컨텍스트 압축에 실패했습니다",
+    "compact_context_blocked": "시작되지 않음 — 이 에이전트를 실행할 권한이 없습니다"
   },
   "pickers": {
     "custom_property": {

@@ -24,6 +24,7 @@ export type {
   RuntimeProfileVisibility,
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
+  ProviderPreset,
   CreateAgentRequest,
   AgentBuilderRuntimeSwitch,
   AgentBuilderSession,

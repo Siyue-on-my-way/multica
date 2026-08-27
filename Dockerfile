@@ -39,6 +39,8 @@ COPY --from=builder /src/server/bin/multica .
 COPY --from=builder /src/server/bin/migrate .
 COPY --from=builder /src/server/bin/backfill_task_usage_hourly .
 COPY --from=builder /src/server/bin/backfill_codex_usage_cache .
+# Symlink for per-platform binary lookup used by GET /api/daemon/binary
+RUN ln -s /app/multica /app/multica-linux-amd64
 COPY server/migrations/ ./migrations/
 COPY LICENSE NOTICE ./
 COPY docker/entrypoint.sh .

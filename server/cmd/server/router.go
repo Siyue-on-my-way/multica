@@ -883,6 +883,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
+
+		// Binary distribution: daemons can self-update by downloading the latest
+		// multica binary from the server (avoids needing GitHub Releases access).
+		r.Get("/binary", handler.HandleGetDaemonBinary)
 	})
 
 	// Protected API routes
@@ -1141,6 +1145,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
+					r.Post("/suggest-subissues", h.SuggestSubIssues)
 					r.Post("/comments", h.CreateComment)
 					r.Get("/comments", h.ListComments)
 					r.Get("/timeline", h.ListTimeline)
@@ -1214,6 +1219,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetProject)
 					r.Put("/", h.UpdateProject)
+					r.Put("/migrate", h.MigrateProject)
 					r.Delete("/", h.DeleteProject)
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
@@ -1411,8 +1417,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// archive-and-delete contract (MUL-5559 renamed the
 					// behaviour, not just the route). Same handler.
 					r.Post("/archive-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
+					// Provider config: push a provider preset to the daemon's CLI.
+					r.Post("/apply-provider-config", h.HandleApplyProviderConfig)
 				})
 			})
+
+			// Provider presets (public within the workspace scope).
+			r.Get("/api/provider-presets", handler.HandleGetProviderPresets)
+			// Provider models proxy: fetches {base_url}/models server-side to avoid
+			// browser mixed-content and CORS restrictions.
+			r.Get("/api/provider-models", handler.HandleProxyProviderModels)
 
 			// Cloud Runtime fleet proxy. The remote service URL is configured
 			// on SaaS API nodes only; self-hosted deployments return 503.

@@ -50,6 +50,27 @@
     "toast_failed": "하위 이슈를 추가하지 못했습니다",
     "toast_success": "{{identifier}}을(를) 하위 이슈로 추가했습니다"
   },
+  "suggest_subissues": {
+    "title": "하위 이슈 생성",
+    "description": "AI가 이 답글을 하나 이상의 하위 이슈로 분해합니다. 생성 전에 편집하거나 선택을 해제할 수 있습니다.",
+    "loading": "하위 이슈로 분해하는 중…",
+    "load_failed": "하위 이슈 생성에 실패했습니다. 다시 시도하세요.",
+    "empty": "이 답글에서 실행 가능한 하위 이슈를 찾지 못했습니다.",
+    "title_placeholder": "하위 이슈 제목",
+    "stage_parallel": "Stage {{stage}} · 병렬 실행 가능",
+    "stage_depends": "Stage {{stage}} · Stage {{prevStage}}에 의존",
+    "parent_label": "상위 이슈: {{identifier}}",
+    "parent_unset": "상위 이슈 설정…",
+    "description_toggle": "설명",
+    "cancel": "취소",
+    "create_single": "하위 이슈 생성",
+    "create_batch_one": "선택한 {{count}}개의 하위 이슈 생성",
+    "create_batch_other": "선택한 {{count}}개의 하위 이슈 생성",
+    "toast_created_one": "{{count}}개의 하위 이슈를 생성했습니다",
+    "toast_created_other": "{{count}}개의 하위 이슈를 생성했습니다",
+    "toast_partial_failed_one": "{{count}}개의 하위 이슈 생성에 실패했습니다",
+    "toast_partial_failed_other": "{{count}}개의 하위 이슈 생성에 실패했습니다"
+  },
   "run_confirm": {
     "title_assign": "할당을 확인할까요?",
     "assign_single": "이 이슈를 {{name}}에게 할당합니다. 실행 조건을 충족하면 바로 시작합니다.",

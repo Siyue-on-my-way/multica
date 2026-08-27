@@ -36,16 +36,22 @@ const maxCommentsForCompression = 80
 //
 // Returns early (no-op) when:
 //   - The LLM client is not configured.
-//   - The issue already has a handoff_summary (a previous agent wrote one
-//     explicitly; respect it instead of overwriting).
+//   - The issue already has a handoff_summary AND force is false (a previous
+//     agent wrote one explicitly, or an earlier compression already ran;
+//     respect it instead of overwriting).
 //   - There are no comments to summarise.
-func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue) {
+//
+// force=true is for a user-initiated "compact context now" request (the manual
+// standalone rerun path, distinct from a task_id-targeted retry): the whole
+// point of that action is to refresh the checkpoint from the latest comments,
+// so any existing summary — however it got there — must not block it.
+func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, force bool) {
 	if !h.LLM.Enabled() {
 		return
 	}
 	// Respect an explicitly written checkpoint: the previous agent's structured
 	// summary is more precise than anything the LLM can infer from comments.
-	if len(issue.HandoffSummary) > 0 {
+	if len(issue.HandoffSummary) > 0 && !force {
 		return
 	}
 

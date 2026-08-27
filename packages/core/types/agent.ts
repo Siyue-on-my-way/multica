@@ -1223,3 +1223,13 @@ export interface RuntimeLocalSkillImportResult {
   skill?: Skill;
   conflict?: RuntimeLocalSkillImportConflict;
 }
+
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  website_url?: string;
+  category?: string;
+  base_url: string;
+  default_model: string;
+  models: string[];
+}

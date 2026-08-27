@@ -10,6 +10,7 @@ import { SetParentIssueModal } from "./set-parent-issue";
 import { AddChildIssueModal } from "./add-child-issue";
 import { DeleteIssueConfirmModal } from "./delete-issue-confirm";
 import { RunConfirmModal } from "./run-confirm";
+import { SubIssuePreviewModal } from "./sub-issue-preview-panel";
 
 export function ModalRegistry() {
   const modal = useModalStore((s) => s.modal);
@@ -39,6 +40,8 @@ export function ModalRegistry() {
       return <DeleteIssueConfirmModal onClose={close} data={data} />;
     case "issue-run-confirm":
       return <RunConfirmModal onClose={close} data={data} />;
+    case "suggest-subissues":
+      return <SubIssuePreviewModal onClose={close} data={data} />;
     default:
       return null;
   }

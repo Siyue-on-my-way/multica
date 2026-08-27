@@ -97,7 +97,8 @@ type WorkspacesChangedPayload struct{}
 // heartbeat, which claims whatever is queued) — so an unknown value from a
 // newer server stays safe on an older daemon.
 const (
-	PendingWorkKindModelList = "model_list"
+	PendingWorkKindModelList      = "model_list"
+	PendingWorkKindProviderConfig = "provider_config"
 )
 
 // PendingWorkPayload is sent from server to daemon as a wakeup hint when a
@@ -313,19 +314,30 @@ type DaemonHeartbeatRequestPayload struct {
 // and re-registers; without it the dead UUID would keep heartbeating until the
 // daemon process restarts.
 type DaemonHeartbeatAckPayload struct {
-	RuntimeID               string                                  `json:"runtime_id"`
-	Status                  string                                  `json:"status"`
-	ServerCapabilities      []string                                `json:"server_capabilities,omitempty"`
-	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
-	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
-	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
-	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
-	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
+	RuntimeID                string                                   `json:"runtime_id"`
+	Status                   string                                   `json:"status"`
+	ServerCapabilities       []string                                 `json:"server_capabilities,omitempty"`
+	RuntimeGone              bool                                     `json:"runtime_gone,omitempty"`
+	PendingUpdate            *DaemonHeartbeatPendingUpdate            `json:"pending_update,omitempty"`
+	PendingModelList         *DaemonHeartbeatPendingModelList         `json:"pending_model_list,omitempty"`
+	PendingLocalSkills       *DaemonHeartbeatPendingLocalSkills       `json:"pending_local_skills,omitempty"`
+	PendingLocalSkillImport  *DaemonHeartbeatPendingLocalSkillImport  `json:"pending_local_skill_import,omitempty"`
+	PendingProviderConfig    *DaemonHeartbeatPendingProviderConfig    `json:"pending_provider_config,omitempty"`
 	// PendingLocalSkillImports carries multiple import requests in a single
 	// heartbeat so the daemon can process them concurrently. Old daemons
 	// that don't know this field silently ignore it (standard JSON behavior)
 	// and fall back to the singular PendingLocalSkillImport above.
 	PendingLocalSkillImports []DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_imports,omitempty"`
+}
+
+// DaemonHeartbeatPendingProviderConfig describes a request to apply a provider configuration
+// to a specific CLI tool on the daemon's host machine.
+type DaemonHeartbeatPendingProviderConfig struct {
+	ID        string `json:"id"`
+	TargetCLI string `json:"target_cli"`
+	BaseURL   string `json:"base_url"`
+	APIKey    string `json:"api_key"`
+	Model     string `json:"model"`
 }
 
 // HeartbeatStatusRuntimeGone is the ack Status used when the runtime row no

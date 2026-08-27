@@ -415,6 +415,7 @@
     "trigger_preview_title": "送信後に開始する対象",
     "trigger_chip_aria": "{{name}} のトリガー: {{state}}",
     "collapse_thread_action": "スレッドを折りたたむ",
+    "generate_subissues_action": "サブイシューを生成",
     "resolve": {
       "resolve_thread_action": "スレッドを解決",
       "unresolve_thread_action": "スレッドの解決を取り消す",
@@ -560,7 +561,11 @@
     "remove_parent_issue": "親イシューを解除",
     "remove_parent_issue_success": "親イシューを解除しました",
     "add_sub_issue": "サブイシューを追加...",
-    "delete_issue": "イシューを削除"
+    "delete_issue": "イシューを削除",
+    "compact_context": "コンテキストを圧縮して再開",
+    "compact_context_success": "コンテキストを圧縮して新しいセッションを開始しました",
+    "compact_context_failed": "コンテキストの圧縮に失敗しました",
+    "compact_context_blocked": "開始できませんでした — このエージェントを実行する権限がありません"
   },
   "pickers": {
     "custom_property": {

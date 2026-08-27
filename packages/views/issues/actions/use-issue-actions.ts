@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
@@ -9,7 +9,9 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
+import { issueKeys } from "@multica/core/issues/queries";
 import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
+import { api, dispatchReasonCode } from "@multica/core/api";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
@@ -26,6 +28,11 @@ export interface UseIssueActionsResult {
   removeParent: () => void;
   openAddChild: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
+  /** True only for an agent- or squad-assigned issue — the only case where a
+   *  fresh-session-with-compacted-context run is meaningful. */
+  canCompactContext: boolean;
+  compactingContext: boolean;
+  compactContext: () => void;
 }
 
 /**
@@ -57,11 +64,13 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const createPin = useCreatePin();
   const deletePin = useDeletePin();
   const openModal = useModalStore((s) => s.open);
+  const queryClient = useQueryClient();
 
   const issueId = issue?.id ?? null;
   const issueIdentifier = issue?.identifier ?? null;
   const issueProjectId = issue?.project_id ?? null;
   const issueStatus = issue?.status ?? null;
+  const issueAssigneeType = issue?.assignee_type ?? null;
 
   const updateField = useCallback(
     (updates: Partial<UpdateIssueRequest>) => {
@@ -227,6 +236,39 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     [openModal, issueId, issueIdentifier],
   );
 
+  // Only meaningful when an agent (or a squad, whose leader is an agent) can
+  // actually pick up a fresh run — a member-assigned or unassigned issue has
+  // no session to compact.
+  const canCompactContext = issueAssigneeType === "agent" || issueAssigneeType === "squad";
+
+  const [compactingContext, setCompactingContext] = useState(false);
+
+  // Standalone "compact context now": no task_id (the manual, no-failure
+  // trigger — distinct from the execution-log per-row retry-in-new-session
+  // action), always forces a fresh handoff_summary via with_context_compress.
+  // Cancels any active run on the current assignee and starts a new one from
+  // the compacted checkpoint, same as a cross-agent handoff.
+  const compactContext = useCallback(() => {
+    if (!issueId || compactingContext) return;
+    setCompactingContext(true);
+    api
+      .rerunIssue(issueId, undefined, true)
+      .then(() => {
+        toast.success(t(($) => $.actions.compact_context_success));
+        void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+      })
+      .catch((e: unknown) => {
+        toast.error(
+          dispatchReasonCode(e) === "invocation_not_allowed"
+            ? t(($) => $.actions.compact_context_blocked)
+            : e instanceof Error && e.message
+              ? e.message
+              : t(($) => $.actions.compact_context_failed),
+        );
+      })
+      .finally(() => setCompactingContext(false));
+  }, [issueId, compactingContext, queryClient, t]);
+
   return {
     isPinned,
     updateField,
@@ -238,5 +280,8 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     removeParent,
     openAddChild,
     openDeleteConfirm,
+    canCompactContext,
+    compactingContext,
+    compactContext,
   };
 }

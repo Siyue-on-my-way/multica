@@ -80,3 +80,15 @@ export function useDeleteProject() {
     },
   });
 }
+
+export function useMigrateProject() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, targetWorkspaceId }: { id: string; targetWorkspaceId: string }) => api.migrateProject(id, targetWorkspaceId),
+    onSuccess: (_project, vars) => {
+      qc.invalidateQueries({ queryKey: projectKeys.list(wsId) });
+      qc.removeQueries({ queryKey: projectKeys.detail(wsId, vars.id) });
+    },
+  });
+}

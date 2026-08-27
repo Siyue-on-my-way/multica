@@ -415,6 +415,7 @@
     "trigger_preview_title": "发送后将开始",
     "trigger_chip_aria": "{{name}} 触发状态：{{state}}",
     "collapse_thread_action": "折叠讨论",
+    "generate_subissues_action": "生成子issue",
     "resolve": {
       "resolve_thread_action": "解决该讨论",
       "unresolve_thread_action": "重新打开讨论",
@@ -560,7 +561,11 @@
     "remove_parent_issue": "移除父 issue",
     "remove_parent_issue_success": "已移除父 issue",
     "add_sub_issue": "添加子 issue...",
-    "delete_issue": "删除 issue"
+    "delete_issue": "删除 issue",
+    "compact_context": "压缩上下文并重开会话",
+    "compact_context_success": "已压缩上下文并新开一个会话",
+    "compact_context_failed": "压缩上下文失败",
+    "compact_context_blocked": "未启动——你没有权限触发该 agent"
   },
   "pickers": {
     "custom_property": {

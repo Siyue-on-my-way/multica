@@ -23,6 +23,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/daemon/configwriter"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
@@ -2815,17 +2816,21 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
-	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
+	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil || resp.PendingProviderConfig != nil {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
 			"update", resp.PendingUpdate != nil,
 			"model_list", resp.PendingModelList != nil,
 			"local_skills", resp.PendingLocalSkills != nil,
 			"local_skill_import", resp.PendingLocalSkillImport != nil,
+			"provider_config", resp.PendingProviderConfig != nil,
 		)
 	}
 	if resp.PendingUpdate != nil {
 		go d.handleUpdate(ctx, runtimeID, resp.PendingUpdate)
+	}
+	if resp.PendingProviderConfig != nil {
+		go d.handleProviderConfig(ctx, runtimeID, resp.PendingProviderConfig)
 	}
 	if resp.PendingModelList != nil {
 		if rt := d.findRuntime(runtimeID); rt != nil {
@@ -3251,6 +3256,39 @@ func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *Pen
 	// Trigger daemon restart with the new binary.
 	d.triggerRestart()
 	restarting = d.RestartBinary() != ""
+}
+
+// handleProviderConfig applies a remote provider configuration to the local
+// CLI config files (Codex, Grok, or Claude) using the configwriter package.
+// It runs in its own goroutine dispatched from handleHeartbeatActions.
+func (d *Daemon) handleProviderConfig(ctx context.Context, runtimeID string, pending *PendingProviderConfig) {
+	if pending == nil {
+		return
+	}
+	d.logger.Info("provider config requested",
+		"runtime_id", runtimeID,
+		"request_id", pending.ID,
+		"target_cli", pending.TargetCLI,
+	)
+	cfg := configwriter.ProviderConfig{
+		BaseURL: pending.BaseURL,
+		APIKey:  pending.APIKey,
+		Model:   pending.Model,
+	}
+	if err := configwriter.Apply(pending.TargetCLI, cfg); err != nil {
+		d.logger.Error("provider config apply failed",
+			"runtime_id", runtimeID,
+			"request_id", pending.ID,
+			"target_cli", pending.TargetCLI,
+			"error", err,
+		)
+		return
+	}
+	d.logger.Info("provider config applied",
+		"runtime_id", runtimeID,
+		"request_id", pending.ID,
+		"target_cli", pending.TargetCLI,
+	)
 }
 
 type serverUpdateAcquireResult uint8

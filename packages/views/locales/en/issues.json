@@ -425,6 +425,7 @@
     "trigger_preview_title": "Will start when sent",
     "trigger_chip_aria": "{{name}} trigger: {{state}}",
     "collapse_thread_action": "Collapse thread",
+    "generate_subissues_action": "Generate sub-issues",
     "resolve": {
       "resolve_thread_action": "Resolve thread",
       "unresolve_thread_action": "Unresolve thread",
@@ -585,7 +586,11 @@
     "remove_parent_issue": "Remove parent issue",
     "remove_parent_issue_success": "Removed parent issue",
     "add_sub_issue": "Add sub-issue...",
-    "delete_issue": "Delete issue"
+    "delete_issue": "Delete issue",
+    "compact_context": "Compact context & restart",
+    "compact_context_success": "Started a fresh session with compacted context",
+    "compact_context_failed": "Failed to compact context",
+    "compact_context_blocked": "Not started — you don't have permission to use this agent"
   },
   "pickers": {
     "custom_property": {

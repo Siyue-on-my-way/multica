@@ -10,10 +10,10 @@ import { toast } from "sonner";
 import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { projectDetailOptions } from "@multica/core/projects/queries";
-import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
+import { useUpdateProject, useDeleteProject, useMigrateProject } from "@multica/core/projects/mutations";
 import { pinListOptions } from "@multica/core/pins";
 import { useCreatePin, useDeletePin } from "@multica/core/pins";
-import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
+import { memberListOptions, agentListOptions, workspaceListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -125,9 +125,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   );
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: workspaces = [] } = useQuery(workspaceListOptions());
   const { getActorName } = useActorName();
   const updateProject = useUpdateProject();
   const deleteProject = useDeleteProject();
+  const migrateProject = useMigrateProject();
   const { data: pinnedItems = [] } = useQuery({
     ...pinListOptions(wsId, userId ?? ""),
     enabled: !!userId,
@@ -143,6 +145,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const descEditorRef = useRef<ContentEditorRef>(null);
   const isMobile = useIsMobile();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
+  const [targetWorkspaceId, setTargetWorkspaceId] = useState("");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(true);
   const [progressOpen, setProgressOpen] = useState(true);
@@ -217,6 +221,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       },
     });
   }, [project, deleteProject, router, wsPaths, t]);
+
+  const handleMigrate = useCallback(() => {
+    if (!project || !targetWorkspaceId) return;
+    migrateProject.mutate({ id: project.id, targetWorkspaceId }, {
+      onSuccess: () => {
+        toast.success(t(($) => $.detail.toast_project_migrated));
+        setMigrateDialogOpen(false);
+        router.push(wsPaths.projects());
+      },
+    });
+  }, [project, targetWorkspaceId, migrateProject, router, wsPaths, t]);
 
   if (isLoading) {
     return (
@@ -509,6 +524,9 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     <Link2 className="h-3.5 w-3.5" />
                     {t(($) => $.detail.copy_link)}
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setMigrateDialogOpen(true)}>
+                    {t(($) => $.detail.migrate_action)}
+                  </DropdownMenuItem>
                   {isWorkspaceAdmin && (
                     <>
                       <DropdownMenuSeparator />
@@ -595,6 +613,24 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           </AlertDialogContent>
         </AlertDialog>
       )}
+      <AlertDialog open={migrateDialogOpen} onOpenChange={setMigrateDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t(($) => $.detail.migrate_dialog.title)}</AlertDialogTitle>
+            <AlertDialogDescription>{t(($) => $.detail.migrate_dialog.description)}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <select className="w-full rounded-md border bg-background p-2" value={targetWorkspaceId} onChange={(e) => setTargetWorkspaceId(e.target.value)}>
+            <option value="">{t(($) => $.detail.migrate_dialog.select_workspace)}</option>
+            {workspaces.filter((workspace) => workspace.id !== wsId).map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+            ))}
+          </select>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t(($) => $.detail.migrate_dialog.cancel)}</AlertDialogCancel>
+            <AlertDialogAction disabled={!targetWorkspaceId || migrateProject.isPending} onClick={handleMigrate}>{t(($) => $.detail.migrate_dialog.confirm)}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

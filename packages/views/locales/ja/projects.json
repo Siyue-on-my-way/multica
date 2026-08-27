@@ -63,6 +63,7 @@
     "unpin_tooltip": "サイドバーの固定を解除",
     "sidebar_tooltip": "サイドバーの開閉",
     "copy_link": "リンクをコピー",
+    "migrate_action": "別のワークスペースに移行",
     "delete_action": "プロジェクトを削除",
     "section_properties": "プロパティ",
     "section_progress": "進捗",
@@ -78,7 +79,15 @@
     "no_issues_yet": "イシューはまだありません",
     "toast_link_copied": "リンクをコピーしました",
     "toast_project_deleted": "プロジェクトを削除しました",
-    "toast_move_issue_failed": "イシューを移動できませんでした"
+    "toast_project_migrated": "プロジェクトを移行しました",
+    "toast_move_issue_failed": "イシューを移動できませんでした",
+    "migrate_dialog": {
+      "title": "別のワークスペースに移行",
+      "description": "プロジェクトとすべてのイシューを移行します。担当者の設定は解除されます。",
+      "select_workspace": "ワークスペースを選択",
+      "confirm": "移行",
+      "cancel": "キャンセル"
+    }
   },
   "resources": {
     "section_header": "リソース",

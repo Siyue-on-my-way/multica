@@ -58,6 +58,7 @@ import { HealthIcon, useHealthLabel } from "./shared";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
 import { RuntimeProfilesDialog } from "./runtime-profiles-dialog";
+import { ProviderConfigDialog } from "./provider-config-dialog";
 import {
   computeCostInWindow,
   pctChange,
@@ -542,6 +543,7 @@ export function RuntimeRowMenu({
   const { t } = useT("runtimes");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
   const isCustomRuntime = !!runtime.profile_id;
   // Delete is currently the only row action; if the row can't run it, drop
   // the kebab entirely so the column doesn't render an empty popover. We
@@ -570,6 +572,10 @@ export function RuntimeRowMenu({
           }
         />
         <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onClick={() => setConfigOpen(true)}>
+            <Globe aria-hidden="true" className="h-3.5 w-3.5" />
+            Configure Provider
+          </DropdownMenuItem>
           {isCustomRuntime && profile && (
             <DropdownMenuItem onClick={() => setEditOpen(true)}>
               <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
@@ -588,6 +594,13 @@ export function RuntimeRowMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <ProviderConfigDialog
+        open={configOpen}
+        onOpenChange={setConfigOpen}
+        runtimeId={runtime.id}
+        daemonId={runtime.daemon_id || ""}
+      />
       {isCustomRuntime && profile && editOpen && (
         <RuntimeProfilesDialog
           wsId={wsId}

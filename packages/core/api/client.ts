@@ -40,6 +40,7 @@ import type {
   WorkspaceWorkingAgentType,
   AgentRuntime,
   RuntimeProfile,
+  ProviderPreset,
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
   InboxItem,
@@ -49,6 +50,8 @@ import type {
   CommentTriggerPreview,
   IssueTriggerPreview,
   IssueTriggerPreviewParams,
+  SuggestSubIssuesRequest,
+  SuggestSubIssuesResponse,
   Reaction,
   IssueReaction,
   Workspace,
@@ -856,6 +859,13 @@ export class ApiClient {
     });
   }
 
+  async suggestSubIssues(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubIssuesResponse> {
+    return this.fetch(`/api/issues/${issueId}/suggest-subissues`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async createFeedback(data: {
     message: string;
     url?: string;
@@ -1588,6 +1598,38 @@ export class ApiClient {
       `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
       { method: "DELETE" },
     );
+  }
+
+  async getProviderPresets(): Promise<ProviderPreset[]> {
+    const raw = await this.fetch<unknown>("/api/provider-presets");
+    if (!Array.isArray(raw)) return [];
+    return raw as ProviderPreset[];
+  }
+
+  async fetchProviderModels(baseUrl: string, apiKey: string): Promise<string[]> {
+    const params = new URLSearchParams({ base_url: baseUrl });
+    if (apiKey) params.set("api_key", apiKey);
+    const raw = await this.fetch<unknown>(`/api/provider-models?${params.toString()}`);
+    if (raw && typeof raw === "object" && "data" in raw && Array.isArray((raw as { data: unknown }).data)) {
+      return ((raw as { data: { id: string }[] }).data).map((m) => m.id).filter(Boolean);
+    }
+    return [];
+  }
+
+  async applyProviderConfig(
+    runtimeId: string,
+    body: {
+      provider_type: string;
+      base_url: string;
+      api_key: string;
+      model: string;
+      name?: string;
+    },
+  ): Promise<{ status: string; config_id: string }> {
+    return this.fetch(`/api/runtimes/${runtimeId}/apply-provider-config`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   }
 
   async getRuntimeUsage(
@@ -2580,6 +2622,13 @@ export class ApiClient {
     return this.fetch(`/api/projects/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+  }
+
+  async migrateProject(id: string, targetWorkspaceId: string): Promise<Project> {
+    return this.fetch(`/api/projects/${id}/migrate`, {
+      method: "PUT",
+      body: JSON.stringify({ target_workspace_id: targetWorkspaceId }),
     });
   }
 

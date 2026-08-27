@@ -3507,18 +3507,34 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 // etc.) are intentionally excluded — those are real problems that the user
 // should see, not infrastructure flakiness.
 //
-// The one agent_error.* exception is provider_network: a mid-stream provider
-// disconnect (e.g. Claude Code's "API Error: Connection closed mid-response")
-// is transient infrastructure flakiness, not an agent decision. Unattended
-// issue runs otherwise terminate on it, while interactive chat only survives
-// because the CLI's own in-process retry happens to recover first — so we make
-// the platform retry it directly (MUL-4910). It is resume-safe (not in
-// resumeUnsafeFailureReason), so the retry child inherits the session and
-// continues the truncated conversation rather than restarting from scratch.
-// skill_bundle_unavailable is retryable for the same reason: the agent process
-// never started, so there is nothing to be idempotent about, and every bundle
-// that did download is already cached on disk — a retry resumes from there
-// instead of re-fetching the whole set (MUL-5370).
+// The agent_error.* exceptions are provider_network and context_overflow.
+// provider_network — a mid-stream provider disconnect (e.g. Claude Code's
+// "API Error: Connection closed mid-response") — is transient infrastructure
+// flakiness, not an agent decision. Unattended issue runs otherwise terminate
+// on it, while interactive chat only survives because the CLI's own
+// in-process retry happens to recover first — so we make the platform retry
+// it directly (MUL-4910). It is resume-safe (not in resumeUnsafeFailureReason),
+// so the retry child inherits the session and continues the truncated
+// conversation rather than restarting from scratch.
+//
+// context_overflow ("Input tokens exceed the configured limit...") is
+// resume-unsafe (CreateRetryTask forces a fresh session for it, same as
+// codex_semantic_inactivity) — resuming would immediately overflow again on
+// the identical oversized transcript. What makes the retry worth attempting
+// is that the handler layer (FailTask in internal/handler/daemon.go)
+// synchronously compresses the issue's comment history into handoff_summary
+// BEFORE this reason's retry child is created, so the fresh session's opening
+// prompt carries a compact checkpoint instead of the transcript that
+// overflowed. Without that compression step, retrying this reason would just
+// trade one overflowing session for a fresh one an agent proceeds to
+// re-overflow, since a fresh session's daemon-side prompt would fall back to
+// the full cold-read comment-scan path (prompt.go) on a long issue.
+//
+// skill_bundle_unavailable is retryable for the same reason as
+// provider_network: the agent process never started, so there is nothing to
+// be idempotent about, and every bundle that did download is already cached
+// on disk — a retry resumes from there instead of re-fetching the whole set
+// (MUL-5370).
 var retryableReasons = map[string]bool{
 	"runtime_offline":           true,
 	"runtime_recovery":          true,
@@ -3526,6 +3542,7 @@ var retryableReasons = map[string]bool{
 	"codex_semantic_inactivity": true,
 	string(taskfailure.ReasonAgentProviderNetwork):   true,
 	string(taskfailure.ReasonSkillBundleUnavailable): true,
+	string(taskfailure.ReasonAgentContextOverflow):   true,
 }
 
 // Transient provider stream cuts (provider_network) get a bespoke three-tier

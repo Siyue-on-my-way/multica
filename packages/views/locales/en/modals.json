@@ -50,6 +50,27 @@
     "toast_failed": "Failed to add sub-issue",
     "toast_success": "Added {{identifier}} as sub-issue"
   },
+  "suggest_subissues": {
+    "title": "Generate sub-issues",
+    "description": "AI breaks this reply down into one or more sub-issues you can review and edit before creating.",
+    "loading": "Breaking this down into sub-issues…",
+    "load_failed": "Couldn't generate sub-issues. Try again.",
+    "empty": "No actionable sub-issues found in this reply.",
+    "title_placeholder": "Sub-issue title",
+    "stage_parallel": "Stage {{stage}} · can run in parallel",
+    "stage_depends": "Stage {{stage}} · depends on stage {{prevStage}}",
+    "parent_label": "Parent: {{identifier}}",
+    "parent_unset": "Set parent…",
+    "description_toggle": "Description",
+    "cancel": "Cancel",
+    "create_single": "Create sub-issue",
+    "create_batch_one": "Create {{count}} selected sub-issue",
+    "create_batch_other": "Create {{count}} selected sub-issues",
+    "toast_created_one": "Created {{count}} sub-issue",
+    "toast_created_other": "Created {{count}} sub-issues",
+    "toast_partial_failed_one": "{{count}} sub-issue failed to create",
+    "toast_partial_failed_other": "{{count}} sub-issues failed to create"
+  },
   "run_confirm": {
     "title_assign": "Confirm assignment?",
     "assign_single": "Assign this issue to {{name}}. They'll start right away if the run conditions are met.",
