@@ -3,7 +3,14 @@ package service
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestSubissueSuggestTimeoutIsThreeMinutes(t *testing.T) {
+	if SubissueSuggestTimeout != 3*time.Minute {
+		t.Fatalf("subissue suggestion timeout = %s, want 3m", SubissueSuggestTimeout)
+	}
+}
 
 func TestParseSubissueSuggestResponseParsesAndNormalizes(t *testing.T) {
 	raw := `{"subissues":[

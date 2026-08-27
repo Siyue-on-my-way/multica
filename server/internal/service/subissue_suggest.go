@@ -21,7 +21,7 @@ var ErrLLMNotConfigured = errors.New("subissue suggest: llm not configured")
 // slower, larger-output call: the client shows a loading state for the whole
 // preview panel until this resolves.
 const (
-	SubissueSuggestTimeout             = 20 * time.Second
+	SubissueSuggestTimeout             = 3 * time.Minute
 	subissueSuggestTemperature         = 0.3
 	subissueSuggestMaxCompletionTokens = 4096
 )
