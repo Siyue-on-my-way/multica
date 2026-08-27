@@ -11,10 +11,12 @@ import {
   ExternalLink,
   FolderOpen,
   Link2,
+  Loader2,
   Network,
   Pin,
   PinOff,
   Plus,
+  Sparkles,
   Trash2,
   Unlink,
   UserMinus,
@@ -113,6 +115,9 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openDeleteConfirm,
+    canCompactContext,
+    compactingContext,
+    compactContext,
   } = actions;
 
   // Subscribe to the issue's task list so the cache is warm by the time the
@@ -279,6 +284,16 @@ export function IssueActionsMenuItems({
         <FolderOpen className="h-3.5 w-3.5" />
         {t(($) => $.actions.copy_workdir_path)}
       </P.Item>
+      {canCompactContext && (
+        <P.Item onClick={compactContext} disabled={compactingContext}>
+          {compactingContext ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5" />
+          )}
+          {t(($) => $.actions.compact_context)}
+        </P.Item>
+      )}
 
       <P.Separator />
 

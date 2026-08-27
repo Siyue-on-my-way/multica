@@ -40,6 +40,7 @@ import type {
   WorkspaceWorkingAgentType,
   AgentRuntime,
   RuntimeProfile,
+  ProviderPreset,
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
   InboxItem,
@@ -1588,6 +1589,38 @@ export class ApiClient {
       `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
       { method: "DELETE" },
     );
+  }
+
+  async getProviderPresets(): Promise<ProviderPreset[]> {
+    const raw = await this.fetch<unknown>("/api/provider-presets");
+    if (!Array.isArray(raw)) return [];
+    return raw as ProviderPreset[];
+  }
+
+  async fetchProviderModels(baseUrl: string, apiKey: string): Promise<string[]> {
+    const params = new URLSearchParams({ base_url: baseUrl });
+    if (apiKey) params.set("api_key", apiKey);
+    const raw = await this.fetch<unknown>(`/api/provider-models?${params.toString()}`);
+    if (raw && typeof raw === "object" && "data" in raw && Array.isArray((raw as { data: unknown }).data)) {
+      return ((raw as { data: { id: string }[] }).data).map((m) => m.id).filter(Boolean);
+    }
+    return [];
+  }
+
+  async applyProviderConfig(
+    runtimeId: string,
+    body: {
+      provider_type: string;
+      base_url: string;
+      api_key: string;
+      model: string;
+      name?: string;
+    },
+  ): Promise<{ status: string; config_id: string }> {
+    return this.fetch(`/api/runtimes/${runtimeId}/apply-provider-config`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   }
 
   async getRuntimeUsage(

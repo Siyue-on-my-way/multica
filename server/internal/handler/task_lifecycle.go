@@ -172,12 +172,14 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// When the caller asks for context compression (e.g. "fresh session retry"
-	// after switching the LLM gateway), run the same LLM summarisation that a
-	// cross-agent handoff triggers. This clears the previous handoff_summary
-	// guard only when it was auto-generated; a manually written checkpoint is
-	// respected (compressHandoffContext checks len(issue.HandoffSummary) == 0).
+	// after switching the LLM gateway, or a standalone "compact context now"
+	// with no task_id at all), run the same LLM summarisation that a
+	// cross-agent handoff triggers. force=true: this is a deliberate user
+	// request to refresh the checkpoint, so it must overwrite any existing
+	// handoff_summary rather than deferring to it (compressHandoffContext's
+	// passive callers still pass force=false).
 	if req.WithContextCompress {
-		h.compressHandoffContext(r.Context(), issue)
+		h.compressHandoffContext(r.Context(), issue, true)
 	}
 
 	task, err := h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, canInvoke)

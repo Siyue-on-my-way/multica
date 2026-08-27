@@ -60,3 +60,9 @@ func CleanupStaleUpdateArtifacts() {
 	}
 	_ = os.Remove(exePath + oldBinarySuffix)
 }
+
+// ReplaceBinaryForUpdate is the exported entry point for the daemon update
+// command. It delegates to the platform-specific replaceBinary implementation.
+func ReplaceBinaryForUpdate(tmpPath, exePath string) error {
+	return replaceBinary(tmpPath, exePath)
+}

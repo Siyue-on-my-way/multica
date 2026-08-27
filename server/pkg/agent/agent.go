@@ -217,7 +217,8 @@ type Config struct {
 }
 
 // New creates a Backend for the given agent type.
-// Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwen".
+// Supported types: "claude", "codebuddy", "codex",
+
 //
 // SupportedTypes is the canonical whitelist of agent types eligible to back a
 // custom runtime profile. It MUST stay in lockstep with the
@@ -238,6 +239,7 @@ var SupportedTypes = []string{
 	"claude",
 	"codebuddy",
 	"codex",
+	"multica",
 	"copilot",
 	"opencode",
 	"deveco",
@@ -304,7 +306,7 @@ func New(agentType string, cfg Config) (Backend, error) {
 		return &claudeBackend{cfg: cfg}, nil
 	case "codebuddy":
 		return &codebuddyBackend{cfg: cfg}, nil
-	case "codex":
+	case "codex", "multica":
 		return &codexBackend{cfg: cfg}, nil
 	case "copilot":
 		return &copilotBackend{cfg: cfg}, nil
@@ -355,6 +357,7 @@ var launchHeaders = map[string]string{
 	"claude":      "claude (stream-json)",
 	"codebuddy":   "codebuddy (stream-json)",
 	"codex":       "codex app-server",
+	"multica":     "multica app-server",
 	"copilot":     "copilot (json)",
 	"cursor":      "cursor-agent (stream-json)",
 	"deveco":      "deveco run (json)",

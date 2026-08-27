@@ -11,6 +11,12 @@ func replaceBinary(tmpPath, exePath string) error {
 	return os.Rename(tmpPath, exePath)
 }
 
+// ReplaceBinaryForUpdate is the exported entry point for the daemon update
+// command. It delegates to the platform-specific replaceBinary implementation.
+func ReplaceBinaryForUpdate(tmpPath, exePath string) error {
+	return replaceBinary(tmpPath, exePath)
+}
+
 // CleanupStaleUpdateArtifacts is a no-op on Unix — there are no sidecar files
 // to reclaim.
 func CleanupStaleUpdateArtifacts() {}

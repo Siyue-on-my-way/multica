@@ -1,0 +1,9 @@
+--- /mnt/a-opensource-tools/multica/Dockerfile
++++ /mnt/a-opensource-tools/multica/Dockerfile
+@@ -1,5 +1,5 @@
+ # --- Build stage ---
+-FROM golang:1.24-alpine AS builder
++FROM golang:1.26-alpine AS builder
+ 
+ # 替换为阿里云镜像源
+ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \

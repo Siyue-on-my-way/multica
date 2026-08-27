@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -292,7 +292,7 @@ function TaskCommentRetryButton({
 }) {
   const { t } = useT("issues");
   const [retrying, setRetrying] = useState(false);
-  const [freshRetrying, setFreshRetrying] = useState(false);
+  const [compacting, setCompacting] = useState(false);
 
   const handleRetry = async () => {
     if (retrying) return;
@@ -314,21 +314,22 @@ function TaskCommentRetryButton({
     }
   };
 
-  const handleFreshSessionRetry = async () => {
-    if (freshRetrying) return;
-    setFreshRetrying(true);
+  const handleCompactContext = async () => {
+    if (compacting) return;
+    setCompacting(true);
     try {
-      await api.rerunIssue(issueId, taskId, true);
+      await api.rerunIssue(issueId, undefined, true);
+      toast.success(t(($) => $.actions.compact_context_success));
     } catch (e) {
       toast.error(
         dispatchReasonCode(e) === "invocation_not_allowed"
-          ? t(($) => $.execution_log.retry_blocked)
+          ? t(($) => $.actions.compact_context_blocked)
           : e instanceof Error
             ? e.message
-            : t(($) => $.execution_log.fresh_session_retry_failed),
+            : t(($) => $.actions.compact_context_failed),
       );
     } finally {
-      setFreshRetrying(false);
+      setCompacting(false);
     }
   };
 
@@ -339,7 +340,7 @@ function TaskCommentRetryButton({
         size="sm"
         variant="outline"
         onClick={handleRetry}
-        disabled={retrying || freshRetrying}
+        disabled={retrying || compacting}
         aria-label={t(($) => $.execution_log.retry_task_aria)}
       >
         {retrying ? (
@@ -353,16 +354,16 @@ function TaskCommentRetryButton({
         type="button"
         size="sm"
         variant="outline"
-        onClick={handleFreshSessionRetry}
-        disabled={retrying || freshRetrying}
-        aria-label={t(($) => $.execution_log.fresh_session_retry_aria)}
+        onClick={handleCompactContext}
+        disabled={retrying || compacting}
+        aria-label={t(($) => $.actions.compact_context)}
       >
-        {freshRetrying ? (
+        {compacting ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <MessageSquarePlus className="h-3.5 w-3.5" />
+          <Sparkles className="h-3.5 w-3.5" />
         )}
-        {t(($) => $.execution_log.fresh_session_retry_tooltip)}
+        {t(($) => $.actions.compact_context)}
       </Button>
     </div>
   );

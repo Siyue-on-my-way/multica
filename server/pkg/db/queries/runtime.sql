@@ -396,3 +396,16 @@ WHERE status = 'offline'
     WHERE agent.runtime_id = agent_runtime.id
   )
 RETURNING id, workspace_id;
+
+-- name: SetRuntimeActiveProviderConfig :exec
+-- Updates the active provider config for a runtime.
+UPDATE agent_runtime
+SET active_provider_config_id = $2
+WHERE id = $1;
+
+-- name: GetRuntimeActiveProviderConfig :one
+-- Returns the active provider config details for a runtime, or pgx.ErrNoRows if none.
+SELECT pc.id, pc.name, pc.provider_type, pc.base_url, pc.api_key, pc.model
+FROM agent_runtime ar
+JOIN provider_configs pc ON ar.active_provider_config_id = pc.id
+WHERE ar.id = $1;

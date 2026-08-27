@@ -258,7 +258,12 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		{reason: "runtime_recovery", wantType: "runtime", wantResumeOK: true, wantRetry: true},
 		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
 		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
-		{reason: "agent_error.context_overflow", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
+		// Retryable (with the handler layer compressing comment history into a
+		// checkpoint before the retry fires — see retryableReasons' doc comment)
+		// but still resume-unsafe: CreateRetryTask forces a fresh session for it,
+		// same as codex_semantic_inactivity, since resuming would immediately
+		// overflow again on the identical oversized transcript.
+		{reason: "agent_error.context_overflow", wantType: "agent_error", wantResumeOK: false, wantRetry: true},
 		{reason: "agent_error", wantType: "agent_error", wantResumeOK: true, wantRetry: false},
 		// Missing terminal result errors classify to agent_error.unknown. Keep
 		// that deterministic upstream failure outside the auto-retry allowlist.

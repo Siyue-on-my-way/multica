@@ -1,0 +1,14 @@
+--- /mnt/a-opensource-tools/multica/restart.sh
++++ /mnt/a-opensource-tools/multica/restart.sh
+@@ -51,7 +51,10 @@
+ # 当 backend 重建时，同步更新本机 daemon 二进制，确保 /api/daemon/binary 下发的版本与本机一致
+ if [[ "$SKIP_BUILD" == false ]] && [[ "$BUILD_TARGETS" == *"multica-backend"* ]]; then
+   echo -e "\n${GREEN}[2.5] 重建本机 daemon 二进制并更新 /usr/local/bin/multica...${NC}"
+-  (cd "$REPO_ROOT/server" && go build -ldflags "-s -w" -o bin/multica ./cmd/multica)
++  VERSION=$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)
++  COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
++  DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
++  (cd "$REPO_ROOT/server" && go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" -o bin/multica ./cmd/multica)
+   if [ $? -eq 0 ]; then
+     cp "$REPO_ROOT/server/bin/multica" /usr/local/bin/multica
+     echo -e "${GREEN}  daemon 二进制已更新${NC}"

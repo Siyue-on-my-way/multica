@@ -380,7 +380,11 @@ WHERE id = $1 AND issue_id IS NULL;
 -- the conversation when the backend supports it. Resume-unsafe failures are
 -- retried as fresh sessions so the child does not inherit a stuck agent
 -- conversation. Keep the CASE WHEN predicates in sync with
--- resumeUnsafeFailureReason and the resume lookup blacklists. attempt is
+-- resumeUnsafeFailureReason and the resume lookup blacklists — currently
+-- codex_semantic_inactivity and agent_error.context_overflow are the two
+-- resume-unsafe reasons also present in retryableReasons (every other
+-- resume-unsafe reason never reaches this query because it isn't
+-- auto-retried at all). attempt is
 -- incremented; max_attempts, trigger_comment_id, coalesced_comment_ids,
 -- is_leader_task, and squad_id are inherited so the retried task receives the
 -- parent's complete planned comment batch and keeps the same squad-role
@@ -442,10 +446,10 @@ SELECT
     CASE WHEN sqlc.narg(fire_at)::timestamptz IS NOT NULL THEN 'deferred' ELSE 'queued' END,
     CASE WHEN p.chat_session_id IS NOT NULL THEN GREATEST(p.priority, 3) ELSE p.priority END,
     p.trigger_comment_id, p.coalesced_comment_ids, p.trigger_summary, p.context,
-    CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.session_id END,
-    CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.work_dir END,
+    CASE WHEN COALESCE(p.failure_reason, '') IN ('codex_semantic_inactivity', 'agent_error.context_overflow') THEN NULL ELSE p.session_id END,
+    CASE WHEN COALESCE(p.failure_reason, '') IN ('codex_semantic_inactivity', 'agent_error.context_overflow') THEN NULL ELSE p.work_dir END,
     p.attempt + 1, COALESCE(sqlc.narg(max_attempts)::int, p.max_attempts), p.id,
-    p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
+    COALESCE(p.failure_reason, '') IN ('codex_semantic_inactivity', 'agent_error.context_overflow'),
     p.is_leader_task,
     p.squad_id,
     p.originator_user_id,

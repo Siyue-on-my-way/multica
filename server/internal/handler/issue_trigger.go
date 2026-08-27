@@ -48,7 +48,7 @@ func (h *Handler) dispatchIssueRun(ctx context.Context, issue db.Issue, trigger 
 		// Compress comment history into a structured HandoffSummary so the new
 		// agent can resume without re-reading the full timeline. No-op when the
 		// LLM is not configured or the issue already has a summary.
-		h.compressHandoffContext(ctx, issue)
+		h.compressHandoffContext(ctx, issue, false)
 		// The member who performed this assign/promote is the accountable human
 		// for the run (MUL-4302 §4). An agent actor is not a human, so only a
 		// member actor is threaded; otherwise attribution falls back to the chain.

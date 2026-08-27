@@ -73,6 +73,13 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+const mockRerunIssue = vi.fn();
+let reasonCode: string | undefined;
+vi.mock("@multica/core/api", () => ({
+  api: { rerunIssue: (...args: unknown[]) => mockRerunIssue(...args) },
+  dispatchReasonCode: () => reasonCode,
+}));
+
 // Import AFTER mocks are registered.
 import { toast } from "sonner";
 import { useIssueActions } from "../use-issue-actions";
@@ -110,6 +117,8 @@ beforeEach(() => {
   mockUpdateMutate.mockReset();
   mockCreatePinMutate.mockReset();
   mockDeletePinMutate.mockReset();
+  mockRerunIssue.mockReset();
+  reasonCode = undefined;
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   pinListRef.value = [];
@@ -350,6 +359,85 @@ describe("useIssueActions", () => {
 
     expect(mockUpdateMutate).not.toHaveBeenCalled();
     expect(mockOpenModal).not.toHaveBeenCalled();
+  });
+
+  describe("compactContext", () => {
+    it("is only offered for an agent- or squad-assigned issue", () => {
+      const unassigned = renderHook(() => useIssueActions(mockIssue), { wrapper });
+      expect(unassigned.result.current.canCompactContext).toBe(false);
+
+      const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+      const agentAssigned = renderHook(() => useIssueActions(agentIssue), { wrapper });
+      expect(agentAssigned.result.current.canCompactContext).toBe(true);
+
+      const squadIssue = { ...mockIssue, assignee_type: "squad" } as Issue;
+      const squadAssigned = renderHook(() => useIssueActions(squadIssue), { wrapper });
+      expect(squadAssigned.result.current.canCompactContext).toBe(true);
+
+      const memberIssue = { ...mockIssue, assignee_type: "member" } as Issue;
+      const memberAssigned = renderHook(() => useIssueActions(memberIssue), { wrapper });
+      expect(memberAssigned.result.current.canCompactContext).toBe(false);
+    });
+
+    it("calls rerunIssue with no task_id and with_context_compress=true, then toasts success", async () => {
+      mockRerunIssue.mockResolvedValue({ id: "task-fresh" });
+      const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+      const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
+
+      await act(async () => {
+        result.current.compactContext();
+        await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      });
+
+      expect(mockRerunIssue).toHaveBeenCalledWith("issue-1", undefined, true);
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("toasts an error (not success) when the admission reason is invocation_not_allowed", async () => {
+      reasonCode = "invocation_not_allowed";
+      mockRerunIssue.mockRejectedValue(new Error("forbidden"));
+      const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+      const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
+
+      await act(async () => {
+        result.current.compactContext();
+        await waitFor(() => expect(toast.error).toHaveBeenCalled());
+      });
+
+      // Without an I18nProvider in this test harness, t() resolves to "" —
+      // the point of this assertion is the blocked-reason BRANCH (not the
+      // generic "forbidden" message from the rejected promise), which is
+      // exactly what distinguishes it from a plain network/validation failure.
+      expect(toast.error).toHaveBeenCalledWith("");
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op re-click while a compact request is already in flight", async () => {
+      let resolveRerun!: (value: { id: string }) => void;
+      mockRerunIssue.mockReturnValue(
+        new Promise((resolve) => {
+          resolveRerun = resolve;
+        }),
+      );
+      const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+      const { result, rerender } = renderHook(() => useIssueActions(agentIssue), { wrapper });
+
+      act(() => {
+        result.current.compactContext();
+      });
+      rerender();
+      expect(result.current.compactingContext).toBe(true);
+
+      act(() => {
+        result.current.compactContext();
+      });
+      expect(mockRerunIssue).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolveRerun({ id: "task-fresh" });
+        await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      });
+    });
   });
 
 });

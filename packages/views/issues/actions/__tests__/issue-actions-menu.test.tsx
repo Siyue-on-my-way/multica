@@ -186,6 +186,24 @@ describe("IssueActionsDropdown", () => {
     expect(screen.queryByText("Create sub-issue")).not.toBeInTheDocument();
     expect(screen.queryByText("Set parent issue...")).not.toBeInTheDocument();
     expect(screen.queryByText("Add sub-issue...")).not.toBeInTheDocument();
+    // Unassigned issue has no agent session to compact.
+    expect(screen.queryByText("Compact context & restart")).not.toBeInTheDocument();
+  });
+
+  it("shows 'Compact context & restart' only for an agent- or squad-assigned issue", async () => {
+    const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+    render(
+      wrap(
+        <IssueActionsDropdown
+          issue={agentIssue}
+          trigger={<button data-testid="trigger">Menu</button>}
+        />,
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("trigger"));
+
+    expect(await screen.findByText("Compact context & restart")).toBeInTheDocument();
   });
 
   it("clicking the Assignee item opens the shared AssigneePicker popover", async () => {

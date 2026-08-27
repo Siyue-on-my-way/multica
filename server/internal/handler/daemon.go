@@ -30,6 +30,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // ---------------------------------------------------------------------------
@@ -1282,6 +1283,24 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 			slog.Warn("local skill import HasPending timed out", "runtime_id", runtimeID, "elapsed_ms", m.ProbeImportMs)
 		} else {
 			slog.Warn("local skill import HasPending failed", "error", probeErr, "runtime_id", runtimeID)
+		}
+	}
+
+	// Populate PendingProviderConfig from the runtime's active provider config.
+	if provCfg, err := h.getRuntimeActiveProviderConfig(ctx, rt.ID); err == nil && provCfg != nil {
+		ack.PendingProviderConfig = &protocol.DaemonHeartbeatPendingProviderConfig{
+			ID:        uuidToString(provCfg.ID),
+			TargetCLI: provCfg.ProviderType,
+			BaseURL:   provCfg.BaseURL,
+			APIKey:    provCfg.APIKey,
+			Model:     provCfg.Model,
+		}
+		// Clear the active config after delivery so the daemon doesn't re-apply
+		// on every heartbeat. The provider config is considered delivered once the
+		// ack payload is formed; the daemon handles apply idempotently.
+		if clearErr := h.setRuntimeActiveProviderConfig(ctx, rt.ID, nil); clearErr != nil {
+			slog.Warn("clear_active_provider_config failed",
+				"runtime_id", runtimeID, "error", clearErr)
 		}
 	}
 
@@ -3642,7 +3661,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
@@ -3653,12 +3672,37 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// context_overflow is auto-retried (retryableReasons), but simply
+	// resuming — even into a fresh session — replays the exact same
+	// oversized comment history that overflowed the LAST session. Compress
+	// it into a checkpoint BEFORE calling FailTask below: FailTask creates
+	// the retry child inside its own transaction and the daemon can claim it
+	// the instant that commits, so compressing afterwards risks losing the
+	// race — the retry would start before handoff_summary existed to inject.
+	// Mirrors FailTask's own reason normalisation (Classify + NormalizeDaemonReason)
+	// so this check sees the SAME effective reason FailTask's retryableReasons
+	// gate will see. force=false: an explicit checkpoint a prior agent wrote
+	// is still respected. Best-effort — see compressHandoffContext's own
+	// contract; a failure here must not block the terminal report.
+	if task.IssueID.Valid {
+		effectiveReason := req.FailureReason
+		if effectiveReason == "" {
+			effectiveReason = taskfailure.Classify(req.Error).String()
+		}
+		effectiveReason = taskfailure.NormalizeDaemonReason(effectiveReason, req.Error).String()
+		if effectiveReason == string(taskfailure.ReasonAgentContextOverflow) {
+			if issue, ierr := h.Queries.GetIssue(r.Context(), task.IssueID); ierr == nil {
+				h.compressHandoffContext(r.Context(), issue, false)
+			}
+		}
+	}
+
 	// MUL-5305: SessionRolloutMissing is applied inside FailTask's terminal
 	// transaction — forcing session_id NULL (overriding the COALESCE that would
 	// keep a stale mid-flight pin) and flagging the row in the same commit that
 	// creates and wakes the auto-retry, so the retry can never claim the withheld
 	// pointer or miss the continuity gap.
-	task, err := h.TaskService.FailTask(r.Context(), parseUUID(taskID), req.Error, req.SessionID, req.WorkDir, req.FailureReason, req.SessionRolloutMissing, req.RetiredSessionID)
+	failedTask, err := h.TaskService.FailTask(r.Context(), parseUUID(taskID), req.Error, req.SessionID, req.WorkDir, req.FailureReason, req.SessionRolloutMissing, req.RetiredSessionID)
 	if err != nil {
 		// A FailTask error is an infrastructure failure (the terminal
 		// transaction that also clears the withheld session, writes the
@@ -3671,17 +3715,17 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.TaskService.NotifyTaskFinished(*task)
+	h.TaskService.NotifyTaskFinished(*failedTask)
 
 	// Best-effort revoke of the mat_ task token minted at claim. Same
 	// rationale as CompleteTask — eager deletion shrinks the post-
 	// terminal window. The 24h expiry / cascade are the durable guards.
-	if err := h.Queries.DeleteTaskTokensByTask(r.Context(), task.ID); err != nil {
-		slog.Warn("fail task: failed to revoke task tokens", "task_id", uuidToString(task.ID), "error", err)
+	if err := h.Queries.DeleteTaskTokensByTask(r.Context(), failedTask.ID); err != nil {
+		slog.Warn("fail task: failed to revoke task tokens", "task_id", uuidToString(failedTask.ID), "error", err)
 	}
 
-	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
-	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(failedTask.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
+	writeJSON(w, http.StatusOK, taskToResponse(*failedTask, workspaceID))
 }
 
 // ---------------------------------------------------------------------------
