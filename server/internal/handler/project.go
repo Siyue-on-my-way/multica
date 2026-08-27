@@ -564,6 +564,184 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// MigrateProject moves a project and all of its issues atomically. Project and
+// issue assignees are intentionally cleared because they belong to the source
+// workspace.
+func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
+	idUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "project id")
+	if !ok {
+		return
+	}
+	sourceID := h.resolveWorkspaceID(r)
+	sourceUUID, ok := parseUUIDOrBadRequest(w, sourceID, "workspace id")
+	if !ok {
+		return
+	}
+	if _, ok := h.workspaceMember(w, r, sourceID); !ok {
+		return
+	}
+	var req struct {
+		TargetWorkspaceID string `json:"target_workspace_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TargetWorkspaceID == "" {
+		writeError(w, http.StatusBadRequest, "target_workspace_id is required")
+		return
+	}
+	targetUUID, ok := parseUUIDOrBadRequest(w, req.TargetWorkspaceID, "target workspace id")
+	if !ok || targetUUID == sourceUUID {
+		if targetUUID == sourceUUID {
+			writeError(w, http.StatusBadRequest, "target workspace must differ")
+		}
+		return
+	}
+	// The current route middleware stores the source workspace member in the
+	// request context. Do not reuse it for the target check: the target must be
+	// looked up independently so a user cannot migrate into an inaccessible
+	// workspace by virtue of being a member of the source workspace.
+	if _, ok := h.requireWorkspaceMember(w, r, req.TargetWorkspaceID, "target workspace not found"); !ok {
+		return
+	}
+	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: idUUID, WorkspaceID: sourceUUID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start migration")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	// Issue numbers are unique within a workspace. Reserve a new contiguous
+	// range in the target workspace before changing the issue rows so a
+	// migration still succeeds when the target already has issues.
+	var targetIssueCounter int32
+	if err = tx.QueryRow(r.Context(), `
+		UPDATE workspace
+		SET issue_counter = GREATEST(
+			issue_counter,
+			COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id = $1), 0)
+		)
+		WHERE id = $1
+		RETURNING issue_counter`, targetUUID).Scan(&targetIssueCounter); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare target workspace")
+		return
+	}
+	projectTag, err := tx.Exec(r.Context(), `UPDATE project SET workspace_id = $1, lead_type = NULL, lead_id = NULL, updated_at = now() WHERE id = $2 AND workspace_id = $3`, targetUUID, idUUID, sourceUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate project")
+		return
+	}
+	if projectTag.RowsAffected() != 1 {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	var issueCount int32
+	if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM issue WHERE project_id = $1`, idUUID).Scan(&issueCount); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to count project issues")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		WITH moving AS (
+			SELECT id, ($1 + ROW_NUMBER() OVER (ORDER BY created_at, id))::int AS next_number
+			FROM issue
+			WHERE project_id = $2
+		)
+		UPDATE issue AS i
+		SET workspace_id = $3,
+			number = moving.next_number,
+			assignee_type = NULL,
+			assignee_id = NULL,
+			updated_at = now()
+		FROM moving
+		WHERE i.id = moving.id`, targetIssueCounter, idUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate issues")
+		return
+	}
+	if issueCount > 0 {
+		if _, err = tx.Exec(r.Context(), `UPDATE workspace SET issue_counter = $1 + $2 WHERE id = $3`, targetIssueCounter, issueCount, targetUUID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update target issue counter")
+			return
+		}
+	}
+	// Issue history and user-facing metadata have their own workspace scope.
+	// Move those rows with the issues so comments, reactions, attachments, and
+	// pins remain visible after the project changes workspace.
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE comment
+		SET workspace_id = $1, updated_at = now()
+		WHERE workspace_id = $3
+		  AND issue_id IN (SELECT id FROM issue WHERE project_id = $2)`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate comments")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE comment_reaction
+		SET workspace_id = $1
+		WHERE workspace_id = $3
+		  AND comment_id IN (
+			SELECT c.id FROM comment c
+			JOIN issue i ON i.id = c.issue_id
+			WHERE i.project_id = $2
+		)`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate comment reactions")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE issue_reaction
+		SET workspace_id = $1
+		WHERE workspace_id = $3
+		  AND issue_id IN (SELECT id FROM issue WHERE project_id = $2)`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate issue reactions")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE attachment
+		SET workspace_id = $1
+		WHERE workspace_id = $3
+		  AND (
+			issue_id IN (SELECT id FROM issue WHERE project_id = $2)
+			OR comment_id IN (
+				SELECT c.id FROM comment c
+				JOIN issue i ON i.id = c.issue_id
+				WHERE i.project_id = $2
+			)
+		)`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate attachments")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE pinned_item
+		SET workspace_id = $1
+		WHERE workspace_id = $3
+		  AND (
+			(item_type = 'project' AND item_id = $2)
+			OR (item_type = 'issue' AND item_id IN (SELECT id FROM issue WHERE project_id = $2))
+		)`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate pins")
+		return
+	}
+	// Project resources carry their own workspace scope and must follow the
+	// project or they would disappear from the target workspace's resource view.
+	if _, err = tx.Exec(r.Context(), `UPDATE project_resource SET workspace_id = $1 WHERE project_id = $2`, targetUUID, idUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate project resources")
+		return
+	}
+	project, err = h.Queries.WithTx(tx).GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: idUUID, WorkspaceID: targetUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load migrated project")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit migration")
+		return
+	}
+	resp := projectToResponse(project)
+	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
+	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)

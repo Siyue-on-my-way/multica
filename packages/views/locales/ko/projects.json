@@ -63,6 +63,7 @@
     "unpin_tooltip": "사이드바 고정 해제",
     "sidebar_tooltip": "사이드바 열기/닫기",
     "copy_link": "링크 복사",
+    "migrate_action": "다른 워크스페이스로 이동",
     "delete_action": "프로젝트 삭제",
     "section_properties": "속성",
     "section_progress": "진행률",
@@ -78,7 +79,15 @@
     "no_issues_yet": "아직 이슈가 없습니다",
     "toast_link_copied": "링크를 복사했습니다",
     "toast_project_deleted": "프로젝트를 삭제했습니다",
-    "toast_move_issue_failed": "이슈를 이동하지 못했습니다"
+    "toast_project_migrated": "프로젝트를 이동했습니다",
+    "toast_move_issue_failed": "이슈를 이동하지 못했습니다",
+    "migrate_dialog": {
+      "title": "다른 워크스페이스로 이동",
+      "description": "프로젝트와 모든 이슈가 대상 워크스페이스로 이동하며 담당자는 삭제됩니다.",
+      "select_workspace": "워크스페이스 선택",
+      "confirm": "이동",
+      "cancel": "취소"
+    }
   },
   "resources": {
     "section_header": "리소스",

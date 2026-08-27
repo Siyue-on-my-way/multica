@@ -2625,6 +2625,13 @@ export class ApiClient {
     });
   }
 
+  async migrateProject(id: string, targetWorkspaceId: string): Promise<Project> {
+    return this.fetch(`/api/projects/${id}/migrate`, {
+      method: "PUT",
+      body: JSON.stringify({ target_workspace_id: targetWorkspaceId }),
+    });
+  }
+
   async deleteProject(id: string): Promise<void> {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
   }

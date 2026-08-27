@@ -64,6 +64,7 @@
     "unpin_tooltip": "Unpin from sidebar",
     "sidebar_tooltip": "Toggle sidebar",
     "copy_link": "Copy link",
+    "migrate_action": "Migrate to another workspace",
     "delete_action": "Delete project",
     "section_properties": "Properties",
     "section_progress": "Progress",
@@ -79,7 +80,15 @@
     "no_issues_yet": "No issues yet",
     "toast_link_copied": "Link copied",
     "toast_project_deleted": "Project deleted",
-    "toast_move_issue_failed": "Failed to move issue"
+    "toast_project_migrated": "Project migrated",
+    "toast_move_issue_failed": "Failed to move issue",
+    "migrate_dialog": {
+      "title": "Migrate to another workspace",
+      "description": "The project and all its issues will move to the target workspace. Assignees will be cleared.",
+      "select_workspace": "Select a workspace",
+      "confirm": "Migrate",
+      "cancel": "Cancel"
+    }
   },
   "resources": {
     "section_header": "Resources",
