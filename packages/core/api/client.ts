@@ -52,6 +52,8 @@ import type {
   IssueTriggerPreviewParams,
   SuggestSubIssuesRequest,
   SuggestSubIssuesResponse,
+  SuggestSubissuePlansResponse,
+  ExpandSubissuePlanRequest,
   Reaction,
   IssueReaction,
   Workspace,
@@ -861,6 +863,20 @@ export class ApiClient {
 
   async suggestSubIssues(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubIssuesResponse> {
     return this.fetch(`/api/issues/${issueId}/suggest-subissues`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async suggestSubissuePlans(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubissuePlansResponse> {
+    return this.fetch(`/api/issues/${issueId}/suggest-subissue-plans`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async expandSubissuePlan(issueId: string, data: ExpandSubissuePlanRequest): Promise<SuggestSubIssuesResponse> {
+    return this.fetch(`/api/issues/${issueId}/expand-subissue-plan`, {
       method: "POST",
       body: JSON.stringify(data),
     });

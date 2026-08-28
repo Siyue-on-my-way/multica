@@ -71,20 +71,46 @@ export interface MoveIssueRequest
 /** Body for `POST /api/issues/{id}/suggest-subissues`. Exactly one of
  *  comment_id / text must be set. */
 export interface SuggestSubIssuesRequest {
-  comment_id?: string;
-  text?: string;
+	comment_id?: string;
+	text?: string;
+	human_constraints?: string;
+}
+
+/** Lightweight outline returned before the user approves a decomposition. */
+export interface SubIssuePlanItem {
+	id: string;
+	title: string;
+	goal: string;
+}
+
+export interface SubIssuePlan {
+	id: string;
+	name: string;
+	items: SubIssuePlanItem[];
+}
+
+export interface SuggestSubissuePlansResponse {
+	plans: SubIssuePlan[];
+}
+
+export interface ExpandSubissuePlanRequest extends SuggestSubIssuesRequest {
+	plan: SubIssuePlan;
 }
 
 /** One AI-proposed sub-issue in the "生成子issue" preview panel. Not yet
  *  created — the panel lets the user edit/uncheck before a batch of
  *  `createIssue` calls turns confirmed rows into real issues. */
 export interface SubIssueSuggestion {
-  title: string;
-  description: string;
+	/** Draft-only stable ID used to preserve the approved outline. */
+	id?: string;
+	title: string;
+	goal?: string;
+	description: string;
   /** Ordered barrier group (>= 1): same-stage rows can run in parallel,
    *  later stages depend on earlier ones finishing. */
   stage: number;
-  depends_on_titles: string[];
+	depends_on_titles: string[];
+	depends_on_ids?: string[];
   /** Present only when the model's pick matched a real candidate parent. */
   suggested_parent_identifier: string | null;
   suggested_parent_issue_id: string | null;

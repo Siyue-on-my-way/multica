@@ -53,6 +53,38 @@ type SubissueSuggestConfiguredLLM interface {
 	GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error)
 }
 
+// LegacySubissueSuggestConfiguredLLM adapts the pre-registry global client to
+// the staged prompt seam. It is used only during migration when no business
+// YAML directory is enabled, and renders the supplied fallback template
+// without allowing request data to select a file or a model.
+type LegacySubissueSuggestConfiguredLLM struct {
+	Client SubissueSuggestLLM
+}
+
+func (c LegacySubissueSuggestConfiguredLLM) Enabled() bool {
+	return c.Client != nil && c.Client.Enabled()
+}
+
+func (c LegacySubissueSuggestConfiguredLLM) GenerateJSONTemplate(
+	ctx context.Context,
+	variables map[string]string,
+	fallbackSystem string,
+	fallbackUserTemplate string,
+	temperature float64,
+	maxCompletionTokens int64,
+) (string, error) {
+	if !c.Enabled() {
+		return "", ErrLLMNotConfigured
+	}
+	render := func(template string) string {
+		for name, value := range variables {
+			template = strings.ReplaceAll(template, "{{"+name+"}}", value)
+		}
+		return template
+	}
+	return c.Client.GenerateJSON(ctx, "", render(fallbackSystem), render(fallbackUserTemplate), temperature, maxCompletionTokens)
+}
+
 // SubissueSuggestSourceIssue is the minimal shape the prompt needs for the
 // issue whose comment is being decomposed, its existing children (to avoid
 // suggesting a duplicate), and the candidate parent list.
@@ -69,10 +101,13 @@ type SubissueCandidateParent struct {
 // SubissueSuggestion is one parsed (but not yet validated against the
 // candidate parent list) entry from the model's output.
 type SubissueSuggestion struct {
+	ID                        string   `json:"id,omitempty"`
 	Title                     string   `json:"title"`
+	Goal                      string   `json:"goal,omitempty"`
 	Description               string   `json:"description"`
 	Stage                     int      `json:"stage"`
 	DependsOnTitles           []string `json:"depends_on_titles"`
+	DependsOnIDs              []string `json:"depends_on_ids,omitempty"`
 	SuggestedParentIdentifier *string  `json:"suggested_parent_identifier"`
 	Confidence                float64  `json:"confidence"`
 }

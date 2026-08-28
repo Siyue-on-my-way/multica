@@ -14,3 +14,8 @@ poller without rebuilding the image.
 The files intentionally share `MULTICA_LLM_API_KEY` for the default Docker
 deployment. Use a separate environment variable name in a business file when
 different credentials are required.
+
+`subissue-suggest.yaml` contains two independently configurable stages in the
+same business file: `outline` returns lightweight alternative title/goal plans,
+and `detail` expands only the outline approved by the user. They may use
+different models, endpoints, credentials, prompts, and token/time budgets.

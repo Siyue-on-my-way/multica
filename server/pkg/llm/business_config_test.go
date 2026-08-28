@@ -123,6 +123,111 @@ output:
 	}
 }
 
+func TestBusinessRegistryLoadsIndependentSubissueStages(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		requests = append(requests, request)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","created":1,"model":"configured-model","choices":[{"index":0,"message":{"role":"assistant","content":"{\"plans\":[]}"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("MULTICA_TEST_STAGE_KEY", "stage-secret")
+	directory := t.TempDir()
+	content := strings.ReplaceAll(`version: 1
+business: subissue-suggest
+enabled: true
+stages:
+  outline:
+    llm:
+      provider: openai-compatible
+      base_url: BASE_URL
+      api_key_env: MULTICA_TEST_STAGE_KEY
+      model: outline-model
+      timeout_ms: 5000
+    prompt:
+      system: "outline system"
+      user_template: "outline {{comment_text}} {{human_constraints}}"
+    output:
+      format: json
+      json_schema:
+        type: object
+  detail:
+    llm:
+      provider: openai-compatible
+      base_url: BASE_URL
+      api_key_env: MULTICA_TEST_STAGE_KEY
+      model: detail-model
+      timeout_ms: 5000
+    prompt:
+      system: "detail system"
+      user_template: "detail {{approved_outline}}"
+    output:
+      format: json
+      json_schema:
+        type: object
+`, "BASE_URL", server.URL+"/")
+	writeBusinessFile(t, directory, "subissue-suggest.yaml", content)
+
+	registry := NewBusinessRegistry(BusinessRegistryConfig{
+		Directory:  directory,
+		HTTPClient: server.Client(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if status := registry.Status(BusinessSubissueSuggest); status.State != BusinessLoadActive {
+		t.Fatalf("staged subissue status = %+v", status)
+	}
+
+	outline := registry.Client(BusinessSubissueSuggest).Stage(BusinessStageOutline)
+	if _, err := outline.GenerateJSONTemplate(context.Background(), map[string]string{
+		"comment_text":      "comment",
+		"human_constraints": "keep together",
+	}, "", "", 0, 0); err != nil {
+		t.Fatalf("outline generation: %v", err)
+	}
+	detail := registry.Client(BusinessSubissueSuggest).Stage(BusinessStageDetail)
+	if _, err := detail.GenerateJSONTemplate(context.Background(), map[string]string{
+		"approved_outline": "outline",
+	}, "", "", 0, 0); err != nil {
+		t.Fatalf("detail generation: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
+	}
+	if requests[0]["model"] != "outline-model" || requests[1]["model"] != "detail-model" {
+		t.Fatalf("stage models = %v, %v", requests[0]["model"], requests[1]["model"])
+	}
+	messages, ok := requests[0]["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatal("expected staged request messages")
+	}
+}
+
+func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "docker", "config", "subissue-suggest.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read checked-in subissue config: %v", err)
+	}
+	parsed, err := parseBusinessFile(BusinessSubissueSuggest, businessDefinitions[BusinessSubissueSuggest], data)
+	if err != nil {
+		t.Fatalf("parse checked-in subissue config: %v", err)
+	}
+	if len(parsed.Stages) != 2 {
+		t.Fatalf("checked-in config stages = %d, want 2", len(parsed.Stages))
+	}
+	for _, stage := range []string{BusinessStageOutline, BusinessStageDetail} {
+		if parsed.Stages[stage] == nil {
+			t.Fatalf("checked-in config missing stage %q", stage)
+		}
+	}
+}
+
 func TestBusinessRegistryIsolatesInvalidFilesAndKeepsStaleSnapshot(t *testing.T) {
 	directory := t.TempDir()
 	writeBusinessFile(t, directory, "chat-title.yaml", validBusinessYAML("chat-title", "text", "{{source_text}}", "{{source_text}}"))

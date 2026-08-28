@@ -30,10 +30,13 @@ type SuggestSubIssuesRequest struct {
 // SuggestedParentIdentifier against the real candidate list — the frontend
 // never has to re-resolve an identifier the model produced.
 type SubIssueSuggestionResponse struct {
+	ID                        string   `json:"id,omitempty"`
 	Title                     string   `json:"title"`
+	Goal                      string   `json:"goal,omitempty"`
 	Description               string   `json:"description"`
 	Stage                     int32    `json:"stage"`
 	DependsOnTitles           []string `json:"depends_on_titles"`
+	DependsOnIDs              []string `json:"depends_on_ids,omitempty"`
 	SuggestedParentIdentifier *string  `json:"suggested_parent_identifier"`
 	SuggestedParentIssueID    *string  `json:"suggested_parent_issue_id"`
 	Confidence                float64  `json:"confidence"`
@@ -118,10 +121,13 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 	resp := SuggestSubIssuesResponse{Subissues: make([]SubIssueSuggestionResponse, 0, len(suggestions))}
 	for _, s := range suggestions {
 		out := SubIssueSuggestionResponse{
+			ID:              s.ID,
 			Title:           s.Title,
+			Goal:            s.Goal,
 			Description:     s.Description,
 			Stage:           int32(s.Stage),
 			DependsOnTitles: s.DependsOnTitles,
+			DependsOnIDs:    s.DependsOnIDs,
 			Confidence:      s.Confidence,
 		}
 		if s.SuggestedParentIdentifier != nil {

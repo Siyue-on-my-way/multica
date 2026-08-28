@@ -35,6 +35,11 @@ const (
 )
 
 const (
+	BusinessStageOutline = "outline"
+	BusinessStageDetail  = "detail"
+)
+
+const (
 	BusinessLoadActive         BusinessLoadState = "active"
 	BusinessLoadDisabled       BusinessLoadState = "disabled"
 	BusinessLoadFallbackLegacy BusinessLoadState = "fallback_legacy"
@@ -64,6 +69,12 @@ type businessDefinition struct {
 	fileName       string
 	expectedOutput string
 	variables      map[string]struct{}
+	stages         map[string]businessStageDefinition
+}
+
+type businessStageDefinition struct {
+	expectedOutput string
+	variables      map[string]struct{}
 }
 
 var businessDefinitions = map[Business]businessDefinition{
@@ -81,6 +92,33 @@ var businessDefinitions = map[Business]businessDefinition{
 			"issue_title":       {},
 			"siblings":          {},
 			"candidate_parents": {},
+			"human_constraints": {},
+			"approved_outline":  {},
+		},
+		stages: map[string]businessStageDefinition{
+			BusinessStageOutline: {
+				expectedOutput: "json",
+				variables: map[string]struct{}{
+					"comment_text":      {},
+					"issue_identifier":  {},
+					"issue_title":       {},
+					"siblings":          {},
+					"candidate_parents": {},
+					"human_constraints": {},
+				},
+			},
+			BusinessStageDetail: {
+				expectedOutput: "json",
+				variables: map[string]struct{}{
+					"comment_text":      {},
+					"issue_identifier":  {},
+					"issue_title":       {},
+					"siblings":          {},
+					"candidate_parents": {},
+					"human_constraints": {},
+					"approved_outline":  {},
+				},
+			},
 		},
 	},
 	BusinessHandoffCompress: {
@@ -149,11 +187,19 @@ type BusinessClient struct {
 	business Business
 }
 
-type businessSnapshot struct {
-	business            Business
+// BusinessStageClient is a stable handle for one phase of a business call.
+// The parent registry still owns the immutable snapshot; resolving the stage
+// for every request lets a hot reload take effect without rewiring callers.
+type BusinessStageClient struct {
+	parent *BusinessClient
+	stage  string
+}
+
+type businessCallSnapshot struct {
 	source              string
 	version             int
 	enabled             bool
+	promptConfigured    bool
 	client              *Client
 	clientConfig        Config
 	apiKeyEnv           string
@@ -163,17 +209,34 @@ type businessSnapshot struct {
 	maxCompletionTokens int64
 	timeout             time.Duration
 	jsonSchema          map[string]any
-	loadedAt            time.Time
-	fingerprint         string
+	variables           map[string]struct{}
+}
+
+type businessSnapshot struct {
+	business    Business
+	source      string
+	version     int
+	enabled     bool
+	call        *businessCallSnapshot
+	stages      map[string]*businessCallSnapshot
+	loadedAt    time.Time
+	fingerprint string
 }
 
 type businessFileConfig struct {
-	Version  int                 `yaml:"version"`
-	Business string              `yaml:"business"`
-	Enabled  *bool               `yaml:"enabled"`
-	LLM      *businessFileLLM    `yaml:"llm"`
-	Prompt   *businessFilePrompt `yaml:"prompt"`
-	Output   *businessFileOutput `yaml:"output"`
+	Version  int                                 `yaml:"version"`
+	Business string                              `yaml:"business"`
+	Enabled  *bool                               `yaml:"enabled"`
+	LLM      *businessFileLLM                    `yaml:"llm"`
+	Prompt   *businessFilePrompt                 `yaml:"prompt"`
+	Output   *businessFileOutput                 `yaml:"output"`
+	Stages   map[string]*businessFileStageConfig `yaml:"stages"`
+}
+
+type businessFileStageConfig struct {
+	LLM    *businessFileLLM    `yaml:"llm"`
+	Prompt *businessFilePrompt `yaml:"prompt"`
+	Output *businessFileOutput `yaml:"output"`
 }
 
 type businessFileLLM struct {
@@ -234,6 +297,16 @@ func (r *BusinessRegistry) Client(business Business) *BusinessClient {
 		return nil
 	}
 	return &BusinessClient{registry: r, business: business}
+}
+
+// Stage returns a fixed phase handle for a business. Unknown phase names are
+// rejected by the stage-aware loader and resolve to a disabled handle here;
+// callers never turn request data into a filesystem path.
+func (c *BusinessClient) Stage(stage string) *BusinessStageClient {
+	if c == nil {
+		return nil
+	}
+	return &BusinessStageClient{parent: c, stage: strings.TrimSpace(stage)}
 }
 
 // Start begins read-only polling. It is safe to call more than once; only one
@@ -353,7 +426,7 @@ func (r *BusinessRegistry) reloadBusiness(business Business) {
 		return
 	}
 	state := BusinessLoadActive
-	if !snapshot.enabled || !snapshot.client.Enabled() {
+	if !snapshot.enabled || !snapshot.hasEnabledCall() {
 		state = BusinessLoadError
 	}
 	if !snapshot.enabled {
@@ -375,7 +448,7 @@ func (r *BusinessRegistry) reloadBusiness(business Business) {
 func (r *BusinessRegistry) installMissingFile(business Business, fingerprint string, now time.Time) {
 	definition := businessDefinitions[business]
 	legacy := r.legacySnapshot(business, now)
-	if legacy.client.Enabled() {
+	if legacy.hasEnabledCall() {
 		r.publish(business, legacy, BusinessLoadStatus{
 			Business:      business,
 			FileName:      definition.fileName,
@@ -418,7 +491,7 @@ func (r *BusinessRegistry) installInvalid(business Business, fingerprint string,
 	}
 
 	legacy := r.legacySnapshot(business, now)
-	if legacy.client.Enabled() {
+	if legacy.hasEnabledCall() {
 		r.publish(business, legacy, BusinessLoadStatus{
 			Business:      business,
 			FileName:      definition.fileName,
@@ -474,48 +547,107 @@ func (r *BusinessRegistry) snapshotFor(business Business) *businessSnapshot {
 
 func (r *BusinessRegistry) legacySnapshot(business Business, now time.Time) *businessSnapshot {
 	legacy := r.legacy
+	definition := businessDefinitions[business]
+	clientConfig := legacy
+	call := &businessCallSnapshot{
+		source:           "legacy",
+		version:          0,
+		enabled:          true,
+		promptConfigured: false,
+		clientConfig:     clientConfig,
+		client:           New(clientConfig),
+		variables:        definition.variables,
+	}
 	return &businessSnapshot{
 		business:    business,
 		source:      "legacy",
 		version:     0,
 		enabled:     true,
-		client:      New(legacy),
+		call:        call,
 		loadedAt:    now,
 		fingerprint: "legacy",
 	}
 }
 
 func (r *BusinessRegistry) snapshotFromFile(business Business, fingerprint string, now time.Time, file businessFileConfig) (*businessSnapshot, error) {
-	apiKeyEnv := strings.TrimSpace(*file.LLM.APIKeyEnv)
+	definition := businessDefinitions[business]
+	snapshot := &businessSnapshot{
+		business:    business,
+		source:      "file",
+		version:     file.Version,
+		enabled:     *file.Enabled,
+		loadedAt:    now,
+		fingerprint: fingerprint,
+	}
+
+	if len(file.Stages) > 0 {
+		snapshot.stages = make(map[string]*businessCallSnapshot, len(file.Stages))
+		for stageName, stageFile := range file.Stages {
+			stageDefinition, ok := definition.stages[stageName]
+			if !ok {
+				return nil, fmt.Errorf("build %s: unknown stage %q", definition.fileName, stageName)
+			}
+			call, err := r.callSnapshotFromFile(stageDefinition.variables, stageFile.LLM, stageFile.Prompt, stageFile.Output)
+			if err != nil {
+				return nil, fmt.Errorf("build %s stage %s: %w", definition.fileName, stageName, err)
+			}
+			snapshot.stages[stageName] = call
+		}
+		return snapshot, nil
+	}
+
+	call, err := r.callSnapshotFromFile(definition.variables, file.LLM, file.Prompt, file.Output)
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %w", definition.fileName, err)
+	}
+	snapshot.call = call
+	return snapshot, nil
+}
+
+func (r *BusinessRegistry) callSnapshotFromFile(
+	variables map[string]struct{},
+	llmFile *businessFileLLM,
+	promptFile *businessFilePrompt,
+	outputFile *businessFileOutput,
+) (*businessCallSnapshot, error) {
+	if llmFile == nil || promptFile == nil || outputFile == nil {
+		return nil, errors.New("llm, prompt, and output are required")
+	}
+	apiKeyEnv := strings.TrimSpace(pointerString(llmFile.APIKeyEnv))
 	apiKey := ""
 	if apiKeyEnv != "" {
 		apiKey = strings.TrimSpace(os.Getenv(apiKeyEnv))
 	}
 	clientConfig := Config{
 		APIKey:       apiKey,
-		BaseURL:      strings.TrimSpace(file.LLM.BaseURL),
-		DefaultModel: strings.TrimSpace(file.LLM.Model),
-		MaxRetries:   file.LLM.MaxRetries,
+		BaseURL:      strings.TrimSpace(llmFile.BaseURL),
+		DefaultModel: strings.TrimSpace(llmFile.Model),
+		MaxRetries:   llmFile.MaxRetries,
+		HTTPClient:   r.httpClient,
 	}
-	clientConfig.HTTPClient = r.httpClient
-
-	return &businessSnapshot{
-		business:            business,
+	return &businessCallSnapshot{
 		source:              "file",
-		version:             file.Version,
-		enabled:             *file.Enabled,
+		version:             businessConfigVersion,
+		enabled:             true,
+		promptConfigured:    true,
 		client:              New(clientConfig),
 		clientConfig:        clientConfig,
 		apiKeyEnv:           apiKeyEnv,
-		systemPrompt:        file.Prompt.System,
-		userTemplate:        file.Prompt.UserTemplate,
-		temperature:         file.LLM.Temperature,
-		maxCompletionTokens: file.LLM.MaxCompletionTokens,
-		timeout:             time.Duration(file.LLM.TimeoutMS) * time.Millisecond,
-		jsonSchema:          file.Output.JSONSchema,
-		loadedAt:            now,
-		fingerprint:         fingerprint,
+		systemPrompt:        promptFile.System,
+		userTemplate:        promptFile.UserTemplate,
+		temperature:         llmFile.Temperature,
+		maxCompletionTokens: llmFile.MaxCompletionTokens,
+		timeout:             time.Duration(llmFile.TimeoutMS) * time.Millisecond,
+		jsonSchema:          outputFile.JSONSchema,
+		variables:           variables,
 	}, nil
+}
+
+func pointerString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func parseBusinessFile(business Business, definition businessDefinition, data []byte) (businessFileConfig, error) {
@@ -532,7 +664,6 @@ func parseBusinessFile(business Business, definition businessDefinition, data []
 		}
 		return businessFileConfig{}, fmt.Errorf("parse %s: %w", definition.fileName, err)
 	}
-
 	if file.Version != businessConfigVersion {
 		return businessFileConfig{}, fmt.Errorf("validate %s: unsupported version %d", definition.fileName, file.Version)
 	}
@@ -542,66 +673,105 @@ func parseBusinessFile(business Business, definition businessDefinition, data []
 	if file.Enabled == nil {
 		return businessFileConfig{}, fmt.Errorf("validate %s: enabled is required", definition.fileName)
 	}
-	if file.LLM == nil || file.Prompt == nil || file.Output == nil {
-		return businessFileConfig{}, fmt.Errorf("validate %s: llm, prompt, and output are required", definition.fileName)
-	}
 	// Keep deployment-specific endpoints out of the checked-in YAML examples.
 	// Only scalar connection fields support ${ENV_NAME}; prompt values and the
 	// api_key_env field remain literal so configuration cannot turn into a
 	// general-purpose environment interpolation language.
-	file.LLM.BaseURL = expandBusinessEnv(file.LLM.BaseURL)
-	file.LLM.Model = expandBusinessEnv(file.LLM.Model)
-	if strings.TrimSpace(file.LLM.Provider) == "" || strings.TrimSpace(file.LLM.Model) == "" {
-		return businessFileConfig{}, fmt.Errorf("validate %s: llm.provider and llm.model are required", definition.fileName)
+	if file.LLM != nil {
+		file.LLM.BaseURL = expandBusinessEnv(file.LLM.BaseURL)
+		file.LLM.Model = expandBusinessEnv(file.LLM.Model)
 	}
-	switch strings.ToLower(strings.TrimSpace(file.LLM.Provider)) {
-	case "openai", "openai-compatible":
-	default:
-		return businessFileConfig{}, fmt.Errorf("validate %s: unsupported llm.provider", definition.fileName)
-	}
-	if file.LLM.APIKeyEnv == nil || strings.TrimSpace(*file.LLM.APIKeyEnv) == "" {
-		return businessFileConfig{}, fmt.Errorf("validate %s: llm.api_key_env is required", definition.fileName)
-	}
-	if file.LLM.BaseURL != "" {
-		parsed, err := url.Parse(strings.TrimSpace(file.LLM.BaseURL))
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return businessFileConfig{}, fmt.Errorf("validate %s: llm.base_url must be an absolute URL", definition.fileName)
+	for _, stage := range file.Stages {
+		if stage == nil || stage.LLM == nil {
+			continue
 		}
+		stage.LLM.BaseURL = expandBusinessEnv(stage.LLM.BaseURL)
+		stage.LLM.Model = expandBusinessEnv(stage.LLM.Model)
 	}
-	if file.LLM.Temperature < 0 || file.LLM.Temperature > 2 {
-		return businessFileConfig{}, fmt.Errorf("validate %s: llm.temperature must be between 0 and 2", definition.fileName)
-	}
-	if file.LLM.MaxCompletionTokens < 0 || file.LLM.TimeoutMS < 0 || file.LLM.MaxRetries < 0 {
-		return businessFileConfig{}, fmt.Errorf("validate %s: llm numeric limits cannot be negative", definition.fileName)
-	}
-	if strings.TrimSpace(file.Prompt.System) == "" || strings.TrimSpace(file.Prompt.UserTemplate) == "" {
-		return businessFileConfig{}, fmt.Errorf("validate %s: prompt.system and prompt.user_template are required", definition.fileName)
-	}
-	if err := validateBusinessTemplate(file.Prompt.System, definition.variables); err != nil {
-		return businessFileConfig{}, fmt.Errorf("validate %s: prompt.system: %w", definition.fileName, err)
-	}
-	if err := validateBusinessTemplate(file.Prompt.UserTemplate, definition.variables); err != nil {
-		return businessFileConfig{}, fmt.Errorf("validate %s: prompt.user_template: %w", definition.fileName, err)
-	}
-	format := strings.ToLower(strings.TrimSpace(file.Output.Format))
-	if format != definition.expectedOutput {
-		return businessFileConfig{}, fmt.Errorf("validate %s: output.format must be %q", definition.fileName, definition.expectedOutput)
-	}
-	if format == "json" && len(file.Output.JSONSchema) == 0 {
-		return businessFileConfig{}, fmt.Errorf("validate %s: output.json_schema is required for JSON output", definition.fileName)
-	}
-	if format == "json" {
-		if err := validateJSONSchema(file.Output.JSONSchema); err != nil {
-			return businessFileConfig{}, fmt.Errorf("validate %s: output.json_schema: %w", definition.fileName, err)
+
+	if len(file.Stages) > 0 {
+		if len(definition.stages) == 0 {
+			return businessFileConfig{}, fmt.Errorf("validate %s: stages are not supported for business %q", definition.fileName, business)
 		}
+		if file.LLM != nil || file.Prompt != nil || file.Output != nil {
+			return businessFileConfig{}, fmt.Errorf("validate %s: use either top-level llm/prompt/output or stages, not both", definition.fileName)
+		}
+		for stageName := range file.Stages {
+			if _, ok := definition.stages[stageName]; !ok {
+				return businessFileConfig{}, fmt.Errorf("validate %s: unknown stage %q", definition.fileName, stageName)
+			}
+		}
+		for stageName, stageDefinition := range definition.stages {
+			stageFile, ok := file.Stages[stageName]
+			if !ok {
+				return businessFileConfig{}, fmt.Errorf("validate %s: stage %q is required", definition.fileName, stageName)
+			}
+			if err := validateBusinessCallConfig(definition.fileName, "stage "+stageName, stageDefinition, stageFile); err != nil {
+				return businessFileConfig{}, err
+			}
+		}
+		return file, nil
+	}
+
+	if err := validateBusinessCallConfig(definition.fileName, "", businessStageDefinition{
+		expectedOutput: definition.expectedOutput,
+		variables:      definition.variables,
+	}, &businessFileStageConfig{LLM: file.LLM, Prompt: file.Prompt, Output: file.Output}); err != nil {
+		return businessFileConfig{}, err
 	}
 	return file, nil
 }
 
-func validateBusinessTemplate(value string, allowed map[string]struct{}) error {
-	for _, variable := range templateVariables(value) {
-		if _, ok := allowed[variable]; !ok {
-			return fmt.Errorf("unknown template variable %q", variable)
+func validateBusinessCallConfig(fileName, label string, definition businessStageDefinition, config *businessFileStageConfig) error {
+	prefix := "validate " + fileName
+	if label != "" {
+		prefix += " " + label
+	}
+	if config == nil || config.LLM == nil || config.Prompt == nil || config.Output == nil {
+		return fmt.Errorf("%s: llm, prompt, and output are required", prefix)
+	}
+	if strings.TrimSpace(config.LLM.Provider) == "" || strings.TrimSpace(config.LLM.Model) == "" {
+		return fmt.Errorf("%s: llm.provider and llm.model are required", prefix)
+	}
+	switch strings.ToLower(strings.TrimSpace(config.LLM.Provider)) {
+	case "openai", "openai-compatible":
+	default:
+		return fmt.Errorf("%s: unsupported llm.provider", prefix)
+	}
+	if config.LLM.APIKeyEnv == nil || strings.TrimSpace(*config.LLM.APIKeyEnv) == "" {
+		return fmt.Errorf("%s: llm.api_key_env is required", prefix)
+	}
+	if config.LLM.BaseURL != "" {
+		parsed, err := url.Parse(strings.TrimSpace(config.LLM.BaseURL))
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("%s: llm.base_url must be an absolute URL", prefix)
+		}
+	}
+	if config.LLM.Temperature < 0 || config.LLM.Temperature > 2 {
+		return fmt.Errorf("%s: llm.temperature must be between 0 and 2", prefix)
+	}
+	if config.LLM.MaxCompletionTokens < 0 || config.LLM.TimeoutMS < 0 || config.LLM.MaxRetries < 0 {
+		return fmt.Errorf("%s: llm numeric limits cannot be negative", prefix)
+	}
+	if strings.TrimSpace(config.Prompt.System) == "" || strings.TrimSpace(config.Prompt.UserTemplate) == "" {
+		return fmt.Errorf("%s: prompt.system and prompt.user_template are required", prefix)
+	}
+	if err := validateBusinessTemplate(config.Prompt.System, definition.variables); err != nil {
+		return fmt.Errorf("%s: prompt.system: %w", prefix, err)
+	}
+	if err := validateBusinessTemplate(config.Prompt.UserTemplate, definition.variables); err != nil {
+		return fmt.Errorf("%s: prompt.user_template: %w", prefix, err)
+	}
+	format := strings.ToLower(strings.TrimSpace(config.Output.Format))
+	if format != definition.expectedOutput {
+		return fmt.Errorf("%s: output.format must be %q", prefix, definition.expectedOutput)
+	}
+	if format == "json" && len(config.Output.JSONSchema) == 0 {
+		return fmt.Errorf("%s: output.json_schema is required for JSON output", prefix)
+	}
+	if format == "json" {
+		if err := validateJSONSchema(config.Output.JSONSchema); err != nil {
+			return fmt.Errorf("%s: output.json_schema: %w", prefix, err)
 		}
 	}
 	return nil
@@ -611,6 +781,15 @@ func expandBusinessEnv(value string) string {
 	return os.Expand(value, func(key string) string {
 		return os.Getenv(key)
 	})
+}
+
+func validateBusinessTemplate(value string, allowed map[string]struct{}) error {
+	for _, variable := range templateVariables(value) {
+		if _, ok := allowed[variable]; !ok {
+			return fmt.Errorf("unknown template variable %q", variable)
+		}
+	}
+	return nil
 }
 
 func templateVariables(value string) []string {
@@ -670,7 +849,7 @@ func renderBusinessTemplate(template string, allowed map[string]struct{}, variab
 }
 
 func statusErrorForSnapshot(snapshot *businessSnapshot) string {
-	if snapshot.enabled && !snapshot.client.Enabled() {
+	if snapshot.enabled && !snapshot.hasEnabledCall() {
 		return "LLM credentials or base URL are not configured"
 	}
 	return ""
@@ -683,34 +862,116 @@ func safeConfigError(err error) string {
 	return err.Error()
 }
 
-func (c *BusinessClient) snapshot() (*businessSnapshot, error) {
-	if c == nil || c.registry == nil {
-		return nil, ErrNotConfigured
-	}
-	snapshot := c.registry.snapshotFor(c.business)
-	client := c.clientFor(snapshot)
-	if snapshot == nil || !snapshot.enabled || client == nil || !client.Enabled() {
-		return nil, ErrNotConfigured
-	}
-	return snapshot, nil
-}
-
-func (c *BusinessClient) clientFor(snapshot *businessSnapshot) *Client {
+func (snapshot *businessSnapshot) defaultCall() *businessCallSnapshot {
 	if snapshot == nil {
 		return nil
 	}
-	if snapshot.source != "file" || snapshot.apiKeyEnv == "" {
-		return snapshot.client
+	if snapshot.call != nil {
+		return snapshot.call
 	}
-	config := snapshot.clientConfig
-	config.APIKey = strings.TrimSpace(os.Getenv(snapshot.apiKeyEnv))
+	if detail := snapshot.stages[BusinessStageDetail]; detail != nil {
+		return detail
+	}
+	for _, stage := range []string{BusinessStageOutline} {
+		if call := snapshot.stages[stage]; call != nil {
+			return call
+		}
+	}
+	return nil
+}
+
+func (snapshot *businessSnapshot) clientFor(call *businessCallSnapshot) *Client {
+	if call == nil {
+		return nil
+	}
+	if call.source != "file" || call.apiKeyEnv == "" {
+		return call.client
+	}
+	config := call.clientConfig
+	config.APIKey = strings.TrimSpace(os.Getenv(call.apiKeyEnv))
 	return New(config)
+}
+
+func (snapshot *businessSnapshot) hasEnabledCall() bool {
+	if snapshot == nil || !snapshot.enabled {
+		return false
+	}
+	call := snapshot.defaultCall()
+	client := snapshot.clientFor(call)
+	return call != nil && call.enabled && client != nil && client.Enabled()
+}
+
+func (c *BusinessClient) resolveCall() (*businessSnapshot, *businessCallSnapshot, error) {
+	if c == nil || c.registry == nil {
+		return nil, nil, ErrNotConfigured
+	}
+	snapshot := c.registry.snapshotFor(c.business)
+	if snapshot == nil {
+		return nil, nil, ErrNotConfigured
+	}
+	call := snapshot.defaultCall()
+	client := snapshot.clientFor(call)
+	if !snapshot.enabled || call == nil || !call.enabled || client == nil || !client.Enabled() {
+		return nil, nil, ErrNotConfigured
+	}
+	return snapshot, call, nil
+}
+
+func (c *BusinessClient) snapshot() (*businessSnapshot, error) {
+	snapshot, _, err := c.resolveCall()
+	return snapshot, err
+}
+
+func (c *BusinessStageClient) resolveCall() (*businessSnapshot, *businessCallSnapshot, error) {
+	if c == nil || c.parent == nil || c.parent.registry == nil {
+		return nil, nil, ErrNotConfigured
+	}
+	definition, ok := businessDefinitions[c.parent.business]
+	if !ok {
+		return nil, nil, ErrNotConfigured
+	}
+	if _, ok := definition.stages[c.stage]; !ok {
+		return nil, nil, ErrNotConfigured
+	}
+	snapshot := c.parent.registry.snapshotFor(c.parent.business)
+	var call *businessCallSnapshot
+	if snapshot != nil {
+		call = snapshot.stages[c.stage]
+		// A legacy top-level file is still a valid migration source for either
+		// phase. New stage-aware files always take the stage-specific path.
+		if call == nil {
+			if snapshot.call != nil {
+				// Keep the legacy file's provider/model/budget, but use this
+				// phase's built-in prompt and business-level parser. The old
+				// top-level prompt/schema describe the full-detail response and
+				// cannot validate an outline response.
+				legacyPhase := *snapshot.call
+				legacyPhase.promptConfigured = false
+				legacyPhase.jsonSchema = nil
+				call = &legacyPhase
+			}
+		}
+	}
+	if snapshot == nil {
+		return nil, nil, ErrNotConfigured
+	}
+	client := snapshot.clientFor(call)
+	if !snapshot.enabled || call == nil || !call.enabled || client == nil || !client.Enabled() {
+		return nil, nil, ErrNotConfigured
+	}
+	return snapshot, call, nil
 }
 
 // Enabled reports the state of the current business snapshot. An explicit
 // enabled:false file wins over the legacy global configuration.
 func (c *BusinessClient) Enabled() bool {
-	_, err := c.snapshot()
+	_, _, err := c.resolveCall()
+	return err == nil
+}
+
+// Enabled reports whether this stage currently has a usable snapshot.
+func (c *BusinessStageClient) Enabled() bool {
+	_, _, err := c.resolveCall()
 	return err == nil
 }
 
@@ -718,65 +979,88 @@ func (c *BusinessClient) Enabled() bool {
 // text completion. Fallback prompts and limits are used only when the business
 // is still served by the legacy global config during migration.
 func (c *BusinessClient) GenerateTextTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
-	snapshot, err := c.snapshot()
+	snapshot, call, err := c.resolveCall()
 	if err != nil {
 		return "", err
 	}
-	system, user, err := c.render(snapshot, variables, fallbackSystem, fallbackUserTemplate)
+	system, user, err := renderBusinessCall(c.business, call, variables, fallbackSystem, fallbackUserTemplate)
 	if err != nil {
 		return "", err
 	}
-	temperature, maxTokens := snapshotLimits(snapshot, fallbackTemperature, fallbackMaxCompletionTokens)
-	ctx, cancel := withBusinessTimeout(ctx, snapshot.timeout)
+	temperature, maxTokens := snapshotLimits(call, fallbackTemperature, fallbackMaxCompletionTokens)
+	ctx, cancel := withBusinessTimeout(ctx, call.timeout)
 	defer cancel()
-	return c.clientFor(snapshot).GenerateTextWithOptions(ctx, "", system, user, temperature, maxTokens)
+	return snapshot.clientFor(call).GenerateTextWithOptions(ctx, "", system, user, temperature, maxTokens)
 }
 
 // GenerateJSONTemplate is the structured sibling of GenerateTextTemplate.
 func (c *BusinessClient) GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
-	snapshot, err := c.snapshot()
+	snapshot, call, err := c.resolveCall()
 	if err != nil {
 		return "", err
 	}
-	system, user, err := c.render(snapshot, variables, fallbackSystem, fallbackUserTemplate)
+	return generateBusinessJSON(ctx, c.business, snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+}
+
+// GenerateJSONTemplate renders the phase-specific prompt and makes a
+// structured completion. A legacy top-level YAML is used as a migration
+// fallback when it predates the stages map.
+func (c *BusinessStageClient) GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
+	snapshot, call, err := c.resolveCall()
 	if err != nil {
 		return "", err
 	}
-	temperature, maxTokens := snapshotLimits(snapshot, fallbackTemperature, fallbackMaxCompletionTokens)
-	ctx, cancel := withBusinessTimeout(ctx, snapshot.timeout)
+	return generateBusinessJSON(ctx, c.parent.business+"/"+Business(c.stage), snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+}
+
+func generateBusinessJSON(ctx context.Context, name Business, snapshot *businessSnapshot, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
+	system, user, err := renderBusinessCall(name, call, variables, fallbackSystem, fallbackUserTemplate)
+	if err != nil {
+		return "", err
+	}
+	temperature, maxTokens := snapshotLimits(call, fallbackTemperature, fallbackMaxCompletionTokens)
+	ctx, cancel := withBusinessTimeout(ctx, call.timeout)
 	defer cancel()
-	raw, err := c.clientFor(snapshot).GenerateJSON(ctx, "", system, user, temperature, maxTokens)
+	raw, err := snapshot.clientFor(call).GenerateJSON(ctx, "", system, user, temperature, maxTokens)
 	if err != nil {
 		return "", err
 	}
-	if err := validateBusinessJSON(raw, snapshot.jsonSchema); err != nil {
-		return "", fmt.Errorf("validate %s response: %w", c.business, err)
+	if err := validateBusinessJSON(raw, call.jsonSchema); err != nil {
+		return "", fmt.Errorf("validate %s response: %w", name, err)
 	}
 	return raw, nil
 }
 
-func (c *BusinessClient) render(snapshot *businessSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string) (string, string, error) {
-	definition := businessDefinitions[c.business]
+func renderBusinessCall(name Business, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string) (string, string, error) {
 	systemTemplate := fallbackSystem
 	userTemplate := fallbackUserTemplate
-	if snapshot.source == "file" {
-		systemTemplate = snapshot.systemPrompt
-		userTemplate = snapshot.userTemplate
+	allowed := map[string]struct{}{}
+	if definition, ok := businessDefinitions[name]; ok {
+		allowed = definition.variables
 	}
-	system, err := renderBusinessTemplate(systemTemplate, definition.variables, variables)
-	if err != nil {
-		return "", "", fmt.Errorf("render %s system prompt: %w", c.business, err)
+	if call != nil {
+		if call.source == "file" && call.promptConfigured {
+			systemTemplate = call.systemPrompt
+			userTemplate = call.userTemplate
+		}
+		if len(call.variables) > 0 {
+			allowed = call.variables
+		}
 	}
-	user, err := renderBusinessTemplate(userTemplate, definition.variables, variables)
+	system, err := renderBusinessTemplate(systemTemplate, allowed, variables)
 	if err != nil {
-		return "", "", fmt.Errorf("render %s user prompt: %w", c.business, err)
+		return "", "", fmt.Errorf("render %s system prompt: %w", name, err)
+	}
+	user, err := renderBusinessTemplate(userTemplate, allowed, variables)
+	if err != nil {
+		return "", "", fmt.Errorf("render %s user prompt: %w", name, err)
 	}
 	return system, user, nil
 }
 
-func snapshotLimits(snapshot *businessSnapshot, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (float64, int64) {
-	if snapshot.source == "file" {
-		return snapshot.temperature, snapshot.maxCompletionTokens
+func snapshotLimits(call *businessCallSnapshot, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (float64, int64) {
+	if call != nil && call.source == "file" {
+		return call.temperature, call.maxCompletionTokens
 	}
 	return fallbackTemperature, fallbackMaxCompletionTokens
 }

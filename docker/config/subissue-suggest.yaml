@@ -2,52 +2,119 @@ version: 1
 business: subissue-suggest
 enabled: true
 
-llm:
-  provider: openai-compatible
-  base_url: ${MULTICA_LLM_BASE_URL}
-  api_key_env: MULTICA_LLM_API_KEY
-  model: gpt-5.6-luna
-  temperature: 0.3
-  max_completion_tokens: 4096
-  timeout_ms: 180000
-  max_retries: 2
+# The two calls belong to this business but have independent prompts and
+# budgets. The outline pass is intentionally short; detail generation happens
+# only after the user approves or edits one of its plans.
+stages:
+  outline:
+    llm:
+      provider: openai-compatible
+      base_url: ${MULTICA_LLM_BASE_URL}
+      api_key_env: MULTICA_LLM_API_KEY
+      model: gpt-5.6-luna
+      temperature: 0.4
+      max_completion_tokens: 2048
+      timeout_ms: 60000
+      max_retries: 2
 
-prompt:
-  system: |-
-    你是一个任务拆解助手，帮用户把一段较长的讨论/方案内容拆分成可以独立执行的 Multica 子issue。
-    识别一个或多个可执行任务；没有依赖关系、能同时开工的任务归入同一个 stage，有先后依赖的任务放到更晚的 stage，stage 从 1 开始。
-    每个 description 必须包含背景、已拍板的约束、具体范围、验收标准和依赖，使接手者无需回看原始对话即可开工。
-    suggested_parent_identifier 只能从候选列表中选择并原样填写，选不出来填 null。
-    严格输出 JSON，不要输出额外文字或 markdown。
-  user_template: |-
-    要拆解的评论原文：
-    {{comment_text}}
+    prompt:
+      system: |-
+        你是一个任务拆分方案设计助手。请根据一段 Multica issue 讨论，生成三种不同粒度的候选拆分方案：
+        1. 上下文优先：尽量合并强相关内容，允许最终只有一个子issue，保证接手者拥有连贯上下文。
+        2. 平衡拆分：只拆出边界清晰且有独立价值的任务。
+        3. 并行优先：把确实可以独立并行处理的任务分开，但不要为了增加数量而拆散强相关工作。
+        每个方案只返回子issue的 title 和 goal，不要生成 description、stage、依赖、父issue或其他字段。方案必须来自原始讨论，不能凭空添加工作。严格只输出 JSON，不要输出 Markdown 或解释文字。
+      user_template: |-
+        原始评论内容：
+        {{comment_text}}
 
-    当前 issue：{{issue_identifier}} {{issue_title}}
+        当前 issue：{{issue_identifier}} {{issue_title}}
 
-    当前 issue 下已有的兄弟子issue（避免拆出重复任务）：
-    {{siblings}}
+        已有兄弟子issue（避免重复）：
+        {{siblings}}
 
-    候选父issue列表（挑选时必须原样使用下面的 identifier）：
-    {{candidate_parents}}
+        候选父issue（仅供理解上下文，不要在本阶段输出父issue）：
+        {{candidate_parents}}
 
-    请输出拆解结果。
+        用户额外拆分要求：
+        {{human_constraints}}
 
-output:
-  format: json
-  json_schema:
-    type: object
-    required: [subissues]
-    properties:
-      subissues:
-        type: array
-        items:
-          type: object
-          required: [title, description, stage, depends_on_titles, confidence]
-          properties:
-            title: {type: string}
-            description: {type: string}
-            stage: {type: integer, minimum: 1}
-            depends_on_titles: {type: array, items: {type: string}}
-            suggested_parent_identifier: {type: [string, "null"]}
-            confidence: {type: number, minimum: 0, maximum: 1}
+        请输出 2～3 种拆分方案。
+
+    output:
+      format: json
+      json_schema:
+        type: object
+        required: [plans]
+        properties:
+          plans:
+            type: array
+            items:
+              type: object
+              required: [name, items]
+              properties:
+                name: {type: string}
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [title, goal]
+                    properties:
+                      title: {type: string}
+                      goal: {type: string}
+
+  detail:
+    llm:
+      provider: openai-compatible
+      base_url: ${MULTICA_LLM_BASE_URL}
+      api_key_env: MULTICA_LLM_API_KEY
+      model: gpt-5.6-luna
+      temperature: 0.3
+      max_completion_tokens: 4096
+      timeout_ms: 180000
+      max_retries: 2
+
+    prompt:
+      system: |-
+        你是一个 Multica 子issue详情生成助手。用户已经人工确认了拆分草稿，你只能为草稿中的每个条目补充可执行的详细 description、stage、依赖关系、建议父issue和 confidence。
+        必须严格保留 approved_outline 中每个条目的 id、title、goal、数量和顺序，不得增加、删除、合并、拆分或改写这些字段。description 必须让接手者不需要回看原始讨论就能开工，并包含背景、已经确定的约束、工作范围和验收标准。严格只输出 JSON，不要输出 Markdown 或解释文字。
+      user_template: |-
+        原始评论内容：
+        {{comment_text}}
+
+        当前 issue：{{issue_identifier}} {{issue_title}}
+
+        已有兄弟子issue：
+        {{siblings}}
+
+        候选父issue：
+        {{candidate_parents}}
+
+        用户额外拆分要求：
+        {{human_constraints}}
+
+        已确认的拆分草稿（这是不可变结构）：
+        {{approved_outline}}
+
+        请仅为已确认条目生成详细内容。
+
+    output:
+      format: json
+      json_schema:
+        type: object
+        required: [subissues]
+        properties:
+          subissues:
+            type: array
+            items:
+              type: object
+              required: [id, title, goal, description, stage, depends_on_ids, confidence]
+              properties:
+                id: {type: string}
+                title: {type: string}
+                goal: {type: string}
+                description: {type: string}
+                stage: {type: integer, minimum: 1}
+                depends_on_ids: {type: array, items: {type: string}}
+                suggested_parent_identifier: {type: [string, "null"]}
+                confidence: {type: number, minimum: 0, maximum: 1}
