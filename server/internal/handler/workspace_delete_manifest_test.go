@@ -81,6 +81,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"personal_access_token":           workspaceDeleteKeep,
 	"pinned_item":                     workspaceDelete,
 	"project":                         workspaceDelete,
+	"provider_configs":                workspaceDelete,
 	"project_resource":                workspaceDelete,
 	"quick_action":                    workspaceDelete,
 	"runtime_profile":                 workspaceDelete,
