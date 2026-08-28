@@ -80,12 +80,17 @@
     "toast_link_copied": "リンクをコピーしました",
     "toast_project_deleted": "プロジェクトを削除しました",
     "toast_project_migrated": "プロジェクトを移行しました",
+    "toast_project_migrate_failed": "プロジェクトを移行できませんでした",
     "toast_move_issue_failed": "イシューを移動できませんでした",
     "migrate_dialog": {
       "title": "別のワークスペースに移行",
-      "description": "プロジェクトとすべてのイシューを移行します。担当者の設定は解除されます。",
+      "description": "このプロジェクトのすべてのイシューが一緒に移行されます。プロジェクトのリードとイシューの担当者は解除され、移行後は対象ワークスペースのプロジェクト詳細ページに移動します。",
+      "source_workspace": "移行元ワークスペース",
+      "project_name": "プロジェクト",
+      "target_workspace": "移行先ワークスペース",
       "select_workspace": "ワークスペースを選択",
       "confirm": "移行",
+      "submitting": "移行中...",
       "cancel": "キャンセル"
     }
   },

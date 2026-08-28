@@ -8,11 +8,14 @@ import type { ReactNode } from "react";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
+import { issueKeys } from "../issues/queries";
+import { workspaceKeys } from "../workspace/queries";
+import { projectKeys } from "./queries";
 import {
   getIssueSurfaceViewStore,
   pruneIssueSurfaceViewStates,
 } from "../issues/stores/surface-view-store";
-import { useDeleteProject } from "./mutations";
+import { useDeleteProject, useMigrateProject } from "./mutations";
 
 vi.mock("../hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -57,5 +60,36 @@ describe("useDeleteProject", () => {
 
     expect(deleteProject).toHaveBeenCalledWith("p1");
     expect(store.getState().viewMode).toBe("board");
+  });
+});
+
+describe("useMigrateProject", () => {
+  it("refreshes source and target project, issue, and workspace caches", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const migrateProject = vi.fn().mockResolvedValue({});
+    setApiInstance({ migrateProject } as unknown as ApiClient);
+    setCurrentWorkspace("acme", "ws-1");
+    const invalidateQueries = vi.spyOn(qc, "invalidateQueries");
+
+    const { result } = renderHook(() => useMigrateProject(), {
+      wrapper: createWrapper(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: "p1", targetWorkspaceId: "ws-2" });
+    });
+
+    expect(migrateProject).toHaveBeenCalledWith("p1", "ws-2");
+    const invalidatedKeys = invalidateQueries.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(invalidatedKeys).toEqual(expect.arrayContaining([
+      projectKeys.all("ws-1"),
+      projectKeys.all("ws-2"),
+      issueKeys.all("ws-1"),
+      issueKeys.all("ws-2"),
+      workspaceKeys.list(),
+    ]));
+
+    qc.clear();
+    setCurrentWorkspace(null, null);
   });
 });

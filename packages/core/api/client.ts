@@ -230,6 +230,7 @@ import {
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SEARCH_ISSUES_RESPONSE,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
+  EMPTY_PROJECT,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
@@ -258,6 +259,7 @@ import {
   RuntimeUsageListSchema,
   SearchIssuesResponseSchema,
   SearchProjectsResponseSchema,
+  ProjectResponseSchema,
   SquadSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
@@ -2642,9 +2644,12 @@ export class ApiClient {
   }
 
   async migrateProject(id: string, targetWorkspaceId: string): Promise<Project> {
-    return this.fetch(`/api/projects/${id}/migrate`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${id}/migrate`, {
       method: "PUT",
       body: JSON.stringify({ target_workspace_id: targetWorkspaceId }),
+    });
+    return parseWithFallback(raw, ProjectResponseSchema, EMPTY_PROJECT, {
+      endpoint: "PUT /api/projects/{id}/migrate",
     });
   }
 

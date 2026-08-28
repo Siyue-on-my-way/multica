@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { Check, ChevronRight, Link2, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
+import { Check, ChevronRight, Link2, Loader2, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -16,7 +16,7 @@ import { useCreatePin, useDeletePin } from "@multica/core/pins";
 import { memberListOptions, agentListOptions, workspaceListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { paths, useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
@@ -118,7 +118,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         projectStatus: project.status,
       });
     }
-  }, [project?.id, project?.title, project?.description, project?.icon, project?.status, recordRecentContext, wsId]);
+  }, [project, recordRecentContext, wsId]);
   const issueScope = useMemo(
     () => ({ type: "project" as const, projectId }),
     [projectId],
@@ -126,6 +126,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: workspaces = [] } = useQuery(workspaceListOptions());
+  const sourceWorkspace = workspaces.find((workspace) => workspace.id === wsId);
+  const targetWorkspaces = useMemo(
+    () => workspaces.filter((workspace) => workspace.id !== wsId),
+    [workspaces, wsId],
+  );
   const { getActorName } = useActorName();
   const updateProject = useUpdateProject();
   const deleteProject = useDeleteProject();
@@ -222,16 +227,32 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     });
   }, [project, deleteProject, router, wsPaths, t]);
 
-  const handleMigrate = useCallback(() => {
+  const handleMigrateDialogOpenChange = useCallback((open: boolean) => {
+    if (migrateProject.isPending) return;
+    setMigrateDialogOpen(open);
+    if (!open) setTargetWorkspaceId("");
+  }, [migrateProject.isPending]);
+
+  const handleMigrate = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
     if (!project || !targetWorkspaceId) return;
-    migrateProject.mutate({ id: project.id, targetWorkspaceId }, {
-      onSuccess: () => {
-        toast.success(t(($) => $.detail.toast_project_migrated));
-        setMigrateDialogOpen(false);
-        router.push(wsPaths.projects());
-      },
-    });
-  }, [project, targetWorkspaceId, migrateProject, router, wsPaths, t]);
+    const targetWorkspace = targetWorkspaces.find((workspace) => workspace.id === targetWorkspaceId);
+    if (!targetWorkspace) return;
+
+    try {
+      await migrateProject.mutateAsync({ id: project.id, targetWorkspaceId });
+      toast.success(t(($) => $.detail.toast_project_migrated));
+      setMigrateDialogOpen(false);
+      setTargetWorkspaceId("");
+      router.push(paths.workspace(targetWorkspace.slug).projectDetail(project.id));
+    } catch (error) {
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : t(($) => $.detail.toast_project_migrate_failed),
+      );
+    }
+  }, [project, targetWorkspaceId, targetWorkspaces, migrateProject, router, t]);
 
   if (isLoading) {
     return (
@@ -524,9 +545,14 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     <Link2 className="h-3.5 w-3.5" />
                     {t(($) => $.detail.copy_link)}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setMigrateDialogOpen(true)}>
-                    {t(($) => $.detail.migrate_action)}
-                  </DropdownMenuItem>
+                  {isWorkspaceAdmin && (
+                    <DropdownMenuItem onClick={() => {
+                      setTargetWorkspaceId("");
+                      setMigrateDialogOpen(true);
+                    }}>
+                      {t(($) => $.detail.migrate_action)}
+                    </DropdownMenuItem>
+                  )}
                   {isWorkspaceAdmin && (
                     <>
                       <DropdownMenuSeparator />
@@ -613,24 +639,62 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           </AlertDialogContent>
         </AlertDialog>
       )}
-      <AlertDialog open={migrateDialogOpen} onOpenChange={setMigrateDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t(($) => $.detail.migrate_dialog.title)}</AlertDialogTitle>
-            <AlertDialogDescription>{t(($) => $.detail.migrate_dialog.description)}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <select className="w-full rounded-md border bg-background p-2" value={targetWorkspaceId} onChange={(e) => setTargetWorkspaceId(e.target.value)}>
-            <option value="">{t(($) => $.detail.migrate_dialog.select_workspace)}</option>
-            {workspaces.filter((workspace) => workspace.id !== wsId).map((workspace) => (
-              <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-            ))}
-          </select>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.detail.migrate_dialog.cancel)}</AlertDialogCancel>
-            <AlertDialogAction disabled={!targetWorkspaceId || migrateProject.isPending} onClick={handleMigrate}>{t(($) => $.detail.migrate_dialog.confirm)}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {isWorkspaceAdmin && (
+        <AlertDialog open={migrateDialogOpen} onOpenChange={handleMigrateDialogOpenChange}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t(($) => $.detail.migrate_dialog.title)}</AlertDialogTitle>
+              <AlertDialogDescription className="text-destructive">
+                {t(($) => $.detail.migrate_dialog.description)}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-caption text-muted-foreground">{t(($) => $.detail.migrate_dialog.source_workspace)}</p>
+                <p className="text-body font-medium">{sourceWorkspace?.name ?? "—"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-caption text-muted-foreground">{t(($) => $.detail.migrate_dialog.project_name)}</p>
+                <p className="text-body font-medium">{project.title}</p>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="project-migration-target" className="text-caption text-muted-foreground">
+                  {t(($) => $.detail.migrate_dialog.target_workspace)}
+                </label>
+                <select
+                  id="project-migration-target"
+                  className="w-full rounded-md border bg-background p-2"
+                  value={targetWorkspaceId}
+                  onChange={(e) => setTargetWorkspaceId(e.target.value)}
+                  disabled={migrateProject.isPending}
+                >
+                  <option value="">{t(($) => $.detail.migrate_dialog.select_workspace)}</option>
+                  {targetWorkspaces.map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={migrateProject.isPending}>
+                {t(($) => $.detail.migrate_dialog.cancel)}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!targetWorkspaceId || migrateProject.isPending}
+                onClick={handleMigrate}
+                aria-busy={migrateProject.isPending}
+              >
+                {migrateProject.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t(($) => $.detail.migrate_dialog.submitting)}
+                  </>
+                ) : t(($) => $.detail.migrate_dialog.confirm)}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </>
   );
 }

@@ -43,6 +43,7 @@ import type {
   ListLabelsResponse,
   ListWebhookDeliveriesResponse,
   NotificationPreferenceResponse,
+  Project,
   ResourceLabelsResponse,
   RuntimeModelListRequest,
   SearchIssuesResponse,
@@ -748,7 +749,7 @@ export const EMPTY_SEARCH_ISSUES_RESPONSE: SearchIssuesResponse = {
   total: 0,
 };
 
-const ProjectSchema = z.object({
+export const ProjectResponseSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   title: z.string(),
@@ -770,7 +771,26 @@ const ProjectSchema = z.object({
   resource_count: z.number().default(0),
 }).loose();
 
-const SearchProjectResultSchema = ProjectSchema.extend({
+export const EMPTY_PROJECT: Project = {
+  id: "",
+  workspace_id: "",
+  title: "",
+  description: null,
+  icon: null,
+  status: "planned",
+  priority: "none",
+  lead_type: null,
+  lead_id: null,
+  start_date: null,
+  due_date: null,
+  created_at: "",
+  updated_at: "",
+  issue_count: 0,
+  done_count: 0,
+  resource_count: 0,
+};
+
+const SearchProjectResultSchema = ProjectResponseSchema.extend({
   match_source: z.string(),
   matched_snippet: z.string().optional(),
 }).loose();

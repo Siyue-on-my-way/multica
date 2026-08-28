@@ -80,12 +80,17 @@
     "toast_link_copied": "已复制链接",
     "toast_project_deleted": "已删除项目",
     "toast_project_migrated": "项目已迁移",
+    "toast_project_migrate_failed": "项目迁移失败",
     "toast_move_issue_failed": "移动 issue 失败",
     "migrate_dialog": {
       "title": "迁移到其他工作区",
-      "description": "项目及其所有 issue 将移动到目标工作区，负责人会被清空。",
+      "description": "项目下所有 issue 会一起迁移，项目负责人和 issue 负责人会被清空，迁移完成后页面会跳转到目标 workspace 的项目详情页",
+      "source_workspace": "源工作区",
+      "project_name": "项目",
+      "target_workspace": "目标工作区",
       "select_workspace": "选择工作区",
       "confirm": "确认迁移",
+      "submitting": "迁移中...",
       "cancel": "取消"
     }
   },

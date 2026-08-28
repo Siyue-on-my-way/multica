@@ -5,6 +5,8 @@ import { useWorkspaceId } from "../hooks";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { clearIssueSurfaceViewState } from "../issues/stores/surface-view-store";
 import { issueScopeKey } from "../issues/surface/scope";
+import { issueKeys } from "../issues/queries";
+import { workspaceKeys } from "../workspace/queries";
 import type { Project, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "../types";
 
 export function useCreateProject() {
@@ -86,9 +88,18 @@ export function useMigrateProject() {
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: ({ id, targetWorkspaceId }: { id: string; targetWorkspaceId: string }) => api.migrateProject(id, targetWorkspaceId),
-    onSuccess: (_project, vars) => {
-      qc.invalidateQueries({ queryKey: projectKeys.list(wsId) });
+    onSuccess: async (_project, vars) => {
+      // Migration moves both the project and every issue into another
+      // workspace. Invalidate both sides before the caller navigates so the
+      // destination detail/list cannot render stale server state.
       qc.removeQueries({ queryKey: projectKeys.detail(wsId, vars.id) });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: projectKeys.all(wsId) }),
+        qc.invalidateQueries({ queryKey: projectKeys.all(vars.targetWorkspaceId) }),
+        qc.invalidateQueries({ queryKey: issueKeys.all(wsId) }),
+        qc.invalidateQueries({ queryKey: issueKeys.all(vars.targetWorkspaceId) }),
+        qc.invalidateQueries({ queryKey: workspaceKeys.list() }),
+      ]);
     },
   });
 }

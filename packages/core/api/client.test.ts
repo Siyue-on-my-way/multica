@@ -1,8 +1,67 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY } from "./client";
+import { EMPTY_PROJECT } from "./schemas";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("ApiClient project migration", () => {
+  const project = {
+    id: "project-1",
+    workspace_id: "workspace-2",
+    title: "Launch plan",
+    description: null,
+    icon: null,
+    status: "planned",
+    priority: "none",
+    lead_type: null,
+    lead_id: null,
+    start_date: null,
+    due_date: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    issue_count: 2,
+    done_count: 1,
+    resource_count: 0,
+  };
+
+  it("sends the target workspace and parses the migrated project", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(project), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new ApiClient("https://api.example.test").migrateProject(
+      "project-1",
+      "workspace-2",
+    );
+
+    expect(result).toEqual(project);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/projects/project-1/migrate",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ target_workspace_id: "workspace-2" }),
+      }),
+    );
+  });
+
+  it("falls back safely when the migration response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ id: "project-1" }), { status: 200 }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").migrateProject("project-1", "workspace-2"),
+    ).resolves.toEqual(EMPTY_PROJECT);
+  });
 });
 
 describe("ApiClient pull-request response schema", () => {

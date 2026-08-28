@@ -81,12 +81,17 @@
     "toast_link_copied": "Link copied",
     "toast_project_deleted": "Project deleted",
     "toast_project_migrated": "Project migrated",
+    "toast_project_migrate_failed": "Failed to migrate project",
     "toast_move_issue_failed": "Failed to move issue",
     "migrate_dialog": {
       "title": "Migrate to another workspace",
-      "description": "The project and all its issues will move to the target workspace. Assignees will be cleared.",
+      "description": "All issues under this project will be migrated together. The project lead and issue assignees will be cleared. After migration, this page will navigate to the project details page in the target workspace.",
+      "source_workspace": "Source workspace",
+      "project_name": "Project",
+      "target_workspace": "Target workspace",
       "select_workspace": "Select a workspace",
       "confirm": "Migrate",
+      "submitting": "Migrating...",
       "cancel": "Cancel"
     }
   },

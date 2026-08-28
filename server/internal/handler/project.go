@@ -601,43 +601,167 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireWorkspaceMember(w, r, req.TargetWorkspaceID, "target workspace not found"); !ok {
 		return
 	}
-	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: idUUID, WorkspaceID: sourceUUID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start migration")
 		return
 	}
 	defer tx.Rollback(r.Context())
-	// Issue numbers are unique within a workspace. Reserve a new contiguous
-	// range in the target workspace before changing the issue rows so a
-	// migration still succeeds when the target already has issues.
+	// Lock the target workspace and project before reading or changing any
+	// migration state. Issue creation also advances workspace.issue_counter, so
+	// this lock serializes the counter reservation with concurrent issue writes.
 	var targetIssueCounter int32
 	if err = tx.QueryRow(r.Context(), `
-		UPDATE workspace
-		SET issue_counter = GREATEST(
-			issue_counter,
-			COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id = $1), 0)
-		)
+		SELECT issue_counter
+		FROM workspace
 		WHERE id = $1
-		RETURNING issue_counter`, targetUUID).Scan(&targetIssueCounter); err != nil {
+		FOR UPDATE`, targetUUID).Scan(&targetIssueCounter); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "target workspace not found")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to prepare target workspace")
 		return
 	}
-	projectTag, err := tx.Exec(r.Context(), `UPDATE project SET workspace_id = $1, lead_type = NULL, lead_id = NULL, updated_at = now() WHERE id = $2 AND workspace_id = $3`, targetUUID, idUUID, sourceUUID)
-	if err != nil {
+	var lockedProjectID pgtype.UUID
+	if err = tx.QueryRow(r.Context(), `
+		SELECT id
+		FROM project
+		WHERE id = $1 AND workspace_id = $2
+		FOR UPDATE`, idUUID, sourceUUID).Scan(&lockedProjectID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "project not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to lock project")
+		return
+	}
+	// A legacy/manual write can leave the counter below the highest issue
+	// number. Normalize it while the workspace row is locked before reserving
+	// the contiguous range for the migrated issues.
+	if err = tx.QueryRow(r.Context(), `
+		SELECT GREATEST($1::int, COALESCE(MAX(number), 0))::int
+		FROM issue
+		WHERE workspace_id = $2`, targetIssueCounter, targetUUID).Scan(&targetIssueCounter); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare target issue counter")
+		return
+	}
+
+	// Labels and custom property definitions are workspace-scoped catalogs. A
+	// project can only carry references to definitions used by its issues, so
+	// copy that minimal subset into the target and retain an old-to-new mapping
+	// for the issue references. Existing target definitions with the same
+	// case-insensitive name are reused; this respects the target catalog's
+	// uniqueness constraints while still remapping every reference.
+	if _, err = tx.Exec(r.Context(), `
+		CREATE TEMP TABLE project_migration_label_map (
+			source_id UUID PRIMARY KEY,
+			target_id UUID NOT NULL
+		) ON COMMIT DROP`); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare label migration")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		CREATE TEMP TABLE project_migration_property_map (
+			source_id UUID PRIMARY KEY,
+			target_id UUID NOT NULL
+		) ON COMMIT DROP`); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare property migration")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		INSERT INTO issue_label (
+			workspace_id, resource_type, name, description, color,
+			created_at, updated_at
+		)
+		SELECT $3, l.resource_type, l.name, l.description, l.color,
+			l.created_at, l.updated_at
+		FROM issue_label l
+		WHERE l.workspace_id = $2
+		  AND l.resource_type = 'issue'
+		  AND EXISTS (
+			SELECT 1
+			FROM issue_to_label il
+			JOIN issue i ON i.id = il.issue_id
+			WHERE il.label_id = l.id
+			  AND i.project_id = $1
+			  AND i.workspace_id = $2
+		  )
+		ON CONFLICT DO NOTHING`, idUUID, sourceUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to copy issue labels")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		INSERT INTO project_migration_label_map (source_id, target_id)
+		SELECT source.id, target.id
+		FROM issue_label source
+		JOIN issue_label target
+		  ON target.workspace_id = $3
+		 AND target.resource_type = source.resource_type
+		 AND LOWER(target.name) = LOWER(source.name)
+		WHERE source.workspace_id = $2
+		  AND source.resource_type = 'issue'
+		  AND EXISTS (
+			SELECT 1
+			FROM issue_to_label il
+			JOIN issue i ON i.id = il.issue_id
+			WHERE il.label_id = source.id
+			  AND i.project_id = $1
+			  AND i.workspace_id = $2
+		  )`, idUUID, sourceUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to map issue labels")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		INSERT INTO issue_property (
+			workspace_id, name, type, description, icon, config, position,
+			archived_at, created_at, updated_at
+		)
+		SELECT $3, p.name, p.type, p.description, p.icon, p.config, p.position,
+			p.archived_at, p.created_at, p.updated_at
+		FROM issue_property p
+		WHERE p.workspace_id = $2
+		  AND EXISTS (
+			SELECT 1
+			FROM issue i
+			WHERE i.project_id = $1
+			  AND i.workspace_id = $2
+			  AND i.properties ? p.id::text
+		  )
+		ON CONFLICT DO NOTHING`, idUUID, sourceUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to copy issue properties")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		INSERT INTO project_migration_property_map (source_id, target_id)
+		SELECT source.id, target.id
+		FROM issue_property source
+		JOIN issue_property target
+		  ON target.workspace_id = $3
+		 AND LOWER(target.name) = LOWER(source.name)
+		WHERE source.workspace_id = $2
+		  AND EXISTS (
+			SELECT 1
+			FROM issue i
+			WHERE i.project_id = $1
+			  AND i.workspace_id = $2
+			  AND i.properties ? source.id::text
+		  )`, idUUID, sourceUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to map issue properties")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE project
+		SET workspace_id = $1, lead_type = NULL, lead_id = NULL, updated_at = now()
+		WHERE id = $2 AND workspace_id = $3`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate project")
 		return
 	}
-	if projectTag.RowsAffected() != 1 {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
 	var issueCount int32
-	if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM issue WHERE project_id = $1`, idUUID).Scan(&issueCount); err != nil {
+	if err = tx.QueryRow(r.Context(), `
+		SELECT count(*)::int
+		FROM issue
+		WHERE project_id = $1 AND workspace_id = $2`, idUUID, sourceUUID).Scan(&issueCount); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count project issues")
 		return
 	}
@@ -645,7 +769,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		WITH moving AS (
 			SELECT id, ($1 + ROW_NUMBER() OVER (ORDER BY created_at, id))::int AS next_number
 			FROM issue
-			WHERE project_id = $2
+			WHERE project_id = $2 AND workspace_id = $4
 		)
 		UPDATE issue AS i
 		SET workspace_id = $3,
@@ -654,24 +778,60 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 			assignee_id = NULL,
 			updated_at = now()
 		FROM moving
-		WHERE i.id = moving.id`, targetIssueCounter, idUUID, targetUUID); err != nil {
+		WHERE i.id = moving.id`, targetIssueCounter, idUUID, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate issues")
 		return
 	}
 	if issueCount > 0 {
-		if _, err = tx.Exec(r.Context(), `UPDATE workspace SET issue_counter = $1 + $2 WHERE id = $3`, targetIssueCounter, issueCount, targetUUID); err != nil {
+		if _, err = tx.Exec(r.Context(), `UPDATE workspace SET issue_counter = $1::int + $2::int WHERE id = $3`, targetIssueCounter, issueCount, targetUUID); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update target issue counter")
 			return
 		}
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE issue_to_label il
+		SET label_id = lm.target_id
+		FROM project_migration_label_map lm
+		WHERE il.label_id = lm.source_id
+		  AND EXISTS (
+			SELECT 1 FROM issue i
+			WHERE i.id = il.issue_id
+			  AND i.project_id = $1
+			  AND i.workspace_id = $2
+		  )`, idUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remap issue labels")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE issue AS i
+		SET properties = mapped.properties, updated_at = now()
+		FROM (
+			SELECT i2.id,
+				jsonb_object_agg(
+					COALESCE(pm.target_id::text, entry.key), entry.value
+				) AS properties
+			FROM issue i2
+			CROSS JOIN LATERAL jsonb_each(i2.properties) AS entry(key, value)
+			LEFT JOIN project_migration_property_map pm
+			  ON pm.source_id::text = entry.key
+			WHERE i2.project_id = $1 AND i2.workspace_id = $2
+			GROUP BY i2.id
+		) AS mapped
+		WHERE i.id = mapped.id`, idUUID, targetUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remap issue properties")
+		return
 	}
 	// Issue history and user-facing metadata have their own workspace scope.
 	// Move those rows with the issues so comments, reactions, attachments, and
 	// pins remain visible after the project changes workspace.
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE comment
-		SET workspace_id = $1, updated_at = now()
+		SET workspace_id = $1
 		WHERE workspace_id = $3
-		  AND issue_id IN (SELECT id FROM issue WHERE project_id = $2)`, targetUUID, idUUID, sourceUUID); err != nil {
+		  AND issue_id IN (
+			SELECT id FROM issue
+			WHERE project_id = $2 AND workspace_id = $1
+		  )`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate comments")
 		return
 	}
@@ -682,7 +842,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		  AND comment_id IN (
 			SELECT c.id FROM comment c
 			JOIN issue i ON i.id = c.issue_id
-			WHERE i.project_id = $2
+			WHERE i.project_id = $2 AND i.workspace_id = $1
 		)`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate comment reactions")
 		return
@@ -691,7 +851,10 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		UPDATE issue_reaction
 		SET workspace_id = $1
 		WHERE workspace_id = $3
-		  AND issue_id IN (SELECT id FROM issue WHERE project_id = $2)`, targetUUID, idUUID, sourceUUID); err != nil {
+		  AND issue_id IN (
+			SELECT id FROM issue
+			WHERE project_id = $2 AND workspace_id = $1
+		  )`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate issue reactions")
 		return
 	}
@@ -700,11 +863,14 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		SET workspace_id = $1
 		WHERE workspace_id = $3
 		  AND (
-			issue_id IN (SELECT id FROM issue WHERE project_id = $2)
+			issue_id IN (
+				SELECT id FROM issue
+				WHERE project_id = $2 AND workspace_id = $1
+			)
 			OR comment_id IN (
 				SELECT c.id FROM comment c
 				JOIN issue i ON i.id = c.issue_id
-				WHERE i.project_id = $2
+				WHERE i.project_id = $2 AND i.workspace_id = $1
 			)
 		)`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate attachments")
@@ -716,18 +882,46 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		WHERE workspace_id = $3
 		  AND (
 			(item_type = 'project' AND item_id = $2)
-			OR (item_type = 'issue' AND item_id IN (SELECT id FROM issue WHERE project_id = $2))
+			OR (item_type = 'issue' AND item_id IN (
+				SELECT id FROM issue
+				WHERE project_id = $2 AND workspace_id = $1
+			))
 		)`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate pins")
 		return
 	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE activity_log
+		SET workspace_id = $1
+		WHERE workspace_id = $3
+		  AND issue_id IN (
+			SELECT id FROM issue
+			WHERE project_id = $2 AND workspace_id = $1
+		  )`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate activity history")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE inbox_item
+		SET workspace_id = $1
+		WHERE workspace_id = $3
+		  AND issue_id IN (
+			SELECT id FROM issue
+			WHERE project_id = $2 AND workspace_id = $1
+		  )`, targetUUID, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate notifications")
+		return
+	}
 	// Project resources carry their own workspace scope and must follow the
 	// project or they would disappear from the target workspace's resource view.
-	if _, err = tx.Exec(r.Context(), `UPDATE project_resource SET workspace_id = $1 WHERE project_id = $2`, targetUUID, idUUID); err != nil {
+	if _, err = tx.Exec(r.Context(), `
+		UPDATE project_resource
+		SET workspace_id = $1
+		WHERE project_id = $2 AND workspace_id = $3`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate project resources")
 		return
 	}
-	project, err = h.Queries.WithTx(tx).GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: idUUID, WorkspaceID: targetUUID})
+	project, err := h.Queries.WithTx(tx).GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: idUUID, WorkspaceID: targetUUID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load migrated project")
 		return
@@ -739,6 +933,10 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	userID := requestUserID(r)
+	targetID := uuidToString(targetUUID)
+	h.publish(protocol.EventProjectDeleted, sourceID, "member", userID, map[string]any{"project_id": uuidToString(project.ID)})
+	h.publish(protocol.EventProjectUpdated, targetID, "member", userID, map[string]any{"project": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
 
