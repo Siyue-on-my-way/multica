@@ -727,6 +727,10 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to migrate project resources")
 		return
 	}
+	if _, err = tx.Exec(r.Context(), `UPDATE report_history SET workspace_id = $1 WHERE project_id = $2`, targetUUID, idUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to migrate project report history")
+		return
+	}
 	project, err = h.Queries.WithTx(tx).GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: idUUID, WorkspaceID: targetUUID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load migrated project")
@@ -789,6 +793,13 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: project.WorkspaceID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear project chat context")
+		return
+	}
+	if err := qtx.DeleteReportHistoryByProject(r.Context(), db.DeleteReportHistoryByProjectParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete project report history")
 		return
 	}
 	if err := qtx.DeleteProject(r.Context(), db.DeleteProjectParams{

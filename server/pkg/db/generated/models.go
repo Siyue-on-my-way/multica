@@ -908,6 +908,21 @@ type QuickAction struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ReportHistory struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	PeriodType      string             `json:"period_type"`
+	RangeStart      pgtype.Timestamptz `json:"range_start"`
+	RangeEnd        pgtype.Timestamptz `json:"range_end"`
+	Timezone        string             `json:"timezone"`
+	GeneratedByType string             `json:"generated_by_type"`
+	GeneratedByID   pgtype.UUID        `json:"generated_by_id"`
+	DataSnapshot    []byte             `json:"data_snapshot"`
+	Content         string             `json:"content"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
