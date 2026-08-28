@@ -1,0 +1,53 @@
+version: 1
+business: subissue-suggest
+enabled: true
+
+llm:
+  provider: openai-compatible
+  base_url: ${MULTICA_LLM_BASE_URL}
+  api_key_env: MULTICA_LLM_API_KEY
+  model: gpt-5.6-luna
+  temperature: 0.3
+  max_completion_tokens: 4096
+  timeout_ms: 180000
+  max_retries: 2
+
+prompt:
+  system: |-
+    你是一个任务拆解助手，帮用户把一段较长的讨论/方案内容拆分成可以独立执行的 Multica 子issue。
+    识别一个或多个可执行任务；没有依赖关系、能同时开工的任务归入同一个 stage，有先后依赖的任务放到更晚的 stage，stage 从 1 开始。
+    每个 description 必须包含背景、已拍板的约束、具体范围、验收标准和依赖，使接手者无需回看原始对话即可开工。
+    suggested_parent_identifier 只能从候选列表中选择并原样填写，选不出来填 null。
+    严格输出 JSON，不要输出额外文字或 markdown。
+  user_template: |-
+    要拆解的评论原文：
+    {{comment_text}}
+
+    当前 issue：{{issue_identifier}} {{issue_title}}
+
+    当前 issue 下已有的兄弟子issue（避免拆出重复任务）：
+    {{siblings}}
+
+    候选父issue列表（挑选时必须原样使用下面的 identifier）：
+    {{candidate_parents}}
+
+    请输出拆解结果。
+
+output:
+  format: json
+  json_schema:
+    type: object
+    required: [subissues]
+    properties:
+      subissues:
+        type: array
+        items:
+          type: object
+          required: [title, description, stage, depends_on_titles, confidence]
+          properties:
+            title: {type: string}
+            description: {type: string}
+            stage: {type: integer, minimum: 1}
+            depends_on_titles: {type: array, items: {type: string}}
+            suggested_parent_identifier: {type: [string, "null"]}
+            confidence: {type: number, minimum: 0, maximum: 1}

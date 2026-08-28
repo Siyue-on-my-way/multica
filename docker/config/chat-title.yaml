@@ -1,0 +1,24 @@
+version: 1
+business: chat-title
+enabled: true
+
+llm:
+  provider: openai-compatible
+  base_url: ${MULTICA_LLM_BASE_URL}
+  api_key_env: MULTICA_LLM_API_KEY
+  model: gpt-5.6-luna
+  temperature: 0.2
+  max_completion_tokens: 128
+  timeout_ms: 20000
+  max_retries: 2
+
+prompt:
+  system: |-
+    You write a very short title that summarizes a chat conversation.
+    Output only the title, in the same language as the user's message.
+    Keep it under 8 words, without quotes, labels, or trailing punctuation.
+  user_template: |-
+    {{source_text}}
+
+output:
+  format: text

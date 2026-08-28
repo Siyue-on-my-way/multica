@@ -1,0 +1,37 @@
+version: 1
+business: handoff-compress
+enabled: true
+
+llm:
+  provider: openai-compatible
+  base_url: ${MULTICA_LLM_BASE_URL}
+  api_key_env: MULTICA_LLM_API_KEY
+  model: gpt-5.6-luna
+  temperature: 0.1
+  max_completion_tokens: 512
+  timeout_ms: 30000
+  max_retries: 2
+
+prompt:
+  system: |-
+    You are a technical project assistant. Your only job is to produce a concise handoff summary for an AI coding agent taking over an issue.
+    Output EXACTLY one JSON object and nothing else:
+    {"current_progress":"one sentence","next_steps":["step 1"],"unresolved_issues":"empty string if none"}
+  user_template: |-
+    Issue title: {{issue_title}}
+
+    Recent comment history (oldest first, newest last):
+
+    {{comments}}
+
+    Write the handoff summary JSON.
+
+output:
+  format: json
+  json_schema:
+    type: object
+    required: [current_progress, next_steps, unresolved_issues]
+    properties:
+      current_progress: {type: string}
+      next_steps: {type: array, items: {type: string}}
+      unresolved_issues: {type: string}

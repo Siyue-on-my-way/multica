@@ -545,6 +545,12 @@ func parseBusinessFile(business Business, definition businessDefinition, data []
 	if file.LLM == nil || file.Prompt == nil || file.Output == nil {
 		return businessFileConfig{}, fmt.Errorf("validate %s: llm, prompt, and output are required", definition.fileName)
 	}
+	// Keep deployment-specific endpoints out of the checked-in YAML examples.
+	// Only scalar connection fields support ${ENV_NAME}; prompt values and the
+	// api_key_env field remain literal so configuration cannot turn into a
+	// general-purpose environment interpolation language.
+	file.LLM.BaseURL = expandBusinessEnv(file.LLM.BaseURL)
+	file.LLM.Model = expandBusinessEnv(file.LLM.Model)
 	if strings.TrimSpace(file.LLM.Provider) == "" || strings.TrimSpace(file.LLM.Model) == "" {
 		return businessFileConfig{}, fmt.Errorf("validate %s: llm.provider and llm.model are required", definition.fileName)
 	}
@@ -599,6 +605,12 @@ func validateBusinessTemplate(value string, allowed map[string]struct{}) error {
 		}
 	}
 	return nil
+}
+
+func expandBusinessEnv(value string) string {
+	return os.Expand(value, func(key string) string {
+		return os.Getenv(key)
+	})
 }
 
 func templateVariables(value string) []string {

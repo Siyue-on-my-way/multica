@@ -1,0 +1,49 @@
+version: 1
+business: chat-quick-actions
+enabled: true
+
+llm:
+  provider: openai-compatible
+  base_url: ${MULTICA_LLM_BASE_URL}
+  api_key_env: MULTICA_LLM_API_KEY
+  model: gpt-5.6-luna
+  temperature: 0.3
+  max_completion_tokens: 2048
+  timeout_ms: 8000
+  max_retries: 2
+
+prompt:
+  system: |-
+    You generate exactly three follow-up suggestions for a chat between a user and an AI agent.
+    Write for the user, not for the agent. Anchor every suggestion in the latest agent reply, do not repeat ALREADY SUGGESTED, and use the same language as the latest user message.
+    Return JSON only in this shape: {"actions":[{"label":"...","prompt":"...","primary":true}]}
+  user_template: |-
+    CONVERSATION:
+    {{conversation_context}}
+
+    LATEST USER MESSAGE:
+    {{latest_user_message}}
+
+    LATEST AGENT MESSAGE:
+    {{latest_agent_message}}
+
+    ALREADY SUGGESTED:
+    {{already_suggested}}
+
+    Produce the follow-up suggestions for the latest agent reply.
+
+output:
+  format: json
+  json_schema:
+    type: object
+    required: [actions]
+    properties:
+      actions:
+        type: array
+        items:
+          type: object
+          required: [label, prompt, primary]
+          properties:
+            label: {type: string}
+            prompt: {type: string}
+            primary: {type: boolean}

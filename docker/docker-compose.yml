@@ -40,6 +40,10 @@ services:
         condition: service_healthy
     volumes:
       - ./volumes/backend_uploads:/app/data/uploads
+      - ./config:/app/config/llm:ro
+    environment:
+      MULTICA_LLM_CONFIG_DIR: /app/config/llm
+      MULTICA_LLM_CONFIG_POLL_INTERVAL: 5s
     env_file:
       - ./.env
     restart: unless-stopped

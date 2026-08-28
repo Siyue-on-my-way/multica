@@ -217,6 +217,20 @@ output:
 	}
 }
 
+func TestDockerBusinessConfigTemplatesMatchRegistry(t *testing.T) {
+	for _, business := range SupportedBusinesses() {
+		definition := businessDefinitions[business]
+		path := filepath.Join("..", "..", "..", "docker", "config", definition.fileName)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read Docker config %s: %v", definition.fileName, err)
+		}
+		if _, err := parseBusinessFile(business, definition, data); err != nil {
+			t.Fatalf("parse Docker config %s: %v", definition.fileName, err)
+		}
+	}
+}
+
 func validBusinessYAML(business, format, system, user string) string {
 	return "version: 1\n" +
 		"business: " + business + "\n" +
