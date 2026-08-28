@@ -1028,25 +1028,11 @@ func generateBusinessJSON(ctx context.Context, name Business, snapshot *business
 	if err != nil {
 		return "", err
 	}
-	raw = stripBusinessJSONFence(raw)
+	raw = StripJSONFence(raw)
 	if err := validateBusinessJSON(raw, call.jsonSchema); err != nil {
 		return "", fmt.Errorf("validate %s response: %w", name, err)
 	}
 	return raw, nil
-}
-
-func stripBusinessJSONFence(raw string) string {
-	value := strings.TrimSpace(raw)
-	if !strings.HasPrefix(value, "```") {
-		return value
-	}
-	if start := strings.IndexByte(value, '\n'); start >= 0 {
-		value = value[start+1:]
-	}
-	if end := strings.LastIndex(value, "```"); end >= 0 {
-		value = value[:end]
-	}
-	return strings.TrimSpace(value)
 }
 
 func renderBusinessCall(name Business, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string) (string, string, error) {

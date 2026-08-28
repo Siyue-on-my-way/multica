@@ -361,6 +361,9 @@ const deleteIssue = `-- name: DeleteIssue :exec
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
 ),
+cleared_status_history AS (
+    DELETE FROM issue_status_history WHERE issue_id IN (SELECT target.id FROM target)
+),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)
 )
@@ -1388,6 +1391,19 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 }
 
 const updateIssue = `-- name: UpdateIssue :one
+WITH actor_config AS (
+    SELECT
+        set_config(
+            'multica.issue_status_actor_type',
+            COALESCE($17::text, 'system'),
+            true
+        ),
+        set_config(
+            'multica.issue_status_actor_id',
+            COALESCE($18::uuid::text, ''),
+            true
+        )
+)
 UPDATE issue SET
     title = COALESCE($2, title),
     description = COALESCE($3, description),
@@ -1405,7 +1421,7 @@ UPDATE issue SET
     agent_status = $15,
     handoff_summary = $16,
     updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND (SELECT true FROM actor_config)
 RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary
 `
 
@@ -1426,6 +1442,8 @@ type UpdateIssueParams struct {
 	WorkingBranch  pgtype.Text   `json:"working_branch"`
 	AgentStatus    pgtype.Text   `json:"agent_status"`
 	HandoffSummary []byte        `json:"handoff_summary"`
+	ChangedByType  pgtype.Text   `json:"changed_by_type"`
+	ChangedByID    pgtype.UUID   `json:"changed_by_id"`
 }
 
 func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue, error) {
@@ -1446,6 +1464,8 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		arg.WorkingBranch,
 		arg.AgentStatus,
 		arg.HandoffSummary,
+		arg.ChangedByType,
+		arg.ChangedByID,
 	)
 	var i Issue
 	err := row.Scan(
@@ -1483,22 +1503,43 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 }
 
 const updateIssueStatus = `-- name: UpdateIssueStatus :one
+WITH actor_config AS (
+    SELECT
+        set_config(
+            'multica.issue_status_actor_type',
+            COALESCE($4::text, 'system'),
+            true
+        ),
+        set_config(
+            'multica.issue_status_actor_id',
+            COALESCE($5::uuid::text, ''),
+            true
+        )
+)
 UPDATE issue SET
     status = $2,
     updated_at = now()
-WHERE id = $1 AND workspace_id = $3
+WHERE id = $1 AND workspace_id = $3 AND (SELECT true FROM actor_config)
 RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary
 `
 
 type UpdateIssueStatusParams struct {
-	ID          pgtype.UUID `json:"id"`
-	Status      string      `json:"status"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ID            pgtype.UUID `json:"id"`
+	Status        string      `json:"status"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ChangedByType string      `json:"changed_by_type"`
+	ChangedByID   pgtype.UUID `json:"changed_by_id"`
 }
 
 // Workspace_id in the WHERE clause is a SQL-layer tenant guard; see DeleteIssue.
 func (q *Queries) UpdateIssueStatus(ctx context.Context, arg UpdateIssueStatusParams) (Issue, error) {
-	row := q.db.QueryRow(ctx, updateIssueStatus, arg.ID, arg.Status, arg.WorkspaceID)
+	row := q.db.QueryRow(ctx, updateIssueStatus,
+		arg.ID,
+		arg.Status,
+		arg.WorkspaceID,
+		arg.ChangedByType,
+		arg.ChangedByID,
+	)
 	var i Issue
 	err := row.Scan(
 		&i.ID,

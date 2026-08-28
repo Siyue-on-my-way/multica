@@ -107,6 +107,10 @@ import type {
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
+  ProjectReport,
+  ListProjectReportsResponse,
+  CreateProjectReportRequest,
+  ProjectReportJob,
   Label,
   IssueProperty,
   IssuePropertyValue,
@@ -2655,6 +2659,34 @@ export class ApiClient {
 
   async deleteProject(id: string): Promise<void> {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
+  }
+
+  async createProjectReport(
+    projectId: string,
+    data: CreateProjectReportRequest,
+  ): Promise<ProjectReportJob> {
+    return this.fetch(`/api/projects/${projectId}/reports`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getProjectReportJob(projectId: string, jobId: string): Promise<ProjectReportJob> {
+    return this.fetch(`/api/projects/${projectId}/reports/jobs/${jobId}`);
+  }
+
+  async listProjectReports(projectId: string): Promise<ListProjectReportsResponse> {
+    return this.fetch(`/api/projects/${projectId}/reports`);
+  }
+
+  async getProjectReport(projectId: string, reportId: string): Promise<ProjectReport> {
+    return this.fetch(`/api/projects/${projectId}/reports/${reportId}`);
+  }
+
+  async saveProjectReport(projectId: string, reportId: string): Promise<ProjectReport> {
+    return this.fetch(`/api/projects/${projectId}/reports/${reportId}/save`, {
+      method: "POST",
+    });
   }
 
   // Project resources

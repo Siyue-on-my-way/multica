@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { Check, ChevronRight, Link2, Loader2, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
+import { Check, ChevronRight, FileText, Link2, Loader2, MoreHorizontal, PanelRight, Pin, PinOff, Trash2, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -27,6 +27,7 @@ import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
 import { ProjectStartDatePicker } from "./project-start-date-picker";
 import { ProjectDueDatePicker } from "./project-due-date-picker";
+import { ProjectReportDialog } from "./project-report-dialog";
 import { IssueSurface } from "../../issues/surface/issue-surface";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -151,6 +152,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const isMobile = useIsMobile();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [migrateDialogOpen, setMigrateDialogOpen] = useState(false);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [targetWorkspaceId, setTargetWorkspaceId] = useState("");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(true);
@@ -553,6 +555,10 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                       {t(($) => $.detail.migrate_action)}
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuItem onClick={() => setReportDialogOpen(true)}>
+                    <FileText className="h-3.5 w-3.5" />
+                    {t(($) => $.detail.report_action)}
+                  </DropdownMenuItem>
                   {isWorkspaceAdmin && (
                     <>
                       <DropdownMenuSeparator />
@@ -695,6 +701,12 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           </AlertDialogContent>
         </AlertDialog>
       )}
+      <ProjectReportDialog
+        open={reportDialogOpen}
+        onOpenChange={setReportDialogOpen}
+        projectName={project.title}
+        projectId={project.id}
+      />
     </>
   );
 }

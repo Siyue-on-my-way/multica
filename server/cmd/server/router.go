@@ -1223,6 +1223,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetProject)
 					r.Put("/", h.UpdateProject)
+					r.Get("/reports", h.ListProjectReports)
+					r.Post("/reports", h.CreateProjectReport)
+					r.Get("/reports/{reportId}", h.GetProjectReport)
+					r.Get("/reports/jobs/{jobId}", h.GetProjectReportJob)
+					r.Post("/reports/{reportId}/save", h.SaveProjectReport)
 					r.Put("/migrate", h.MigrateProject)
 					r.Delete("/", h.DeleteProject)
 					r.Get("/resources", h.ListProjectResources)

@@ -97,6 +97,19 @@ SELECT * FROM issue
 WHERE workspace_id = $1 AND number = $2;
 
 -- name: UpdateIssue :one
+WITH actor_config AS (
+    SELECT
+        set_config(
+            'multica.issue_status_actor_type',
+            COALESCE(sqlc.narg('changed_by_type')::text, 'system'),
+            true
+        ),
+        set_config(
+            'multica.issue_status_actor_id',
+            COALESCE(sqlc.narg('changed_by_id')::uuid::text, ''),
+            true
+        )
+)
 UPDATE issue SET
     title = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
@@ -114,15 +127,28 @@ UPDATE issue SET
     agent_status = sqlc.narg('agent_status'),
     handoff_summary = sqlc.narg('handoff_summary'),
     updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND (SELECT true FROM actor_config)
 RETURNING *;
 
 -- name: UpdateIssueStatus :one
 -- Workspace_id in the WHERE clause is a SQL-layer tenant guard; see DeleteIssue.
+WITH actor_config AS (
+    SELECT
+        set_config(
+            'multica.issue_status_actor_type',
+            COALESCE(sqlc.arg('changed_by_type')::text, 'system'),
+            true
+        ),
+        set_config(
+            'multica.issue_status_actor_id',
+            COALESCE(sqlc.narg('changed_by_id')::uuid::text, ''),
+            true
+        )
+)
 UPDATE issue SET
     status = $2,
     updated_at = now()
-WHERE id = $1 AND workspace_id = $3
+WHERE id = $1 AND workspace_id = $3 AND (SELECT true FROM actor_config)
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one
@@ -188,6 +214,9 @@ LIMIT 1;
 -- cross-tenant leak the #1661 guard above exists to prevent.
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
+),
+cleared_status_history AS (
+    DELETE FROM issue_status_history WHERE issue_id IN (SELECT target.id FROM target)
 ),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)

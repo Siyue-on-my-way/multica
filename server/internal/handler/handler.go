@@ -449,7 +449,17 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // For unvalidated user input at request boundaries, use parseUUIDOrBadRequest
 // (writes 400) — never feed raw chi.URLParam / request-body strings into
 // parseUUID directly when the call writes to the database.
-func parseUUID(s string) pgtype.UUID                { return util.MustParseUUID(s) }
+func parseUUID(s string) pgtype.UUID { return util.MustParseUUID(s) }
+func optionalUUID(s string) pgtype.UUID {
+	if s == "" {
+		return pgtype.UUID{}
+	}
+	parsed, err := util.ParseUUID(s)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return parsed
+}
 func uuidToString(u pgtype.UUID) string             { return util.UUIDToString(u) }
 func textToPtr(t pgtype.Text) *string               { return util.TextToPtr(t) }
 func ptrToText(s *string) pgtype.Text               { return util.PtrToText(s) }

@@ -483,6 +483,9 @@ func main() {
 	if err := schedulerMgr.Register(scheduler.AutopilotScheduleDispatchJob(pool, queries, autopilotSvc)); err != nil {
 		slog.Warn("scheduler: failed to register autopilot_schedule_dispatch job", "error", err)
 	}
+	if err := schedulerMgr.Register(scheduler.ProjectReportGenerationJob(pool, queries, h.LLM)); err != nil {
+		slog.Warn("scheduler: failed to register project_report_generate job", "error", err)
+	}
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)
 	}()

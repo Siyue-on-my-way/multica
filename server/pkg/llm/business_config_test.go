@@ -424,8 +424,8 @@ func TestStripBusinessJSONFence(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := stripBusinessJSONFence(test.raw); got != test.want {
-				t.Fatalf("stripBusinessJSONFence() = %q, want %q", got, test.want)
+			if got := StripJSONFence(test.raw); got != test.want {
+				t.Fatalf("StripJSONFence() = %q, want %q", got, test.want)
 			}
 		})
 	}

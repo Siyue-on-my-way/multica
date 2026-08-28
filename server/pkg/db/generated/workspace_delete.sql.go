@@ -145,6 +145,12 @@ func (q *Queries) DeleteWorkspaceConnections(ctx context.Context, workspaceID pg
 
 const deleteWorkspaceIssueRoots = `-- name: DeleteWorkspaceIssueRoots :exec
 WITH
+deleted_report_history AS (
+    DELETE FROM report_history WHERE report_history.workspace_id = $1
+),
+deleted_issue_status_history AS (
+    DELETE FROM issue_status_history WHERE issue_status_history.workspace_id = $1
+),
 deleted_issues AS (
     DELETE FROM issue WHERE issue.workspace_id = $1
 ),

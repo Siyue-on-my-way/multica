@@ -115,3 +115,58 @@ export interface ListProjectResourcesResponse {
   resources: ProjectResource[];
   total: number;
 }
+
+export interface ProjectReport {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  period_type: ProjectReportPeriod;
+  range_start: string;
+  range_end: string;
+  timezone: string;
+  generated_by_type: "member" | "agent";
+  generated_by_id: string;
+  data_snapshot?: unknown;
+  content: string;
+  created_at: string;
+  saved_at?: string | null;
+}
+
+export type ProjectReportPeriod = "daily" | "weekly" | "monthly";
+
+export interface ProjectReportHistoryItem {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  period_type: ProjectReportPeriod;
+  range_start: string;
+  range_end: string;
+  timezone: string;
+  generated_by_type: "member" | "agent";
+  generated_by_id: string;
+  created_at: string;
+  saved_at: string;
+}
+
+export interface ListProjectReportsResponse {
+  reports: ProjectReportHistoryItem[];
+  total: number;
+}
+
+export interface CreateProjectReportRequest {
+  period_type: ProjectReportPeriod;
+  range_start: string;
+  range_end: string;
+  timezone: string;
+}
+
+export interface ProjectReportJob {
+  job_id: string;
+  report_id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  attempt: number;
+  max_attempts: number;
+  error_message?: string | null;
+  created_at: string;
+  report?: ProjectReport;
+}

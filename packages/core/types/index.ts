@@ -146,6 +146,12 @@ export type {
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
+  ProjectReport,
+  ProjectReportPeriod,
+  ProjectReportHistoryItem,
+  ListProjectReportsResponse,
+  CreateProjectReportRequest,
+  ProjectReportJob,
 } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
