@@ -28,6 +28,8 @@ import { useT } from "../i18n";
 
 type ModalPhase = "outline" | "details";
 
+const OVERALL_BUSINESS = "整体流程";
+
 interface SubIssueDraft {
   id: string;
   checked: boolean;
@@ -38,6 +40,28 @@ interface SubIssueDraft {
   descriptionOpen: boolean;
   parentIssueId: string | null;
   parentIdentifier: string | null;
+}
+
+function normalizeBusiness(value: string): string {
+  return value.trim() || OVERALL_BUSINESS;
+}
+
+function stripBusinessPrefix(title: string): string {
+  let result = title.trim();
+  while (result.startsWith("【")) {
+    const end = result.indexOf("】");
+    if (end < 0) break;
+    result = result.slice(end + 1).trim();
+  }
+  return result;
+}
+
+function formatBusinessTitle(title: string, business: string, isSummaryTest = false): string {
+  const normalizedBusiness = normalizeBusiness(business);
+  const cleanTitle = stripBusinessPrefix(title);
+  if (!cleanTitle) return "";
+  const suffix = isSummaryTest ? `${normalizedBusiness}汇总测试` : cleanTitle;
+  return `【${normalizedBusiness}】${suffix}`;
 }
 
 function draftFromSuggestion(s: SubIssueSuggestion): SubIssueDraft {
@@ -59,6 +83,7 @@ function newManualItem(planId: string): SubIssuePlanItem {
     id: `${planId}-manual-${Date.now()}`,
     title: "",
     goal: "",
+    business: OVERALL_BUSINESS,
   };
 }
 
@@ -166,11 +191,22 @@ export function SubIssuePreviewModal({
     if (!selectedPlan || mergeSelection.length < 2) return;
     const selected = selectedPlan.items.filter((item) => mergeSelection.includes(item.id));
     const firstIndex = selectedPlan.items.findIndex((item) => item.id === selected[0]?.id);
+    const businesses = new Set(selected.map((item) => item.business));
+    const business = businesses.size === 1 ? selected[0]?.business : undefined;
+    const isSummaryTest = selected.every((item) => item.kind === "summary_test") && businesses.size === 1;
     const merged: SubIssuePlanItem = {
       id: `${selectedPlan.id}-merged-${Date.now()}`,
-      title: selected.map((item) => item.title.trim()).filter(Boolean).join(" + "),
+      title: formatBusinessTitle(
+        selected.map((item) => stripBusinessPrefix(item.title).trim()).filter(Boolean).join(" + "),
+        business || OVERALL_BUSINESS,
+        isSummaryTest,
+      ),
       goal: selected.map((item) => item.goal.trim()).filter(Boolean).join("\n\n"),
     };
+    if (isSummaryTest) {
+      merged.kind = "summary_test";
+      merged.business = business;
+    }
     updateSelectedPlan((plan) => {
       const remaining = plan.items.filter((item) => !mergeSelection.includes(item.id));
       remaining.splice(Math.max(firstIndex, 0), 0, merged);
@@ -361,6 +397,29 @@ export function SubIssuePreviewModal({
                                   value={item.title}
                                   onChange={(event) => updatePlanItem(item.id, { title: event.target.value })}
                                   placeholder={t(($) => $.suggest_subissues.title_placeholder)}
+                                />
+                                {item.kind === "summary_test" && (
+                                  <Badge variant="secondary">{t(($) => $.suggest_subissues.summary_test_badge)}</Badge>
+                                )}
+                                <Input
+                                  value={item.business ?? ""}
+                                  className="h-7"
+                                  aria-label={t(($) => $.suggest_subissues.business_label)}
+                                  placeholder={t(($) => $.suggest_subissues.business_placeholder)}
+                                  onChange={(event) => {
+                                    const business = event.target.value;
+                                    updatePlanItem(item.id, {
+                                      business,
+                                      title: formatBusinessTitle(item.title, business, item.kind === "summary_test"),
+                                    });
+                                  }}
+                                  onBlur={() => {
+                                    const business = normalizeBusiness(item.business ?? "");
+                                    updatePlanItem(item.id, {
+                                      business,
+                                      title: formatBusinessTitle(item.title, business, item.kind === "summary_test"),
+                                    });
+                                  }}
                                 />
                                 <Textarea
                                   value={item.goal}

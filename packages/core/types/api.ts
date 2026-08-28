@@ -81,6 +81,8 @@ export interface SubIssuePlanItem {
 	id: string;
 	title: string;
 	goal: string;
+	kind?: "implementation" | "summary_test";
+	business?: string;
 }
 
 export interface SubIssuePlan {
