@@ -85,11 +85,8 @@
     "description_toggle": "설명",
     "cancel": "취소",
     "create_single": "하위 이슈 생성",
-    "create_batch_one": "선택한 {{count}}개의 하위 이슈 생성",
     "create_batch_other": "선택한 {{count}}개의 하위 이슈 생성",
-    "toast_created_one": "{{count}}개의 하위 이슈를 생성했습니다",
     "toast_created_other": "{{count}}개의 하위 이슈를 생성했습니다",
-    "toast_partial_failed_one": "{{count}}개의 하위 이슈 생성에 실패했습니다",
     "toast_partial_failed_other": "{{count}}개의 하위 이슈 생성에 실패했습니다"
   },
   "run_confirm": {

@@ -85,11 +85,8 @@
     "description_toggle": "描述",
     "cancel": "取消",
     "create_single": "创建子issue",
-    "create_batch_one": "批量创建已勾选的 {{count}} 个子issue",
     "create_batch_other": "批量创建已勾选的 {{count}} 个子issue",
-    "toast_created_one": "已创建 {{count}} 个子issue",
     "toast_created_other": "已创建 {{count}} 个子issue",
-    "toast_partial_failed_one": "{{count}} 个子issue创建失败",
     "toast_partial_failed_other": "{{count}} 个子issue创建失败"
   },
   "run_confirm": {
