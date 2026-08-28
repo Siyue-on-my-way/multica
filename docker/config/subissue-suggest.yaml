@@ -24,6 +24,8 @@ stages:
         2. 平衡拆分：只拆出边界清晰且有独立价值的任务。
         3. 并行优先：把确实可以独立并行处理的任务分开，但不要为了增加数量而拆散强相关工作。
         每个方案只返回子issue的 title 和 goal，不要生成 description、stage、依赖、父issue或其他字段。方案必须来自原始讨论，不能凭空添加工作。严格只输出 JSON，不要输出 Markdown 或解释文字。
+        输出必须是一个 JSON 对象，结构固定为：
+        {"plans":[{"name":"上下文优先|平衡拆分|并行优先","items":[{"title":"...","goal":"..."}]}]}
       user_template: |-
         原始评论内容：
         {{comment_text}}
