@@ -322,6 +322,80 @@ output:
 	}
 }
 
+func TestBusinessRegistryUsesLiteralAPIKey(t *testing.T) {
+	var authHeaders []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","created":1,"model":"configured-model","choices":[{"index":0,"message":{"role":"assistant","content":"Configured title"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	directory := t.TempDir()
+	writeBusinessFile(t, directory, "chat-title.yaml", strings.ReplaceAll(`version: 1
+business: chat-title
+enabled: true
+llm:
+  provider: openai-compatible
+  base_url: BASE_URL
+  api_key: yaml-literal-key
+  model: configured-model
+prompt:
+  system: "System {{source_text}}"
+  user_template: "{{source_text}}"
+output:
+  format: text
+`, "BASE_URL", server.URL+"/"))
+
+	registry := NewBusinessRegistry(BusinessRegistryConfig{
+		Directory:  directory,
+		HTTPClient: server.Client(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if _, err := registry.Client(BusinessChatTitle).GenerateTextTemplate(
+		context.Background(), map[string]string{"source_text": "hello"}, "", "", 0, 0,
+	); err != nil {
+		t.Fatalf("generate configured title: %v", err)
+	}
+	if len(authHeaders) != 1 || authHeaders[0] != "Bearer yaml-literal-key" {
+		t.Fatalf("authorization header = %#v", authHeaders)
+	}
+}
+
+func TestBusinessConfigRequiresExactlyOneAPIKeySource(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields string
+	}{
+		{name: "missing", fields: "api_key: \"\""},
+		{name: "literal", fields: "api_key: literal-key"},
+		{name: "environment", fields: "api_key_env: MULTICA_TEST_KEY"},
+		{name: "both", fields: "api_key: literal-key\n  api_key_env: MULTICA_TEST_KEY"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			yaml := strings.Replace(
+				validBusinessYAML("chat-title", "text", "system", "user"),
+				"api_key_env: MULTICA_TEST_KEY",
+				test.fields,
+				1,
+			)
+			_, err := parseBusinessFile(BusinessChatTitle, businessDefinitions[BusinessChatTitle], []byte(yaml))
+			switch test.name {
+			case "literal", "environment":
+				if err != nil {
+					t.Fatalf("parse valid config: %v", err)
+				}
+			default:
+				if err == nil || !strings.Contains(err.Error(), "exactly one of llm.api_key or llm.api_key_env is required") {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestDockerBusinessConfigTemplatesMatchRegistry(t *testing.T) {
 	for _, business := range SupportedBusinesses() {
 		definition := businessDefinitions[business]

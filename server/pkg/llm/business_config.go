@@ -242,6 +242,7 @@ type businessFileStageConfig struct {
 type businessFileLLM struct {
 	Provider            string  `yaml:"provider"`
 	BaseURL             string  `yaml:"base_url"`
+	APIKey              *string `yaml:"api_key"`
 	APIKeyEnv           *string `yaml:"api_key_env"`
 	Model               string  `yaml:"model"`
 	Temperature         float64 `yaml:"temperature"`
@@ -613,8 +614,8 @@ func (r *BusinessRegistry) callSnapshotFromFile(
 	if llmFile == nil || promptFile == nil || outputFile == nil {
 		return nil, errors.New("llm, prompt, and output are required")
 	}
+	apiKey := strings.TrimSpace(pointerString(llmFile.APIKey))
 	apiKeyEnv := strings.TrimSpace(pointerString(llmFile.APIKeyEnv))
-	apiKey := ""
 	if apiKeyEnv != "" {
 		apiKey = strings.TrimSpace(os.Getenv(apiKeyEnv))
 	}
@@ -738,8 +739,10 @@ func validateBusinessCallConfig(fileName, label string, definition businessStage
 	default:
 		return fmt.Errorf("%s: unsupported llm.provider", prefix)
 	}
-	if config.LLM.APIKeyEnv == nil || strings.TrimSpace(*config.LLM.APIKeyEnv) == "" {
-		return fmt.Errorf("%s: llm.api_key_env is required", prefix)
+	hasAPIKey := config.LLM.APIKey != nil && strings.TrimSpace(*config.LLM.APIKey) != ""
+	hasAPIKeyEnv := config.LLM.APIKeyEnv != nil && strings.TrimSpace(*config.LLM.APIKeyEnv) != ""
+	if hasAPIKey == hasAPIKeyEnv {
+		return fmt.Errorf("%s: exactly one of llm.api_key or llm.api_key_env is required", prefix)
 	}
 	if config.LLM.BaseURL != "" {
 		parsed, err := url.Parse(strings.TrimSpace(config.LLM.BaseURL))
