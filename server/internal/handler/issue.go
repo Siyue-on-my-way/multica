@@ -54,9 +54,9 @@ type IssueResponse struct {
 	AgentStatus    *string         `json:"agent_status"`
 	HandoffSummary json.RawMessage `json:"handoff_summary"`
 	StartDate      *string         `json:"start_date"`
-	DueDate   *string `json:"due_date"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	DueDate        *string         `json:"due_date"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
@@ -95,28 +95,31 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		Stage:         int4ToPtr(i.Stage),
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
-		Properties:    parseIssueProperties(i.Properties),
+		ID:             uuidToString(i.ID),
+		WorkspaceID:    uuidToString(i.WorkspaceID),
+		Number:         i.Number,
+		Identifier:     identifier,
+		Title:          i.Title,
+		Description:    textToPtr(i.Description),
+		Status:         i.Status,
+		Priority:       i.Priority,
+		AssigneeType:   textToPtr(i.AssigneeType),
+		AssigneeID:     uuidToPtr(i.AssigneeID),
+		CreatorType:    i.CreatorType,
+		CreatorID:      uuidToString(i.CreatorID),
+		ParentIssueID:  uuidToPtr(i.ParentIssueID),
+		ProjectID:      uuidToPtr(i.ProjectID),
+		Position:       i.Position,
+		Stage:          int4ToPtr(i.Stage),
+		WorkingBranch:  textToPtr(i.WorkingBranch),
+		AgentStatus:    textToPtr(i.AgentStatus),
+		HandoffSummary: json.RawMessage(i.HandoffSummary),
+		StartDate:      dateToPtr(i.StartDate),
+		DueDate:        dateToPtr(i.DueDate),
+		CreatedAt:      timestampToString(i.CreatedAt),
+		UpdatedAt:      timestampToString(i.UpdatedAt),
+		Metadata:       parseIssueMetadata(i.Metadata),
+		Properties:     parseIssueProperties(i.Properties),
 	}
 }
 
@@ -2380,21 +2383,21 @@ func readRuntimeCLIVersion(metadata []byte) string {
 }
 
 type CreateIssueRequest struct {
-	Title         string   `json:"title"`
-	Description   *string  `json:"description"`
-	Status        string   `json:"status"`
-	Priority      string   `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
+	Title          string          `json:"title"`
+	Description    *string         `json:"description"`
+	Status         string          `json:"status"`
+	Priority       string          `json:"priority"`
+	AssigneeType   *string         `json:"assignee_type"`
+	AssigneeID     *string         `json:"assignee_id"`
+	ParentIssueID  *string         `json:"parent_issue_id"`
+	ProjectID      *string         `json:"project_id"`
 	Stage          *int32          `json:"stage,omitempty"`
 	WorkingBranch  *string         `json:"working_branch,omitempty"`
 	AgentStatus    *string         `json:"agent_status,omitempty"`
 	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`
 	StartDate      *string         `json:"start_date"`
-	DueDate       *string  `json:"due_date"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	DueDate        *string         `json:"due_date"`
+	AttachmentIDs  []string        `json:"attachment_ids,omitempty"`
 	// LabelIDs are issue-scoped labels to attach to the new issue in the same
 	// transaction as the create. Unknown or non-issue ids are rejected with
 	// 400 (service.ErrIssueLabelNotFound) rather than silently dropped.
@@ -2689,21 +2692,21 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateIssueRequest struct {
-	Title          *string  `json:"title"`
-	Description    *string  `json:"description"`
-	Status         *string  `json:"status"`
-	Priority       *string  `json:"priority"`
-	AssigneeType   *string  `json:"assignee_type"`
-	AssigneeID     *string  `json:"assignee_id"`
-	Position       *float64 `json:"position"`
-	StartDate      *string  `json:"start_date"`
-	DueDate        *string  `json:"due_date"`
-	ParentIssueID  *string  `json:"parent_issue_id"`
-	ProjectID      *string  `json:"project_id"`
-	Stage          *int32   `json:"stage"`
-	WorkingBranch  *string          `json:"working_branch"`
-	AgentStatus    *string          `json:"agent_status"`
-	HandoffSummary json.RawMessage  `json:"handoff_summary"`
+	Title          *string         `json:"title"`
+	Description    *string         `json:"description"`
+	Status         *string         `json:"status"`
+	Priority       *string         `json:"priority"`
+	AssigneeType   *string         `json:"assignee_type"`
+	AssigneeID     *string         `json:"assignee_id"`
+	Position       *float64        `json:"position"`
+	StartDate      *string         `json:"start_date"`
+	DueDate        *string         `json:"due_date"`
+	ParentIssueID  *string         `json:"parent_issue_id"`
+	ProjectID      *string         `json:"project_id"`
+	Stage          *int32          `json:"stage"`
+	WorkingBranch  *string         `json:"working_branch"`
+	AgentStatus    *string         `json:"agent_status"`
+	HandoffSummary json.RawMessage `json:"handoff_summary"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
