@@ -336,6 +336,27 @@ func TestDockerBusinessConfigTemplatesMatchRegistry(t *testing.T) {
 	}
 }
 
+func TestStripBusinessJSONFence(t *testing.T) {
+	const payload = `{"plans":[]}`
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "unfenced", raw: payload, want: payload},
+		{name: "json fenced", raw: "```json\n" + payload + "\n```", want: payload},
+		{name: "bare fenced", raw: "```\n" + payload + "\n```", want: payload},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stripBusinessJSONFence(test.raw); got != test.want {
+				t.Fatalf("stripBusinessJSONFence() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func validBusinessYAML(business, format, system, user string) string {
 	return "version: 1\n" +
 		"business: " + business + "\n" +
