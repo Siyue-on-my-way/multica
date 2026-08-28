@@ -167,6 +167,13 @@ func (c *Client) ChatStream(ctx context.Context, params openai.ChatCompletionNew
 // single user prompt and returns the assistant's text content. Model empty ->
 // the configured default.
 func (c *Client) GenerateText(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
+	return c.GenerateTextWithOptions(ctx, model, systemPrompt, userPrompt, 0, 0)
+}
+
+// GenerateTextWithOptions is GenerateText with per-call sampling and output
+// limits. Business config snapshots use this method so a hot-reloaded YAML can
+// change model parameters without changing the shared client API.
+func (c *Client) GenerateTextWithOptions(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error) {
 	if !c.Enabled() {
 		return "", ErrNotConfigured
 	}
@@ -180,6 +187,18 @@ func (c *Client) GenerateText(ctx context.Context, model, systemPrompt, userProm
 	params := openai.ChatCompletionNewParams{
 		Messages: messages,
 		Model:    shared.ChatModel(strings.TrimSpace(model)),
+	}
+	effectiveModel := strings.TrimSpace(model)
+	if effectiveModel == "" {
+		effectiveModel = c.defaultModel
+	}
+	if isGPT56Family(effectiveModel) {
+		params.ReasoningEffort = shared.ReasoningEffortNone
+	} else if temperature > 0 {
+		params.Temperature = openai.Float(temperature)
+	}
+	if maxCompletionTokens > 0 {
+		params.MaxCompletionTokens = openai.Int(maxCompletionTokens)
 	}
 
 	completion, err := c.Chat(ctx, params)

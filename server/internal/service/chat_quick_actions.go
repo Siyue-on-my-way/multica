@@ -200,7 +200,7 @@ func truncateChatQuickAction(value string, maxRunes int) string {
 // The decision is the server's own: suggestions are generated here now, so
 // nothing the daemon reports can grant or withhold them.
 func (s *TaskService) chatQuickActionsEligible(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage) bool {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
+	if !s.quickActionsEnabled() {
 		return false
 	}
 	if !task.ChatSessionID.Valid {

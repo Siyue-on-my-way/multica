@@ -121,6 +121,10 @@ type Config struct {
 	LLMAPIKey       string
 	LLMBaseURL      string
 	LLMDefaultModel string
+	// LLMConfigDir enables the fixed per-business YAML registry. Empty keeps
+	// the legacy global configuration path during migration.
+	LLMConfigDir          string
+	LLMConfigPollInterval time.Duration
 	// ServerVersion is the build version of the running API binary (the same
 	// value main.go stamps via -X main.version and reports on /metrics).
 	// Surfaced through /api/config so self-hosted operators can confirm which
@@ -266,6 +270,10 @@ type Handler struct {
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
 	LLM *llm.Client
+	// LLMRegistry is non-nil only when the per-business YAML directory is
+	// enabled. It supplies independent snapshots for the four server-side
+	// utility calls; Agent CLI configuration never passes through it.
+	LLMRegistry *llm.BusinessRegistry
 	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
 	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when
 	// MULTICA_VCS_SECRET_KEY is unset; the connect/webhook handlers return 503
@@ -318,6 +326,14 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		BaseURL:      cfg.LLMBaseURL,
 		DefaultModel: cfg.LLMDefaultModel,
 	})
+	var businessRegistry *llm.BusinessRegistry
+	if strings.TrimSpace(cfg.LLMConfigDir) != "" {
+		businessRegistry = llm.NewBusinessRegistry(llm.BusinessRegistryConfig{
+			Directory:    cfg.LLMConfigDir,
+			Legacy:       llm.Config{APIKey: cfg.LLMAPIKey, BaseURL: cfg.LLMBaseURL, DefaultModel: cfg.LLMDefaultModel},
+			PollInterval: cfg.LLMConfigPollInterval,
+		})
+	}
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
@@ -325,6 +341,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
 	// a disabled client, which turns the feature off rather than failing.
 	taskSvc.QuickActions = llmClient
+	if businessRegistry != nil {
+		taskSvc.QuickActionsConfig = businessRegistry.Client(llm.BusinessChatQuickActions)
+	}
 	h := &Handler{
 		Queries:                      queries,
 		DB:                           executor,
@@ -355,8 +374,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
-		LLM: llmClient,
-		cfg: cfg,
+		LLM:         llmClient,
+		LLMRegistry: businessRegistry,
+		cfg:         cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 

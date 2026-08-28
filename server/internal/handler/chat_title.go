@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -63,7 +64,11 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 	// Short-circuit before spawning a goroutine when the LLM layer is disabled
 	// (self-hosted without MULTICA_LLM_API_KEY / MULTICA_LLM_BASE_URL): the
 	// original title is kept as-is, exactly matching pre-feature behavior.
-	if h.LLM == nil || !h.LLM.Enabled() {
+	if business := h.businessLLM(llm.BusinessChatTitle); business != nil {
+		if !business.Enabled() {
+			return
+		}
+	} else if h.LLM == nil || !h.LLM.Enabled() {
 		return
 	}
 	if strings.TrimSpace(sourceText) == "" {
@@ -129,6 +134,23 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 //     the CAS write hit a real DB error. Callers treat this as best-effort and
 //     keep the original title.
 func (h *Handler) generateChatSessionTitle(ctx context.Context, sessionID pgtype.UUID, currentTitle, sourceText string) (db.ChatSession, bool, error) {
+	if business := h.businessLLM(llm.BusinessChatTitle); business != nil {
+		raw, err := business.GenerateTextTemplate(
+			ctx,
+			map[string]string{"source_text": sourceText},
+			chatTitleSystemPrompt,
+			"{{source_text}}",
+			0,
+			0,
+		)
+		if err != nil {
+			return db.ChatSession{}, false, err
+		}
+		return h.applyGeneratedChatTitle(ctx, sessionID, currentTitle, raw)
+	}
+	if h.LLM == nil {
+		return db.ChatSession{}, false, llm.ErrNotConfigured
+	}
 	// DefaultModel() is used implicitly by GenerateText when model == "": a
 	// deployment configures MULTICA_LLM_DEFAULT_MODEL (or the built-in
 	// gpt-5.6-luna fallback) — no model is threaded through from the frontend.
@@ -136,6 +158,10 @@ func (h *Handler) generateChatSessionTitle(ctx context.Context, sessionID pgtype
 	if err != nil {
 		return db.ChatSession{}, false, err
 	}
+	return h.applyGeneratedChatTitle(ctx, sessionID, currentTitle, raw)
+}
+
+func (h *Handler) applyGeneratedChatTitle(ctx context.Context, sessionID pgtype.UUID, currentTitle, raw string) (db.ChatSession, bool, error) {
 
 	title := sanitizeChatTitle(raw)
 	if title == "" {

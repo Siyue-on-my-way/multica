@@ -22,12 +22,30 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 // maxCommentsForCompression caps how many of the most-recent comments we feed
 // to the LLM. Long issues can have hundreds of comments; we take the newest
 // ones because they contain the most recent work state.
 const maxCommentsForCompression = 80
+
+const handoffSystemPrompt = `You are a technical project assistant. Your only job is to produce a concise handoff summary for an AI coding agent that is taking over an issue.
+
+Output EXACTLY this JSON object and nothing else. The word "JSON" appears in this instruction to satisfy API requirements:
+{
+  "current_progress": "one sentence: what has been accomplished so far",
+  "next_steps": ["step 1", "step 2"],
+  "unresolved_issues": "any blockers, open questions, or known problems — empty string if none"
+}`
+
+const handoffUserTemplate = `Issue title: {{issue_title}}
+
+Recent comment history (oldest first, newest last):
+
+{{comments}}
+
+Write the handoff summary JSON.`
 
 // compressHandoffContext calls the LLM to summarise the issue's recent comment
 // history and writes the result into issue.handoff_summary. It is a best-effort
@@ -46,7 +64,12 @@ const maxCommentsForCompression = 80
 // point of that action is to refresh the checkpoint from the latest comments,
 // so any existing summary — however it got there — must not block it.
 func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, force bool) {
-	if !h.LLM.Enabled() {
+	businessLLM := h.businessLLM(llm.BusinessHandoffCompress)
+	if businessLLM != nil {
+		if !businessLLM.Enabled() {
+			return
+		}
+	} else if h.LLM == nil || !h.LLM.Enabled() {
 		return
 	}
 	// Respect an explicitly written checkpoint: the previous agent's structured
@@ -134,7 +157,12 @@ var errLLMNotConfigured = errors.New("llm not configured")
 // callLLMForHandoffSummary builds the prompt, calls GenerateJSON, and returns
 // validated JSON bytes for the handoff_summary column.
 func (h *Handler) callLLMForHandoffSummary(ctx context.Context, issue db.Issue, comments []db.Comment) ([]byte, error) {
-	if !h.LLM.Enabled() {
+	businessLLM := h.businessLLM(llm.BusinessHandoffCompress)
+	if businessLLM != nil {
+		if !businessLLM.Enabled() {
+			return nil, errLLMNotConfigured
+		}
+	} else if h.LLM == nil || !h.LLM.Enabled() {
 		return nil, errLLMNotConfigured
 	}
 
@@ -148,23 +176,29 @@ func (h *Handler) callLLMForHandoffSummary(ctx context.Context, issue db.Issue, 
 	}
 	transcript := sb.String()
 
-	systemPrompt := `You are a technical project assistant. Your only job is to produce a concise handoff summary for an AI coding agent that is taking over an issue.
-
-Output EXACTLY this JSON object and nothing else. The word "JSON" appears in this instruction to satisfy API requirements:
-{
-  "current_progress": "one sentence: what has been accomplished so far",
-  "next_steps": ["step 1", "step 2"],
-  "unresolved_issues": "any blockers, open questions, or known problems — empty string if none"
-}`
-
-	userPrompt := fmt.Sprintf(
-		"Issue title: %s\n\nRecent comment history (oldest first, newest last):\n\n%s\n\nWrite the handoff summary JSON.",
-		issue.Title,
-		transcript,
-	)
-
-	raw, err := h.LLM.GenerateJSON(ctx, "", systemPrompt, userPrompt, 0, 512)
+	var raw string
+	var err error
+	if businessLLM != nil {
+		raw, err = businessLLM.GenerateJSONTemplate(
+			ctx,
+			map[string]string{"issue_title": issue.Title, "comments": transcript},
+			handoffSystemPrompt,
+			handoffUserTemplate,
+			0,
+			512,
+		)
+	} else {
+		userPrompt := fmt.Sprintf(
+			"Issue title: %s\n\nRecent comment history (oldest first, newest last):\n\n%s\n\nWrite the handoff summary JSON.",
+			issue.Title,
+			transcript,
+		)
+		raw, err = h.LLM.GenerateJSON(ctx, "", handoffSystemPrompt, userPrompt, 0, 512)
+	}
 	if err != nil {
+		if errors.Is(err, llm.ErrNotConfigured) {
+			return nil, errLLMNotConfigured
+		}
 		return nil, err
 	}
 

@@ -90,6 +90,21 @@ type ChatQuickActionsLLM interface {
 	GenerateJSON(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error)
 }
 
+// ChatQuickActionsConfiguredLLM is the prompt-template seam used by the
+// per-business registry. It is separate from ChatQuickActionsLLM so existing
+// tests and integrations can continue injecting the legacy client.
+type ChatQuickActionsConfiguredLLM interface {
+	Enabled() bool
+	GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error)
+}
+
+func (s *TaskService) quickActionsEnabled() bool {
+	if s.QuickActionsConfig != nil {
+		return s.QuickActionsConfig.Enabled()
+	}
+	return s.QuickActions != nil && s.QuickActions.Enabled()
+}
+
 // chatQuickActionsSystemPrompt is the entire instruction set for the pass. It
 // is a system prompt (stable across calls, so upstream prompt caching applies);
 // the per-call conversation goes in the user message.
@@ -181,7 +196,7 @@ const chatQuickActionsLanguageRule = `LANGUAGE RULE: Write every "label" and "pr
 // resolves the placeholder quietly. Reporting an automatic failure would pop a
 // "couldn't refresh" toast for an action the user never took.
 func (s *TaskService) GenerateChatQuickActionsForTask(ctx context.Context, task db.AgentTaskQueue, origin ChatQuickActionsOrigin) error {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
+	if !s.quickActionsEnabled() {
 		return nil
 	}
 	if !task.ChatSessionID.Valid {
@@ -208,18 +223,30 @@ func (s *TaskService) GenerateChatQuickActionsForTask(ctx context.Context, task 
 		return s.SupplementChatQuickActions(ctx, task, "", false)
 	}
 
-	prompt, err := s.buildChatQuickActionsPrompt(ctx, target)
+	promptData, err := s.buildChatQuickActionsPromptData(ctx, target)
 	if err != nil {
 		return err
 	}
+	prompt := promptData.context
 
-	raw, err := s.QuickActions.GenerateJSON(ctx,
-		"", // deployment default: MULTICA_LLM_DEFAULT_MODEL, else llm.FallbackModel
-		chatQuickActionsSystemPrompt,
-		prompt,
-		chatQuickActionsTemperature,
-		chatQuickActionsMaxCompletionTokens,
-	)
+	var raw string
+	if s.QuickActionsConfig != nil {
+		raw, err = s.QuickActionsConfig.GenerateJSONTemplate(ctx,
+			promptData.variables,
+			chatQuickActionsSystemPrompt,
+			"{{conversation_context}}",
+			chatQuickActionsTemperature,
+			chatQuickActionsMaxCompletionTokens,
+		)
+	} else {
+		raw, err = s.QuickActions.GenerateJSON(ctx,
+			"", // deployment default: MULTICA_LLM_DEFAULT_MODEL, else llm.FallbackModel
+			chatQuickActionsSystemPrompt,
+			prompt,
+			chatQuickActionsTemperature,
+			chatQuickActionsMaxCompletionTokens,
+		)
+	}
 	if err != nil {
 		// Resolve the placeholder either way; only an explicit refresh reports
 		// the failure to the user (see origin).
@@ -252,7 +279,7 @@ func (s *TaskService) GenerateChatQuickActionsForTask(ctx context.Context, task 
 // The goroutine owns its own context: the caller's is typically an HTTP request
 // context that is cancelled the moment the completion callback returns.
 func (s *TaskService) GenerateChatQuickActionsAsync(task db.AgentTaskQueue, origin ChatQuickActionsOrigin) {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
+	if !s.quickActionsEnabled() {
 		return
 	}
 	sessionKey := util.UUIDToString(task.ChatSessionID)
@@ -337,6 +364,19 @@ func (s *TaskService) resolveChatQuickActionsPlaceholder(task db.AgentTaskQueue)
 // the result is still written to the older turn, and a newly-sent user message
 // would leave the window ending on a user row with no reply to build on.
 func (s *TaskService) buildChatQuickActionsPrompt(ctx context.Context, target db.ChatMessage) (string, error) {
+	data, err := s.buildChatQuickActionsPromptData(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	return data.context, nil
+}
+
+type chatQuickActionsPromptData struct {
+	context   string
+	variables map[string]string
+}
+
+func (s *TaskService) buildChatQuickActionsPromptData(ctx context.Context, target db.ChatMessage) (chatQuickActionsPromptData, error) {
 	// Strictly older than target, newest-first; reversed below. Over-fetch so
 	// dropped rows (no_response, failures) don't shrink the window below the
 	// intended turn count.
@@ -347,7 +387,7 @@ func (s *TaskService) buildChatQuickActionsPrompt(ctx context.Context, target db
 		BeforeID:        target.ID,
 	})
 	if err != nil {
-		return "", fmt.Errorf("load chat messages for quick actions: %w", err)
+		return chatQuickActionsPromptData{}, fmt.Errorf("load chat messages for quick actions: %w", err)
 	}
 
 	msgs := make([]db.ChatMessage, 0, len(rows)+1)
@@ -368,7 +408,28 @@ func (s *TaskService) buildChatQuickActionsPrompt(ctx context.Context, target db
 		msgs = msgs[len(msgs)-(chatQuickActionsContextMessages-1):]
 	}
 	msgs = append(msgs, target)
-	return renderChatQuickActionsContext(msgs, collectPreviousChatQuickActions(msgs)), nil
+	previous := collectPreviousChatQuickActions(msgs)
+	latestUser := ""
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" && strings.TrimSpace(msgs[i].Content) != "" {
+			latestUser = truncateChatQuickActionsRunes(strings.TrimSpace(msgs[i].Content), chatQuickActionsLatestBudget)
+			break
+		}
+	}
+	alreadySuggested := "(none)"
+	if len(previous) > 0 {
+		alreadySuggested = "- " + strings.Join(previous, "\n- ")
+	}
+	conversationContext := renderChatQuickActionsContext(msgs, previous)
+	return chatQuickActionsPromptData{
+		context: conversationContext,
+		variables: map[string]string{
+			"conversation_context": conversationContext,
+			"latest_user_message":  latestUser,
+			"latest_agent_message": truncateChatQuickActionsLatest(strings.TrimSpace(target.Content)),
+			"already_suggested":    alreadySuggested,
+		},
+	}, nil
 }
 
 // collectPreviousChatQuickActions gathers the labels already offered in this

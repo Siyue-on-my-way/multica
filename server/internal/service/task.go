@@ -63,6 +63,10 @@ type TaskService struct {
 	// state for a self-hosted deployment with no MULTICA_LLM_* configuration.
 	// Wired in router.go from the same *llm.Client that backs chat auto-titling.
 	QuickActions ChatQuickActionsLLM
+	// QuickActionsConfig is the optional per-business configuration handle. When
+	// set, it takes precedence over QuickActions and resolves the current
+	// hot-reloaded snapshot for each pass.
+	QuickActionsConfig ChatQuickActionsConfiguredLLM
 	// quickActionsInFlight (chat session id -> struct{}{}) and
 	// quickActionsRunning admit suggestion passes: one per session, and a
 	// process-wide ceiling. Both zero values are usable, so a TaskService built
@@ -1625,7 +1629,7 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 // This is an explicit user action, so it ignores the per-device quick-actions
 // toggle (which only gates automatic generation at send time).
 func (s *TaskService) RegenerateChatQuickActions(ctx context.Context, chatSession db.ChatSession, expectedMessageID pgtype.UUID) (targetMessageID pgtype.UUID, targetTask db.AgentTaskQueue, err error) {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
+	if !s.quickActionsEnabled() {
 		return pgtype.UUID{}, db.AgentTaskQueue{}, ErrChatQuickActionsUnavailable
 	}
 

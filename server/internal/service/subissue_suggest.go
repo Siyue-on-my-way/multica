@@ -45,6 +45,14 @@ type SubissueSuggestLLM interface {
 	GenerateJSON(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error)
 }
 
+// SubissueSuggestConfiguredLLM is the prompt-template seam used when the
+// per-business registry is enabled. It deliberately keeps the legacy seam
+// above so callers and tests that inject the global client remain compatible.
+type SubissueSuggestConfiguredLLM interface {
+	Enabled() bool
+	GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error)
+}
+
 // SubissueSuggestSourceIssue is the minimal shape the prompt needs for the
 // issue whose comment is being decomposed, its existing children (to avoid
 // suggesting a duplicate), and the candidate parent list.
@@ -85,6 +93,23 @@ const subissueSuggestSystemPrompt = `你是一个任务拆解助手，帮用户�
 输出结构：
 {"subissues":[{"title":"...","description":"...(按上面4点组织：背景/已拍板约束/范围/验收标准/依赖)","stage":1,"depends_on_titles":[],"suggested_parent_identifier":"SIY-30","confidence":0.86}]}`
 
+// subissueSuggestUserTemplate keeps the variable contract explicit for the
+// independently configurable business file. The rendered text intentionally
+// matches buildSubissueSuggestPrompt so switching sources does not change the
+// model-visible legacy behavior.
+const subissueSuggestUserTemplate = `要拆解的评论原文：
+{{comment_text}}
+
+当前 issue：{{issue_identifier}} {{issue_title}}
+
+当前 issue 下已有的兄弟子issue（避免拆出重复任务）：
+{{siblings}}
+
+候选父issue列表（挑选时必须原样使用下面的 identifier）：
+{{candidate_parents}}
+
+请输出拆解结果。`
+
 // SuggestSubissues runs one decomposition pass over sourceContent (the
 // triggering comment's body) and returns the parsed, unvalidated
 // suggestions. Resolving suggested_parent_identifier against the real
@@ -107,6 +132,35 @@ func SuggestSubissues(
 		"", // deployment default: MULTICA_LLM_DEFAULT_MODEL, else llm.FallbackModel
 		subissueSuggestSystemPrompt,
 		prompt,
+		subissueSuggestTemperature,
+		subissueSuggestMaxCompletionTokens,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("generate subissue suggestions: %w", err)
+	}
+	return parseSubissueSuggestResponse(raw)
+}
+
+// SuggestSubissuesWithConfig is the per-business counterpart of
+// SuggestSubissues. It shares parsing and fallback prompts while allowing the
+// registry to render an independently hot-reloaded prompt and model config.
+func SuggestSubissuesWithConfig(
+	ctx context.Context,
+	llmClient SubissueSuggestConfiguredLLM,
+	sourceIssue SubissueSuggestSourceIssue,
+	sourceContent string,
+	siblings []SubissueCandidateParent,
+	candidateParents []SubissueCandidateParent,
+) ([]SubissueSuggestion, error) {
+	if llmClient == nil || !llmClient.Enabled() {
+		return nil, ErrLLMNotConfigured
+	}
+	variables := buildSubissueSuggestVariables(sourceIssue, sourceContent, siblings, candidateParents)
+	raw, err := llmClient.GenerateJSONTemplate(
+		ctx,
+		variables,
+		subissueSuggestSystemPrompt,
+		subissueSuggestUserTemplate,
 		subissueSuggestTemperature,
 		subissueSuggestMaxCompletionTokens,
 	)
@@ -148,34 +202,39 @@ func buildSubissueSuggestPrompt(
 	siblings []SubissueCandidateParent,
 	candidateParents []SubissueCandidateParent,
 ) string {
+	variables := buildSubissueSuggestVariables(sourceIssue, sourceContent, siblings, candidateParents)
+	prompt := subissueSuggestUserTemplate
+	for name, value := range variables {
+		prompt = strings.ReplaceAll(prompt, "{{"+name+"}}", value)
+	}
+	return prompt
+}
+
+func buildSubissueSuggestVariables(
+	sourceIssue SubissueSuggestSourceIssue,
+	sourceContent string,
+	siblings []SubissueCandidateParent,
+	candidateParents []SubissueCandidateParent,
+) map[string]string {
+	return map[string]string{
+		"comment_text":      truncateSubissueSuggestContent(strings.TrimSpace(sourceContent)),
+		"issue_identifier":  sourceIssue.Identifier,
+		"issue_title":       sourceIssue.Title,
+		"siblings":          formatSubissueSuggestCandidates(siblings),
+		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),
+	}
+}
+
+func formatSubissueSuggestCandidates(candidates []SubissueCandidateParent) string {
 	var b strings.Builder
-
-	b.WriteString("要拆解的评论原文：\n")
-	b.WriteString(truncateSubissueSuggestContent(strings.TrimSpace(sourceContent)))
-	b.WriteString("\n\n")
-
-	fmt.Fprintf(&b, "当前 issue：%s %s\n\n", sourceIssue.Identifier, sourceIssue.Title)
-
-	b.WriteString("当前 issue 下已有的兄弟子issue（避免拆出重复任务）：\n")
-	if len(siblings) == 0 {
-		b.WriteString("(无)\n")
+	if len(candidates) == 0 {
+		b.WriteString("(无)")
 	} else {
-		for _, s := range siblings {
-			fmt.Fprintf(&b, "- %s %s\n", s.Identifier, s.Title)
+		for _, candidate := range candidates {
+			fmt.Fprintf(&b, "- %s %s\n", candidate.Identifier, candidate.Title)
 		}
 	}
-	b.WriteString("\n")
-
-	b.WriteString("候选父issue列表（挑选时必须原样使用下面的 identifier）：\n")
-	if len(candidateParents) == 0 {
-		b.WriteString("(无)\n")
-	} else {
-		for _, p := range candidateParents {
-			fmt.Fprintf(&b, "- %s %s\n", p.Identifier, p.Title)
-		}
-	}
-	b.WriteString("\n请输出拆解结果。")
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // truncateSubissueSuggestContent shortens the comment while keeping both

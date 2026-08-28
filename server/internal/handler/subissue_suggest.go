@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 // SuggestSubIssuesRequest is the body for POST /api/issues/{id}/suggest-subissues.
@@ -52,7 +53,13 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.LLM == nil || !h.LLM.Enabled() {
+	businessLLM := h.businessLLM(llm.BusinessSubissueSuggest)
+	if businessLLM != nil {
+		if !businessLLM.Enabled() {
+			writeError(w, http.StatusServiceUnavailable, "llm not configured")
+			return
+		}
+	} else if h.LLM == nil || !h.LLM.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "llm not configured")
 		return
 	}
@@ -92,7 +99,12 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), service.SubissueSuggestTimeout)
 	defer cancel()
 
-	suggestions, err := service.SuggestSubissues(ctx, h.LLM, sourceIssue, content, siblingCandidates, candidateParents)
+	var suggestions []service.SubissueSuggestion
+	if businessLLM != nil {
+		suggestions, err = service.SuggestSubissuesWithConfig(ctx, businessLLM, sourceIssue, content, siblingCandidates, candidateParents)
+	} else {
+		suggestions, err = service.SuggestSubissues(ctx, h.LLM, sourceIssue, content, siblingCandidates, candidateParents)
+	}
 	if err != nil {
 		if errors.Is(err, service.ErrLLMNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "llm not configured")
