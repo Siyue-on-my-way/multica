@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectReportSnapshot, ProjectReportTimelineEvent } from "@multica/core/types";
 import {
+  buildProjectReportAudienceMarkdown,
   buildProjectReportDetailMarkdown,
+  getProjectReportAnalysis,
+  getProjectReportWorkItems,
   groupProjectReportDetails,
   projectReportEventContent,
 } from "./project-report-detail";
@@ -90,5 +93,40 @@ describe("project report detail helpers", () => {
     expect(content).toContain("## 详细工作记录");
     expect(content).toContain("RPT-1: 报告窗口");
     expect(content).toContain("完成接口联调");
+  });
+
+  it("derives audience views for snapshots saved before the analysis fields", () => {
+    const oldSnapshot = snapshot([event({ id: "evidence-1", content: "完成接口联调" })]);
+    const workItems = getProjectReportWorkItems(oldSnapshot);
+    const analysis = getProjectReportAnalysis(oldSnapshot, workItems);
+
+    expect(workItems).toHaveLength(1);
+    expect(workItems[0]?.evidence_ids).toEqual(["evidence-1"]);
+    expect(analysis.changes?.[0]?.title).toBe("报告窗口");
+
+    const content = buildProjectReportAudienceMarkdown(oldSnapshot, "execution", {
+      heading: "工作执行版",
+      range: (start, end) => `${start} - ${end}`,
+      issueCount: (count) => `${count} issues`,
+      summary: "综合摘要",
+      execution: "工作执行版",
+      business: "项目业务版",
+      changes: "项目变化",
+      risks: "风险",
+      nextSteps: "下一步",
+      category: (category) => category,
+      issue: (identifier, title) => `${identifier}: ${title}`,
+      description: "实际工作",
+      outcome: "结果",
+      status: "状态",
+      impact: "影响",
+      evidence: "证据",
+      noItems: "暂无",
+      noRisks: "暂无风险",
+    });
+
+    expect(content).toContain("RPT-1: 报告窗口");
+    expect(content).toContain("完成接口联调");
+    expect(content).toContain("evidence-1");
   });
 });

@@ -45,6 +45,7 @@ import type {
   ProjectReportPeriod,
   ProjectReportSnapshot,
   ProjectReportTimelineEvent,
+  ProjectReportWorkItem,
 } from "@multica/core/types";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { RichContent } from "../../rich-content";
@@ -54,13 +55,17 @@ import { TimezoneSelect } from "../../common/timezone-select";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
 import {
+  buildProjectReportAudienceMarkdown,
   buildProjectReportDetailMarkdown,
+  getProjectReportAnalysis,
+  getProjectReportWorkItems,
   groupProjectReportDetails,
   projectReportEventContent,
 } from "./project-report-detail";
 
 type ReportPeriod = "day" | "week" | "month";
 type DialogView = "generate" | "history";
+type ReportView = "summary" | "execution" | "business" | "evidence";
 
 function readProjectReportSnapshot(report: ProjectReport | undefined): ProjectReportSnapshot | null {
   const value = report?.data_snapshot;
@@ -176,28 +181,233 @@ function IssueReportCard({
   );
 }
 
-function IssueCenteredReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+function reportCategoryLabel(
+  t: ReturnType<typeof useT<"projects">>["t"],
+  category: string,
+): string {
+  switch (category) {
+    case "bug_fix":
+      return t(($) => $.detail.report_dialog.category_bug_fix);
+    case "feature":
+      return t(($) => $.detail.report_dialog.category_feature);
+    case "architecture":
+      return t(($) => $.detail.report_dialog.category_architecture);
+    case "design":
+      return t(($) => $.detail.report_dialog.category_design);
+    case "research":
+      return t(($) => $.detail.report_dialog.category_research);
+    case "operations":
+      return t(($) => $.detail.report_dialog.category_operations);
+    case "discussion":
+      return t(($) => $.detail.report_dialog.category_discussion);
+    case "risk":
+      return t(($) => $.detail.report_dialog.category_risk);
+    default:
+      return t(($) => $.detail.report_dialog.category_misc);
+  }
+}
+
+function ReportEvidenceList({ evidenceIds }: { evidenceIds?: string[] }) {
   const { t } = useT("projects");
-  const timezone = snapshot.timezone || "UTC";
+  if (!evidenceIds?.length) {
+    return <span className="text-muted-foreground">{t(($) => $.detail.report_dialog.evidence_pending)}</span>;
+  }
+  return (
+    <span className="flex flex-wrap gap-1">
+      {evidenceIds.map((evidenceId) => (
+        <code key={evidenceId} className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+          {evidenceId}
+        </code>
+      ))}
+    </span>
+  );
+}
+
+function ReportWarnings({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  const { t } = useT("projects");
+  if (!snapshot.analysis_warnings?.length) return null;
+  return (
+    <div className="rounded-md border border-amber-300/60 bg-amber-50/50 px-3 py-2 text-caption text-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
+      <p className="font-medium">{t(($) => $.detail.report_dialog.analysis_warning_label)}</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
+        {snapshot.analysis_warnings.map((warning) => <li key={warning}>{warning}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function ReportWorkItemCard({
+  item,
+}: {
+  item: ProjectReportWorkItem;
+}) {
+  const { t } = useT("projects");
+  const paths = useWorkspacePaths();
+  return (
+    <article className="space-y-2 rounded-lg border bg-background p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-body font-medium">{item.title}</h3>
+          <div className="flex flex-wrap items-center gap-1.5 text-caption text-muted-foreground">
+            <span className="rounded bg-muted px-1.5 py-0.5">{reportCategoryLabel(t, item.category)}</span>
+            <AppLink href={paths.issueDetail(item.identifier)} className="text-primary hover:underline">
+              {item.identifier}
+            </AppLink>
+            <span>· {item.status}</span>
+          </div>
+        </div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {item.confidence || t(($) => $.detail.report_dialog.confidence_low)}
+        </span>
+      </div>
+      <div className="space-y-1 text-caption">
+        <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.work_done)} · </span>{item.description}</p>
+        <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.outcome)} · </span>{item.outcome}</p>
+        <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.impact)} · </span>{item.impact || t(($) => $.detail.report_dialog.impact_pending)}</p>
+        <div className="flex flex-wrap items-start gap-1">
+          <span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.evidence)} · </span>
+          <ReportEvidenceList evidenceIds={item.evidence_ids} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function AudienceSummaryReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  const { t } = useT("projects");
+  const workItems = useMemo(() => getProjectReportWorkItems(snapshot), [snapshot]);
+  const analysis = useMemo(() => getProjectReportAnalysis(snapshot, workItems), [snapshot, workItems]);
   return (
     <div className="w-full space-y-3 text-left">
       <div className="rounded-lg border bg-surface-hover/30 px-4 py-3">
         <p className="text-caption font-medium text-muted-foreground">
           {t(($) => $.detail.report_dialog.overview)}
         </p>
-        <p className="mt-1 text-body">
+        <p className="mt-1 text-body">{analysis.summary}</p>
+        <p className="mt-1 text-caption text-muted-foreground">
           {t(($) => $.detail.report_dialog.active_issue_count, {
             count: snapshot.active_issue_count ?? snapshot.issues.length,
           })}
         </p>
       </div>
+      <ReportWarnings snapshot={snapshot} />
+      <div className="rounded-lg border bg-background p-4 shadow-sm">
+        <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.project_changes)}</h3>
+        {analysis.changes?.length ? (
+          <ul className="mt-2 space-y-2 text-caption">
+            {analysis.changes.slice(0, 5).map((change) => (
+              <li key={change.id}>
+                <span className="font-medium">{reportCategoryLabel(t, change.category)} · {change.title}</span>
+                <p className="text-muted-foreground">{change.description}</p>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.detail.report_dialog.no_report_items)}</p>}
+      </div>
+      <div className="rounded-lg border bg-background p-4 shadow-sm">
+        <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.risks_and_next_steps)}</h3>
+        {analysis.risks?.length || analysis.next_steps?.length ? (
+          <div className="mt-2 space-y-2 text-caption">
+            {analysis.risks?.map((note) => (
+              <div key={`risk-${note.title}`}>
+                <p className="font-medium">{t(($) => $.detail.report_dialog.risk_label)} · {note.title}</p>
+                <p className="text-muted-foreground">{note.description}</p>
+              </div>
+            ))}
+            {analysis.next_steps?.slice(0, 3).map((note) => (
+              <div key={`next-${note.title}`}>
+                <p className="font-medium">{t(($) => $.detail.report_dialog.next_step_label)} · {note.title}</p>
+                <p className="text-muted-foreground">{note.description}</p>
+              </div>
+            ))}
+          </div>
+        ) : <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.detail.report_dialog.no_risks)}</p>}
+      </div>
       <div className="space-y-3">
         {snapshot.issues.map((issue) => (
-          <IssueReportCard key={issue.issue_id} issue={issue} timezone={timezone} />
+          <IssueReportCard key={issue.issue_id} issue={issue} timezone={snapshot.timezone || "UTC"} />
         ))}
       </div>
     </div>
   );
+}
+
+function ExecutionReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  const { t } = useT("projects");
+  const workItems = useMemo(() => getProjectReportWorkItems(snapshot), [snapshot]);
+  return (
+    <div className="w-full space-y-3 text-left">
+      <div className="rounded-lg border bg-surface-hover/30 px-4 py-3">
+        <p className="text-caption font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.execution_view)}</p>
+        <p className="mt-1 text-body">{t(($) => $.detail.report_dialog.execution_count, { count: workItems.length })}</p>
+      </div>
+      {workItems.length ? workItems.map((item) => (
+        <ReportWorkItemCard key={item.id} item={item} />
+      )) : (
+        <div className="rounded-md border border-dashed px-4 py-8 text-center text-caption text-muted-foreground">
+          {t(($) => $.detail.report_dialog.no_report_items)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BusinessReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  const { t } = useT("projects");
+  const workItems = useMemo(() => getProjectReportWorkItems(snapshot), [snapshot]);
+  const analysis = useMemo(() => getProjectReportAnalysis(snapshot, workItems), [snapshot, workItems]);
+  return (
+    <div className="w-full space-y-3 text-left">
+      <div className="rounded-lg border bg-surface-hover/30 px-4 py-3">
+        <p className="text-caption font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.business_view)}</p>
+        <p className="mt-1 text-body whitespace-pre-wrap">{analysis.summary}</p>
+      </div>
+      <ReportWarnings snapshot={snapshot} />
+      <section className="rounded-lg border bg-background p-4 shadow-sm">
+        <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.project_changes)}</h3>
+        <div className="mt-3 space-y-3">
+          {analysis.changes?.length ? analysis.changes.map((change) => (
+            <article key={change.id} className="border-l-2 border-muted pl-3 text-caption">
+              <p className="font-medium">{reportCategoryLabel(t, change.category)} · {change.title}</p>
+              <p className="mt-1 whitespace-pre-wrap">{change.description}</p>
+              <p className="mt-1 text-muted-foreground">{t(($) => $.detail.report_dialog.status)} · {change.status}</p>
+              <p className="text-muted-foreground">{t(($) => $.detail.report_dialog.impact)} · {change.impact || t(($) => $.detail.report_dialog.impact_pending)}</p>
+              <div className="mt-1 flex flex-wrap items-start gap-1 text-muted-foreground">
+                <span>{t(($) => $.detail.report_dialog.evidence)} · </span>
+                <ReportEvidenceList evidenceIds={change.evidence_ids} />
+              </div>
+            </article>
+          )) : <p className="text-caption text-muted-foreground">{t(($) => $.detail.report_dialog.no_report_items)}</p>}
+        </div>
+      </section>
+      <section className="rounded-lg border bg-background p-4 shadow-sm">
+        <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.risks_and_next_steps)}</h3>
+        <div className="mt-3 space-y-3 text-caption">
+          {analysis.risks?.map((note) => (
+            <article key={`business-risk-${note.title}`}>
+              <p className="font-medium">{t(($) => $.detail.report_dialog.risk_label)} · {note.title}</p>
+              <p className="text-muted-foreground">{note.description}</p>
+              <ReportEvidenceList evidenceIds={note.evidence_ids} />
+            </article>
+          ))}
+          {analysis.next_steps?.map((note) => (
+            <article key={`business-next-${note.title}`}>
+              <p className="font-medium">{t(($) => $.detail.report_dialog.next_step_label)} · {note.title}</p>
+              <p className="text-muted-foreground">{note.description}</p>
+              <ReportEvidenceList evidenceIds={note.evidence_ids} />
+            </article>
+          ))}
+          {!analysis.risks?.length && !analysis.next_steps?.length && (
+            <p className="text-muted-foreground">{t(($) => $.detail.report_dialog.no_risks)}</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function IssueCenteredReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  return <AudienceSummaryReport snapshot={snapshot} />;
 }
 
 function reportInclusiveEnd(value: string): string {
@@ -410,7 +620,7 @@ export function ProjectReportDialog({
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
-  const [showDetailedRecords, setShowDetailedRecords] = useState(false);
+  const [reportView, setReportView] = useState<ReportView>("summary");
   const pollingTimerRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
   const createReport = useCreateProjectReport(workspaceId ?? "", projectId);
@@ -448,7 +658,7 @@ export function ProjectReportDialog({
       setActiveJobId(null);
       setSelectedReportId(null);
       setGenerationError(null);
-      setShowDetailedRecords(false);
+      setReportView("summary");
     }
     onOpenChange(nextOpen);
   }, [onOpenChange, userTimezone]);
@@ -515,7 +725,7 @@ export function ProjectReportDialog({
     setActiveJobId(null);
     setSelectedReportId(null);
     setGenerationError(null);
-    setShowDetailedRecords(false);
+    setReportView("summary");
   }, [timezone]);
 
   const invalidRange = !startDate || !endDate || startDate > endDate;
@@ -525,7 +735,7 @@ export function ProjectReportDialog({
     setActiveJobId(null);
     setSelectedReportId(null);
     setGenerationError(null);
-    setShowDetailedRecords(false);
+    setReportView("summary");
     createReport.mutate(
       {
         period_type: periodToApiPeriod(period),
@@ -576,39 +786,70 @@ export function ProjectReportDialog({
 
   const reportExportContent = useMemo(() => {
     if (!report?.content) return null;
-    if (!showDetailedRecords || !reportSnapshot) return report.content;
+    if (!reportSnapshot) return report.content;
 
     const detailTimezone = reportSnapshot.timezone || timezone;
-    return buildProjectReportDetailMarkdown(
-      reportSnapshot,
-      detailTimezone,
-      {
-        heading: t(($) => $.detail.report_dialog.detail_records_title),
-        range: (start, end) => t(($) => $.detail.report_dialog.detail_records_range, {
-          start: formatDateInTimezone(start, detailTimezone),
-          end: formatDateInTimezone(reportInclusiveEnd(end), detailTimezone),
-        }),
-        date: (dateKey) => formatDateInTimezone(`${dateKey}T12:00:00.000Z`, detailTimezone),
-        issue: (identifier, title) => `${identifier}：${title}`,
-        event: (type) => {
-          switch (type) {
-            case "comment":
-              return t(($) => $.detail.report_dialog.detail_event_comment);
-            case "activity_log":
-              return t(($) => $.detail.report_dialog.detail_event_activity);
-            case "issue_status_history":
-              return t(($) => $.detail.report_dialog.detail_event_status);
-            case "agent_task_queue":
-              return t(($) => $.detail.report_dialog.detail_event_task);
-            default:
-              return t(($) => $.detail.report_dialog.detail_event_record);
-          }
+    if (reportView === "evidence") {
+      return buildProjectReportDetailMarkdown(
+        reportSnapshot,
+        detailTimezone,
+        {
+          heading: t(($) => $.detail.report_dialog.detail_records_title),
+          range: (start, end) => t(($) => $.detail.report_dialog.detail_records_range, {
+            start: formatDateInTimezone(start, detailTimezone),
+            end: formatDateInTimezone(reportInclusiveEnd(end), detailTimezone),
+          }),
+          date: (dateKey) => formatDateInTimezone(`${dateKey}T12:00:00.000Z`, detailTimezone),
+          issue: (identifier, title) => `${identifier}：${title}`,
+          event: (type) => {
+            switch (type) {
+              case "comment":
+                return t(($) => $.detail.report_dialog.detail_event_comment);
+              case "activity_log":
+                return t(($) => $.detail.report_dialog.detail_event_activity);
+              case "issue_status_history":
+                return t(($) => $.detail.report_dialog.detail_event_status);
+              case "agent_task_queue":
+                return t(($) => $.detail.report_dialog.detail_event_task);
+              default:
+                return t(($) => $.detail.report_dialog.detail_event_record);
+            }
+          },
+          empty: t(($) => $.detail.report_dialog.detail_records_empty),
         },
-        empty: t(($) => $.detail.report_dialog.detail_records_empty),
-      },
-      (value) => formatDateTimeInTimezone(value, detailTimezone),
-    );
-  }, [report?.content, reportSnapshot, showDetailedRecords, t, timezone]);
+        (value) => formatDateTimeInTimezone(value, detailTimezone),
+      );
+    }
+    return buildProjectReportAudienceMarkdown(reportSnapshot, reportView, {
+      heading: reportView === "summary"
+        ? t(($) => $.detail.report_dialog.summary_view)
+        : reportView === "execution"
+          ? t(($) => $.detail.report_dialog.execution_view)
+          : t(($) => $.detail.report_dialog.business_view),
+      range: (start, end) => t(($) => $.detail.report_dialog.detail_records_range, {
+        start: formatDateInTimezone(start, detailTimezone),
+        end: formatDateInTimezone(reportInclusiveEnd(end), detailTimezone),
+      }),
+      issueCount: (count) => t(($) => $.detail.report_dialog.active_issue_count, { count }),
+      summary: t(($) => $.detail.report_dialog.summary_view),
+      execution: t(($) => $.detail.report_dialog.execution_view),
+      business: t(($) => $.detail.report_dialog.business_view),
+      changes: t(($) => $.detail.report_dialog.project_changes),
+      risks: t(($) => $.detail.report_dialog.risks_and_next_steps),
+      nextSteps: t(($) => $.detail.report_dialog.next_steps),
+      category: (category) => reportCategoryLabel(t, category),
+      issue: (identifier, title) => `${identifier}：${title}`,
+      description: t(($) => $.detail.report_dialog.work_done),
+      outcome: t(($) => $.detail.report_dialog.outcome),
+      status: t(($) => $.detail.report_dialog.status),
+      impact: t(($) => $.detail.report_dialog.impact),
+      evidence: t(($) => $.detail.report_dialog.evidence),
+      noItems: t(($) => $.detail.report_dialog.no_report_items),
+      noRisks: t(($) => $.detail.report_dialog.no_risks),
+    });
+  }, [report?.content, reportSnapshot, reportView, t, timezone]);
+
+  const fullReportContent = report?.content || null;
 
   const handleCopy = useCallback(async () => {
     if (!reportExportContent) return;
@@ -619,6 +860,16 @@ export function ProjectReportDialog({
       toast.error(t(($) => $.detail.report_dialog.copy_failed));
     }
   }, [reportExportContent, t]);
+
+  const handleCopyFull = useCallback(async () => {
+    if (!fullReportContent) return;
+    const copied = await copyText(fullReportContent);
+    if (copied) {
+      toast.success(t(($) => $.detail.report_dialog.copy_success));
+    } else {
+      toast.error(t(($) => $.detail.report_dialog.copy_failed));
+    }
+  }, [fullReportContent, t]);
 
   const handleDownload = useCallback(() => {
     if (!reportExportContent) return;
@@ -647,13 +898,13 @@ export function ProjectReportDialog({
     setDialogView("generate");
     setActiveJobId(null);
     setGenerationError(null);
-    setShowDetailedRecords(false);
+    setReportView("summary");
     setSelectedReportId(reportId);
   }, []);
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="max-h-[85svh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[85svh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t(($) => $.detail.report_dialog.title)}</DialogTitle>
           <DialogDescription>
@@ -763,6 +1014,31 @@ export function ProjectReportDialog({
               {t(($) => $.detail.report_dialog.scope_hint)}
             </p>
 
+            {reportSnapshot && report?.content && (
+              <div className="flex flex-wrap gap-1 rounded-md border bg-surface-hover/30 p-1">
+                {([
+                  ["summary", t(($) => $.detail.report_dialog.summary_view)],
+                  ["execution", t(($) => $.detail.report_dialog.execution_view)],
+                  ["business", t(($) => $.detail.report_dialog.business_view)],
+                  ["evidence", t(($) => $.detail.report_dialog.evidence_view)],
+                ] as const).map(([value, label]) => (
+                  <Button
+                    key={value}
+                    type="button"
+                    size="sm"
+                    variant={reportView === value ? "default" : "ghost"}
+                    className="h-7 flex-1 text-[11px] sm:flex-none"
+                    disabled={isGenerating}
+                    aria-pressed={reportView === value}
+                    onClick={() => setReportView(value)}
+                  >
+                    {value === "evidence" && <ClipboardList className="h-3.5 w-3.5" />}
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            )}
+
             <div className="min-h-40 rounded-md border border-dashed p-4">
               <div className="flex h-full min-h-32 items-center justify-center text-center text-caption text-muted-foreground">
                 {isGenerating ? (
@@ -774,11 +1050,10 @@ export function ProjectReportDialog({
                   <span className="text-destructive">{generationError}</span>
                 ) : report?.content ? (
                   reportSnapshot ? (
-                    showDetailedRecords ? (
-                      <DetailedReport snapshot={reportSnapshot} />
-                    ) : (
-                      <IssueCenteredReport snapshot={reportSnapshot} />
-                    )
+                    reportView === "evidence" ? <DetailedReport snapshot={reportSnapshot} />
+                      : reportView === "execution" ? <ExecutionReport snapshot={reportSnapshot} />
+                        : reportView === "business" ? <BusinessReport snapshot={reportSnapshot} />
+                          : <IssueCenteredReport snapshot={reportSnapshot} />
                   ) : (
                     <RichContent content={report.content} className="w-full text-left" />
                   )
@@ -789,18 +1064,6 @@ export function ProjectReportDialog({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant={showDetailedRecords ? "default" : "outline"}
-                size="sm"
-                disabled={isGenerating || !reportSnapshot}
-                onClick={() => setShowDetailedRecords((visible) => !visible)}
-              >
-                <ClipboardList className="h-3.5 w-3.5" />
-                {showDetailedRecords
-                  ? t(($) => $.detail.report_dialog.back_to_summary)
-                  : t(($) => $.detail.report_dialog.detail_records_button)}
-              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -818,6 +1081,15 @@ export function ProjectReportDialog({
                 onClick={handleCopy}
               >
                 {t(($) => $.detail.report_dialog.copy_markdown)}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!fullReportContent}
+                onClick={handleCopyFull}
+              >
+                {t(($) => $.detail.report_dialog.copy_full_markdown)}
               </Button>
               <Button
                 type="button"

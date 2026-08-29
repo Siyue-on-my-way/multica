@@ -1,8 +1,10 @@
 import type {
   ProjectReportIssue,
+  ProjectReportProjectAnalysis,
   ProjectReportSnapshot,
   ProjectReportTimelineEvent,
   ProjectReportTimelineEventType,
+  ProjectReportWorkItem,
 } from "@multica/core/types";
 
 export interface ProjectReportDetailItem {
@@ -106,6 +108,295 @@ function summarizeReportDetails(details: Record<string, unknown>, excluded: Set<
     .slice(0, 4)
     .map(([key, value]) => `${humanizeReportKey(key)}: ${reportValue(value)}`)
     .join(" · ");
+}
+
+const reportCategories = [
+  "bug_fix",
+  "feature",
+  "architecture",
+  "design",
+  "research",
+  "operations",
+  "discussion",
+  "risk",
+  "misc",
+] as const;
+
+function normalizeReportCategory(value: string | undefined): string {
+  switch (value?.trim().toLowerCase()) {
+    case "bug":
+    case "bugfix":
+    case "defect":
+    case "fix":
+      return "bug_fix";
+    case "function":
+    case "capability":
+    case "enhancement":
+      return "feature";
+    case "architect":
+    case "refactor":
+      return "architecture";
+    case "proposal":
+    case "solution":
+      return "design";
+    case "investigation":
+    case "analysis":
+      return "research";
+    case "operation":
+    case "ops":
+    case "deployment":
+    case "release":
+      return "operations";
+    case "review":
+    case "communication":
+      return "discussion";
+    case "blocker":
+    case "blocked":
+      return "risk";
+    case "misc":
+    case "other":
+      return "misc";
+    default:
+      return reportCategories.includes(value?.trim().toLowerCase() as typeof reportCategories[number])
+        ? value!.trim().toLowerCase()
+        : "misc";
+  }
+}
+
+function inferReportCategory(issue: ProjectReportIssue): string {
+  const text = [
+    issue.title,
+    issue.description,
+    issue.status,
+    ...(issue.timeline ?? []).filter((event) => event.in_range).flatMap((event) => [
+      event.content ?? "",
+      event.action ?? "",
+      JSON.stringify(event.details ?? {}),
+    ]),
+  ].join(" ").toLowerCase();
+  const keywords: Array<[string, string[]]> = [
+    ["bug_fix", ["bug", "bugfix", "fix", "defect", "error", "crash", "缺陷", "修复", "报错"]],
+    ["feature", ["feature", "capability", "enhancement", "功能", "能力", "新增", "支持"]],
+    ["architecture", ["architecture", "refactor", "schema", "performance", "架构", "重构", "性能"]],
+    ["design", ["design", "proposal", "solution", "方案", "设计", "决策"]],
+    ["research", ["research", "investigate", "spike", "调研", "研究", "分析", "排查"]],
+    ["operations", ["deploy", "release", "build", "config", "ops", "部署", "发布", "构建", "配置"]],
+    ["discussion", ["discussion", "comment", "review", "讨论", "评审", "审核"]],
+    ["risk", ["blocked", "blocker", "risk", "dependency", "阻塞", "风险", "依赖"]],
+  ];
+  return keywords.find(([, values]) => values.some((keyword) => text.includes(keyword)))?.[0] ?? "misc";
+}
+
+function fallbackWorkDescription(issue: ProjectReportIssue): string[] {
+  const descriptions = (issue.timeline ?? [])
+    .filter((event) => event.in_range)
+    .map(projectReportEventContent)
+    .filter(Boolean)
+    .slice(0, 8);
+  return descriptions.length > 0 ? descriptions : ["已记录本周期工作活动，具体内容待人工确认。"];
+}
+
+/** Normalize new snapshots and provide a useful view for older saved reports. */
+export function getProjectReportWorkItems(snapshot: ProjectReportSnapshot): ProjectReportWorkItem[] {
+  if (snapshot.work_items?.length) return snapshot.work_items;
+  return snapshot.issues.map((issue) => {
+    const categories = issue.summary.work_types?.map(normalizeReportCategory).filter(Boolean) ?? [];
+    const normalizedCategories = categories.length > 0 ? [...new Set(categories)] : [inferReportCategory(issue)];
+    const category = normalizedCategories[0] ?? "misc";
+    const workDone = issue.summary.work_done?.filter(Boolean) ?? fallbackWorkDescription(issue);
+    const evidenceIds = issue.summary.evidence_ids?.filter(Boolean)
+      ?? (issue.timeline ?? []).filter((event) => event.in_range).map((event) => event.id);
+    return {
+      id: issue.issue_id || issue.identifier,
+      issue_id: issue.issue_id || issue.identifier,
+      identifier: issue.identifier,
+      issue_title: issue.title,
+      category,
+      categories: normalizedCategories,
+      title: issue.title,
+      description: workDone.join("；"),
+      outcome: issue.summary.outcome || "当前结果待确认。",
+      impact: issue.summary.impact || "业务影响待确认。",
+      status: issue.status,
+      evidence_ids: [...new Set(evidenceIds)],
+      confidence: issue.summary.confidence || "low",
+      source: issue.summary.summary_source || "deterministic",
+    } satisfies ProjectReportWorkItem;
+  });
+}
+
+function fallbackAnalysisChanges(workItems: ProjectReportWorkItem[]) {
+  return workItems.map((item) => ({
+    id: `change-${item.id}`,
+    category: item.category,
+    title: item.title,
+    description: item.description,
+    impact: item.impact || "业务影响待确认。",
+    status: item.status,
+    evidence_ids: item.evidence_ids,
+    confidence: item.confidence,
+    source: "deterministic",
+  }));
+}
+
+/** Return project-level analysis while keeping old report snapshots readable. */
+export function getProjectReportAnalysis(
+  snapshot: ProjectReportSnapshot,
+  workItems = getProjectReportWorkItems(snapshot),
+): ProjectReportProjectAnalysis {
+  const existing = snapshot.project_analysis;
+  const evidenceIds = [...new Set(
+    existing?.evidence_ids?.length
+      ? existing.evidence_ids
+      : workItems.flatMap((item) => item.evidence_ids ?? []),
+  )];
+  const risks = existing?.risks?.length
+    ? existing.risks
+    : workItems
+      .filter((item) => item.status === "blocked")
+      .map((item) => ({
+        title: `${item.identifier} 存在阻塞`,
+        description: "该 issue 当前处于阻塞状态，解除依赖后才能继续推进。",
+        evidence_ids: item.evidence_ids,
+        confidence: item.confidence,
+        source: "deterministic",
+      }));
+  const nextSteps = existing?.next_steps?.length
+    ? existing.next_steps
+    : workItems
+      .filter((item) => item.status !== "done" && item.status !== "cancelled")
+      .map((item) => ({
+        title: `${item.identifier} 后续推进`,
+        description: item.status === "blocked"
+          ? "先确认依赖和解除阻塞条件，再继续推进。"
+          : "继续推进并在完成后更新 issue 状态。",
+        evidence_ids: item.evidence_ids,
+        confidence: item.confidence,
+        source: "deterministic",
+      }));
+  return {
+    summary: existing?.summary || (workItems.length > 0
+      ? "本周期的项目变化依据 issue 工作记录生成；业务收益和外部影响仍需结合实际验证确认。"
+      : "本周期没有可用于项目变化分析的工作项。"),
+    changes: existing?.changes?.length ? existing.changes : fallbackAnalysisChanges(workItems),
+    risks,
+    next_steps: nextSteps,
+    evidence_ids: evidenceIds,
+    confidence: existing?.confidence || "medium",
+    source: existing?.source || "deterministic",
+  };
+}
+
+export type ProjectReportAudienceView = "summary" | "execution" | "business";
+
+export interface ProjectReportAudienceMarkdownLabels {
+  heading: string;
+  range: (start: string, end: string) => string;
+  issueCount: (count: number) => string;
+  summary: string;
+  execution: string;
+  business: string;
+  changes: string;
+  risks: string;
+  nextSteps: string;
+  category: (category: string) => string;
+  issue: (identifier: string, title: string) => string;
+  description: string;
+  outcome: string;
+  status: string;
+  impact: string;
+  evidence: string;
+  noItems: string;
+  noRisks: string;
+}
+
+function reportMarkdownEvidence(lines: string[], evidenceIds: string[] | undefined, labels: ProjectReportAudienceMarkdownLabels): void {
+  lines.push(evidenceIds?.length ? `- ${labels.evidence}：${evidenceIds.join(", ")}` : `- ${labels.evidence}：${labels.noItems}`);
+}
+
+/** Build one copyable audience section without requesting another AI analysis. */
+export function buildProjectReportAudienceMarkdown(
+  snapshot: ProjectReportSnapshot,
+  view: ProjectReportAudienceView,
+  labels: ProjectReportAudienceMarkdownLabels,
+): string {
+  const workItems = getProjectReportWorkItems(snapshot);
+  const analysis = getProjectReportAnalysis(snapshot, workItems);
+  const lines = [
+    `## ${labels.heading}`,
+    "",
+    labels.range(snapshot.range_start, snapshot.range_end),
+    "",
+  ];
+
+  if (view === "summary") {
+    lines.push(`### ${labels.summary}`, "", analysis.summary, "", labels.issueCount(snapshot.active_issue_count ?? snapshot.issues.length), "");
+    lines.push(`### ${labels.changes}`, "");
+    const changes = analysis.changes?.slice(0, 5) ?? [];
+    if (changes.length === 0) {
+      lines.push(`- ${labels.noItems}`, "");
+    } else {
+      for (const change of changes) {
+        lines.push(`- **${labels.category(change.category)}** ${change.title}：${change.description}`);
+        lines.push(`  - ${labels.status}：${change.status}`);
+        lines.push(`  - ${labels.impact}：${change.impact || labels.noItems}`);
+        reportMarkdownEvidence(lines, change.evidence_ids, labels);
+      }
+      lines.push("");
+    }
+    lines.push(`### ${labels.risks}`, "");
+    const risks = analysis.risks ?? [];
+    if (risks.length === 0) {
+      lines.push(`- ${labels.noRisks}`, "");
+    } else {
+      for (const note of risks) {
+        lines.push(`- ${note.title}：${note.description}`);
+        reportMarkdownEvidence(lines, note.evidence_ids, labels);
+      }
+      lines.push("");
+    }
+    return lines.join("\n").trim();
+  }
+
+  if (view === "execution") {
+    lines.push(`### ${labels.execution}`, "");
+    if (workItems.length === 0) {
+      lines.push(`- ${labels.noItems}`);
+    } else {
+      for (const item of workItems) {
+        lines.push(`- **${labels.category(item.category)}** ${labels.issue(item.identifier, item.title)}`);
+        lines.push(`  - ${labels.description}：${item.description}`);
+        lines.push(`  - ${labels.outcome}：${item.outcome}`);
+        lines.push(`  - ${labels.status}：${item.status}`);
+        reportMarkdownEvidence(lines, item.evidence_ids, labels);
+      }
+    }
+    return lines.join("\n").trim();
+  }
+
+  lines.push(`### ${labels.business}`, "", analysis.summary, "", `### ${labels.changes}`, "");
+  const changes = analysis.changes ?? [];
+  if (changes.length === 0) {
+    lines.push(`- ${labels.noItems}`);
+  } else {
+    for (const change of changes) {
+      lines.push(`- **${labels.category(change.category)}** ${change.title}：${change.description}`);
+      lines.push(`  - ${labels.status}：${change.status}`);
+      lines.push(`  - ${labels.impact}：${change.impact || labels.noItems}`);
+      reportMarkdownEvidence(lines, change.evidence_ids, labels);
+    }
+  }
+  lines.push("", `### ${labels.nextSteps}`, "");
+  const nextSteps = analysis.next_steps ?? [];
+  if (nextSteps.length === 0) {
+    lines.push(`- ${labels.noItems}`);
+  } else {
+    for (const note of nextSteps) {
+      lines.push(`- ${note.title}：${note.description}`);
+      reportMarkdownEvidence(lines, note.evidence_ids, labels);
+    }
+  }
+  return lines.join("\n").trim();
 }
 
 /** Convert a raw timeline row into a readable detail entry without inventing facts. */

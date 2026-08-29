@@ -142,6 +142,12 @@ export interface ProjectReportIssueSummary {
   actions: string[];
   outcome: string;
   open_items: string[];
+  work_types?: string[];
+  work_done?: string[];
+  artifacts?: string[];
+  impact?: string;
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
   summary_source?: "ai" | "deterministic" | string;
 }
 
@@ -157,6 +163,53 @@ export interface ProjectReportIssue {
   timeline_truncated?: boolean;
 }
 
+export interface ProjectReportWorkItem {
+  id: string;
+  issue_id: string;
+  identifier: string;
+  issue_title: string;
+  category: string;
+  categories?: string[];
+  title: string;
+  description: string;
+  outcome: string;
+  impact?: string;
+  status: string;
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+  source?: "ai" | "deterministic" | string;
+}
+
+export interface ProjectReportAnalysisNote {
+  title: string;
+  description: string;
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+  source?: "ai" | "deterministic" | string;
+}
+
+export interface ProjectReportChange {
+  id: string;
+  category: string;
+  title: string;
+  description: string;
+  impact?: string;
+  status: string;
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+  source?: "ai" | "deterministic" | string;
+}
+
+export interface ProjectReportProjectAnalysis {
+  summary: string;
+  changes?: ProjectReportChange[];
+  risks?: ProjectReportAnalysisNote[];
+  next_steps?: ProjectReportAnalysisNote[];
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+  source?: "ai" | "deterministic" | string;
+}
+
 export interface ProjectReportSnapshot {
   period_type: ProjectReportPeriod;
   range_start: string;
@@ -164,8 +217,12 @@ export interface ProjectReportSnapshot {
   timezone: string;
   generated_at: string;
   summary_version: number;
+  analysis_version?: number;
   issues: ProjectReportIssue[];
   active_issue_count: number;
+  work_items?: ProjectReportWorkItem[];
+  project_analysis?: ProjectReportProjectAnalysis;
+  analysis_warnings?: string[];
   completed?: ProjectReportIssue[];
   in_progress?: ProjectReportIssue[];
   blocked?: ProjectReportIssue[];

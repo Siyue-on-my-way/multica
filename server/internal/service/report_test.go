@@ -164,6 +164,74 @@ func TestIssueReportContentUsesIssueCenteredMetrics(t *testing.T) {
 	}
 }
 
+func TestDeterministicIssueSummaryAddsWorkEvidence(t *testing.T) {
+	issue := ReportIssue{
+		IssueID:    "issue-a",
+		Identifier: "RPT-1",
+		Title:      "修复登录 Bug 并调整架构",
+		Status:     "in_progress",
+		Timeline: []ReportTimelineEvent{
+			{ID: "event-old", Type: "comment", InRange: false, Content: "历史讨论"},
+			{ID: "event-current", Type: "comment", InRange: true, Content: "完成复现并修复登录错误"},
+		},
+	}
+
+	summary := deterministicIssueSummary(issue)
+	if !contains(strings.Join(summary.WorkTypes, ","), "bug_fix") {
+		t.Fatalf("expected bug category: %+v", summary.WorkTypes)
+	}
+	if !contains(strings.Join(summary.WorkTypes, ","), "architecture") {
+		t.Fatalf("expected architecture category: %+v", summary.WorkTypes)
+	}
+	if len(summary.EvidenceIDs) != 1 || summary.EvidenceIDs[0] != "event-current" {
+		t.Fatalf("historical evidence was included: %+v", summary.EvidenceIDs)
+	}
+	if !contains(strings.Join(summary.WorkDone, "\n"), "完成复现") {
+		t.Fatalf("work details missing: %+v", summary.WorkDone)
+	}
+}
+
+func TestParseProjectAnalysisRejectsUnknownEvidence(t *testing.T) {
+	snapshot := ReportSnapshot{
+		Issues: []ReportIssue{{
+			IssueID:  "issue-a",
+			Timeline: []ReportTimelineEvent{{ID: "event-current", InRange: true}},
+		}},
+	}
+	_, err := parseProjectAnalysis(`{"summary":"项目有变化","changes":[{"category":"feature","title":"新增能力","description":"完成能力建设","impact":"待确认","status":"done","evidence_ids":["not-in-report"]}],"evidence_ids":["not-in-report"],"confidence":"high"}`, snapshot)
+	if err == nil {
+		t.Fatal("expected unknown evidence to be rejected")
+	}
+}
+
+func TestDeterministicProjectAnalysisContainsRisksAndNextSteps(t *testing.T) {
+	snapshot := ReportSnapshot{
+		WorkItems: []ReportWorkItem{
+			{
+				ID: "issue-a", IssueID: "issue-a", Identifier: "RPT-1", Title: "支付改造",
+				Category: "feature", Description: "完成支付流程改造", Outcome: "进行中",
+				Impact: "业务影响待确认。", Status: "in_progress", EvidenceIDs: []string{"event-a"}, Confidence: "low",
+			},
+			{
+				ID: "issue-b", IssueID: "issue-b", Identifier: "RPT-2", Title: "等待依赖",
+				Category: "risk", Description: "等待外部依赖", Outcome: "阻塞",
+				Impact: "业务影响待确认。", Status: "blocked", EvidenceIDs: []string{"event-b"}, Confidence: "low",
+			},
+		},
+	}
+
+	analysis := deterministicProjectAnalysis(snapshot)
+	if len(analysis.Changes) != 2 || len(analysis.Risks) != 1 || len(analysis.NextSteps) != 2 {
+		t.Fatalf("unexpected project analysis: %+v", analysis)
+	}
+	if !contains(analysis.Risks[0].Description, "阻塞") {
+		t.Fatalf("blocking risk missing: %+v", analysis.Risks)
+	}
+	if len(analysis.Changes[0].EvidenceIDs) != 1 {
+		t.Fatalf("change evidence missing: %+v", analysis.Changes[0])
+	}
+}
+
 func TestReportGeneratorAggregatesProjectWindow(t *testing.T) {
 	pool := newReportTestPool(t)
 	ctx := context.Background()
