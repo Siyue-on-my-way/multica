@@ -116,6 +116,68 @@ export interface ListProjectResourcesResponse {
   total: number;
 }
 
+export type ProjectReportTimelineEventType =
+  | "comment"
+  | "activity_log"
+  | "issue_status_history"
+  | "agent_task_queue";
+
+export interface ProjectReportTimelineEvent {
+  id: string;
+  type: ProjectReportTimelineEventType;
+  occurred_at: string;
+  in_range: boolean;
+  author_type?: "member" | "agent" | "system" | string;
+  author_id?: string;
+  content?: string;
+  comment_type?: string;
+  parent_id?: string;
+  action?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ProjectReportIssueSummary {
+  issue_id: string;
+  problem: string;
+  actions: string[];
+  outcome: string;
+  open_items: string[];
+  summary_source?: "ai" | "deterministic" | string;
+}
+
+export interface ProjectReportIssue {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  description?: string;
+  status: string;
+  due_date?: string;
+  summary: ProjectReportIssueSummary;
+  timeline: ProjectReportTimelineEvent[];
+  timeline_truncated?: boolean;
+}
+
+export interface ProjectReportSnapshot {
+  period_type: ProjectReportPeriod;
+  range_start: string;
+  range_end: string;
+  timezone: string;
+  generated_at: string;
+  summary_version: number;
+  issues: ProjectReportIssue[];
+  active_issue_count: number;
+  completed?: ProjectReportIssue[];
+  in_progress?: ProjectReportIssue[];
+  blocked?: ProjectReportIssue[];
+  overdue?: ProjectReportIssue[];
+  cancelled?: ProjectReportIssue[];
+  completed_count?: number;
+  in_progress_count?: number;
+  blocked_count?: number;
+  overdue_count?: number;
+  cancelled_count?: number;
+}
+
 export interface ProjectReport {
   id: string;
   workspace_id: string;
@@ -126,7 +188,7 @@ export interface ProjectReport {
   timezone: string;
   generated_by_type: "member" | "agent";
   generated_by_id: string;
-  data_snapshot?: unknown;
+  data_snapshot?: ProjectReportSnapshot | Record<string, unknown>;
   content: string;
   created_at: string;
   saved_at?: string | null;

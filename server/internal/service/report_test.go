@@ -101,6 +101,69 @@ func TestGenerateContentFallsBackToDeterministicReport(t *testing.T) {
 	}
 }
 
+func TestIssueReportSummariesUseStructuredAIAndPerIssueFallback(t *testing.T) {
+	llm := &stubReportLLM{response: `{"summaries":[{"issue_id":"issue-a","problem":"梳理登录问题","actions":["完成复现"],"outcome":"已定位","open_items":[]},{"issue_id":"issue-b","problem":"缺少字段"}]}`}
+	snapshot := ReportSnapshot{
+		PeriodType:       "weekly",
+		RangeStart:       time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC),
+		RangeEnd:         time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		Timezone:         "UTC",
+		ActiveIssueCount: 2,
+		Issues: []ReportIssue{
+			{
+				IssueID:    "issue-a",
+				Identifier: "RPT-1",
+				Title:      "登录问题",
+				Status:     "in_progress",
+				Timeline: []ReportTimelineEvent{{
+					ID: "comment-a", Type: "comment", InRange: true,
+					Content: "Authorization: Bearer very-secret-token token=super-secret",
+				}},
+			},
+			{IssueID: "issue-b", Identifier: "RPT-2", Title: "支付问题", Status: "blocked"},
+		},
+	}
+
+	generator := ReportGenerator{LLM: llm}
+	got := generator.withIssueSummaries(context.Background(), snapshot)
+	if got.Issues[0].Summary.SummarySource != "ai" || got.Issues[0].Summary.Outcome != "已定位" {
+		t.Fatalf("valid issue summary was not accepted: %+v", got.Issues[0].Summary)
+	}
+	if got.Issues[1].Summary.SummarySource != "deterministic" {
+		t.Fatalf("invalid issue summary did not fall back: %+v", got.Issues[1].Summary)
+	}
+	if contains(llm.prompt, "very-secret-token") || contains(llm.prompt, "super-secret") {
+		t.Fatalf("sensitive values leaked into AI prompt: %s", llm.prompt)
+	}
+	if !contains(llm.prompt, "issue-a") || !contains(llm.prompt, "issue-b") {
+		t.Fatalf("AI prompt was not grouped by issue: %s", llm.prompt)
+	}
+}
+
+func TestIssueReportContentUsesIssueCenteredMetrics(t *testing.T) {
+	snapshot := ReportSnapshot{
+		Issues: []ReportIssue{{
+			IssueID:    "issue-a",
+			Identifier: "RPT-1",
+			Title:      "测试 issue",
+			Status:     "done",
+			Summary: ReportIssueSummary{
+				IssueID: "issue-a",
+				Problem: "需要完成测试",
+				Actions: []string{"完成实现"},
+				Outcome: "已完成",
+			},
+		}},
+		CompletedCount: 1,
+	}
+	content := buildIssueReportContent(snapshot)
+	for _, expected := range []string{"RPT-1：测试 issue", "问题：需要完成测试", "操作：", "结果：已完成", "活跃 issue：1"} {
+		if !contains(content, expected) {
+			t.Fatalf("issue-centered report missing %q: %s", expected, content)
+		}
+	}
+}
+
 func TestReportGeneratorAggregatesProjectWindow(t *testing.T) {
 	pool := newReportTestPool(t)
 	ctx := context.Background()

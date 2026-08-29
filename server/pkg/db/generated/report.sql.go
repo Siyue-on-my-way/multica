@@ -198,6 +198,58 @@ func (q *Queries) GetReportJobExecution(ctx context.Context, arg GetReportJobExe
 	return i, err
 }
 
+const listCurrentProjectIssueStatesForReport = `-- name: ListCurrentProjectIssueStatesForReport :many
+SELECT i.id, i.number, i.title, i.status, i.due_date, w.issue_prefix
+FROM issue i
+JOIN workspace w ON w.id = i.workspace_id
+WHERE i.workspace_id = $1
+  AND i.project_id = $2
+ORDER BY i.number ASC
+`
+
+type ListCurrentProjectIssueStatesForReportParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+type ListCurrentProjectIssueStatesForReportRow struct {
+	ID          pgtype.UUID `json:"id"`
+	Number      int32       `json:"number"`
+	Title       string      `json:"title"`
+	Status      string      `json:"status"`
+	DueDate     pgtype.Date `json:"due_date"`
+	IssuePrefix string      `json:"issue_prefix"`
+}
+
+// Kept as a single batch for the legacy overview counters. The issue-centered
+// report itself only uses ListProjectReportTimeline's activity union.
+func (q *Queries) ListCurrentProjectIssueStatesForReport(ctx context.Context, arg ListCurrentProjectIssueStatesForReportParams) ([]ListCurrentProjectIssueStatesForReportRow, error) {
+	rows, err := q.db.Query(ctx, listCurrentProjectIssueStatesForReport, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCurrentProjectIssueStatesForReportRow{}
+	for rows.Next() {
+		var i ListCurrentProjectIssueStatesForReportRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Title,
+			&i.Status,
+			&i.DueDate,
+			&i.IssuePrefix,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIssuesByStatusForReport = `-- name: ListIssuesByStatusForReport :many
 SELECT id, number, title
 FROM issue
@@ -363,6 +415,272 @@ func (q *Queries) ListIssuesOverdueForReport(ctx context.Context, arg ListIssues
 	for rows.Next() {
 		var i ListIssuesOverdueForReportRow
 		if err := rows.Scan(&i.ID, &i.Number, &i.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectReportTimeline = `-- name: ListProjectReportTimeline :many
+WITH RECURSIVE scoped_issues AS (
+    SELECT i.id,
+           i.workspace_id,
+           i.number,
+           i.title,
+           COALESCE(i.description, '') AS description,
+           i.status,
+           i.due_date,
+           w.issue_prefix
+    FROM issue i
+    JOIN workspace w ON w.id = i.workspace_id
+    WHERE i.workspace_id = $1
+      AND i.project_id = $2
+), active_issue_ids AS (
+    SELECT h.issue_id
+    FROM issue_status_history h
+    JOIN scoped_issues i ON i.id = h.issue_id
+    WHERE h.workspace_id = $1
+      AND h.changed_at >= $3
+      AND h.changed_at < $4
+    UNION
+    SELECT c.issue_id
+    FROM comment c
+    JOIN scoped_issues i ON i.id = c.issue_id
+    WHERE c.workspace_id = $1
+      AND c.created_at >= $3
+      AND c.created_at < $4
+    UNION
+    SELECT t.issue_id
+    FROM agent_task_queue t
+    JOIN scoped_issues i ON i.id = t.issue_id
+    WHERE (
+        (t.created_at >= $3 AND t.created_at < $4)
+        OR (t.started_at >= $3 AND t.started_at < $4)
+        OR (t.completed_at >= $3 AND t.completed_at < $4)
+    )
+), window_comments AS (
+    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type, c.created_at, c.updated_at, c.parent_id, c.workspace_id, c.resolved_at, c.resolved_by_type, c.resolved_by_id, c.source_task_id, c.quick_action_id
+    FROM comment c
+    JOIN active_issue_ids a ON a.issue_id = c.issue_id
+    WHERE c.workspace_id = $1
+      AND c.created_at >= $3
+      AND c.created_at < $4
+), comment_ancestors(reply_id, issue_id, current_id, parent_id) AS (
+    SELECT c.id, c.issue_id, c.id, c.parent_id
+    FROM window_comments c
+    UNION ALL
+    SELECT a.reply_id, a.issue_id, parent.id, parent.parent_id
+    FROM comment_ancestors a
+    JOIN comment parent ON parent.id = a.parent_id
+    WHERE parent.issue_id = a.issue_id
+      AND parent.workspace_id = $1
+), context_comment_ids AS (
+    SELECT DISTINCT a.current_id AS comment_id
+    FROM comment_ancestors a
+    JOIN comment root ON root.id = a.current_id
+    WHERE a.parent_id IS NULL
+      AND root.created_at < $3
+), timeline AS (
+    SELECT c.issue_id,
+           'comment'::text AS event_type,
+           c.id::text AS event_id,
+           c.created_at AS occurred_at,
+           TRUE AS in_range,
+           c.author_type::text AS actor_type,
+           c.author_id::text AS actor_id,
+           c.content::text AS content,
+           c.type::text AS comment_type,
+           COALESCE(c.parent_id::text, '') AS parent_id,
+           ''::text AS action,
+           '{}'::jsonb AS details
+    FROM window_comments c
+    UNION ALL
+    SELECT c.issue_id,
+           'comment'::text,
+           c.id::text,
+           c.created_at,
+           FALSE,
+           c.author_type::text,
+           c.author_id::text,
+           c.content::text,
+           c.type::text,
+           COALESCE(c.parent_id::text, ''),
+           ''::text,
+           '{}'::jsonb
+    FROM comment c
+    JOIN context_comment_ids context ON context.comment_id = c.id
+    UNION ALL
+    SELECT a.issue_id,
+           'activity_log'::text,
+           a.id::text,
+           a.created_at,
+           TRUE,
+           COALESCE(a.actor_type::text, ''),
+           COALESCE(a.actor_id::text, ''),
+           ''::text,
+           ''::text,
+           ''::text,
+           a.action::text,
+           COALESCE(a.details, '{}'::jsonb)
+    FROM activity_log a
+    JOIN active_issue_ids active ON active.issue_id = a.issue_id
+    WHERE a.workspace_id = $1
+      AND a.created_at >= $3
+      AND a.created_at < $4
+    UNION ALL
+    SELECT h.issue_id,
+           'issue_status_history'::text,
+           h.id::text,
+           h.changed_at,
+           TRUE,
+           h.changed_by_type::text,
+           COALESCE(h.changed_by_id::text, ''),
+           ''::text,
+           ''::text,
+           ''::text,
+           'status_changed'::text,
+           jsonb_build_object(
+               'from_status', h.from_status,
+               'to_status', h.to_status,
+               'changed_by_type', h.changed_by_type,
+               'changed_by_id', h.changed_by_id
+           )
+    FROM issue_status_history h
+    JOIN active_issue_ids active ON active.issue_id = h.issue_id
+    WHERE h.workspace_id = $1
+      AND h.changed_at >= $3
+      AND h.changed_at < $4
+    UNION ALL
+    SELECT t.issue_id,
+           'agent_task_queue'::text,
+           t.id::text,
+           CASE
+               WHEN t.completed_at >= $3 AND t.completed_at < $4 THEN t.completed_at
+               WHEN t.started_at >= $3 AND t.started_at < $4 THEN t.started_at
+               WHEN t.created_at >= $3 AND t.created_at < $4 THEN t.created_at
+               WHEN t.dispatched_at >= $3 AND t.dispatched_at < $4 THEN t.dispatched_at
+               ELSE COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at)
+           END,
+           TRUE,
+           'agent'::text,
+           t.agent_id::text,
+           ''::text,
+           ''::text,
+           ''::text,
+           'agent_task'::text,
+           jsonb_build_object(
+               'task_id', t.id,
+               'status', t.status,
+               'created_at', t.created_at,
+               'started_at', t.started_at,
+               'completed_at', t.completed_at,
+               'error', t.error,
+               'result', COALESCE(t.result, 'null'::jsonb)
+           )
+    FROM agent_task_queue t
+    JOIN active_issue_ids active ON active.issue_id = t.issue_id
+    WHERE (
+        (t.created_at >= $3 AND t.created_at < $4)
+        OR (t.started_at >= $3 AND t.started_at < $4)
+        OR (t.completed_at >= $3 AND t.completed_at < $4)
+    )
+)
+SELECT i.id AS issue_id,
+       i.number,
+       i.title,
+       i.description,
+       i.status,
+       i.due_date,
+       i.issue_prefix,
+       timeline.event_type,
+       timeline.event_id,
+       timeline.occurred_at,
+       timeline.in_range,
+       timeline.actor_type,
+       timeline.actor_id,
+       timeline.content,
+       timeline.comment_type,
+       CAST(timeline.parent_id AS text) AS parent_id,
+       timeline.action,
+       timeline.details
+FROM scoped_issues i
+JOIN active_issue_ids active ON active.issue_id = i.id
+JOIN timeline ON timeline.issue_id = i.id
+ORDER BY i.number ASC, timeline.occurred_at ASC, timeline.event_type ASC, timeline.event_id ASC
+`
+
+type ListProjectReportTimelineParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	RangeStart  pgtype.Timestamptz `json:"range_start"`
+	RangeEnd    pgtype.Timestamptz `json:"range_end"`
+}
+
+type ListProjectReportTimelineRow struct {
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	Number      int32              `json:"number"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Status      string             `json:"status"`
+	DueDate     pgtype.Date        `json:"due_date"`
+	IssuePrefix string             `json:"issue_prefix"`
+	EventType   string             `json:"event_type"`
+	EventID     string             `json:"event_id"`
+	OccurredAt  pgtype.Timestamptz `json:"occurred_at"`
+	InRange     bool               `json:"in_range"`
+	ActorType   string             `json:"actor_type"`
+	ActorID     string             `json:"actor_id"`
+	Content     string             `json:"content"`
+	CommentType string             `json:"comment_type"`
+	ParentID    string             `json:"parent_id"`
+	Action      string             `json:"action"`
+	Details     []byte             `json:"details"`
+}
+
+// Return one bounded, tenant-scoped event stream for every issue that was
+// active in the requested half-open window. The active issue set is the
+// union of status transitions, comments, and agent task execution records;
+// each source is read in one batch and grouped by issue in the service layer.
+// A reply whose root predates the window contributes that root as an
+// out-of-window context row so the model and UI can understand the thread.
+func (q *Queries) ListProjectReportTimeline(ctx context.Context, arg ListProjectReportTimelineParams) ([]ListProjectReportTimelineRow, error) {
+	rows, err := q.db.Query(ctx, listProjectReportTimeline,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.RangeStart,
+		arg.RangeEnd,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectReportTimelineRow{}
+	for rows.Next() {
+		var i ListProjectReportTimelineRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.Number,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.DueDate,
+			&i.IssuePrefix,
+			&i.EventType,
+			&i.EventID,
+			&i.OccurredAt,
+			&i.InRange,
+			&i.ActorType,
+			&i.ActorID,
+			&i.Content,
+			&i.CommentType,
+			&i.ParentID,
+			&i.Action,
+			&i.Details,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

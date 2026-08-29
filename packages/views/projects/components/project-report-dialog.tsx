@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarRange, History, Loader2 } from "lucide-react";
+import { CalendarRange, ClipboardList, ExternalLink, History, Loader2, MessageSquare } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
@@ -31,6 +31,7 @@ import {
 } from "@multica/core/issues/date";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import {
   projectReportKeys,
   projectReportDetailOptions,
@@ -38,16 +39,261 @@ import {
   useCreateProjectReport,
   useSaveProjectReport,
 } from "@multica/core/projects";
-import type { ProjectReportPeriod } from "@multica/core/types";
+import type {
+  ProjectReport,
+  ProjectReportIssue,
+  ProjectReportPeriod,
+  ProjectReportSnapshot,
+  ProjectReportTimelineEvent,
+} from "@multica/core/types";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { RichContent } from "../../rich-content";
+import { AppLink } from "../../navigation";
 import { DateOnlyPicker } from "../../common/date-only-picker";
 import { TimezoneSelect } from "../../common/timezone-select";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
+import {
+  buildProjectReportDetailMarkdown,
+  groupProjectReportDetails,
+  projectReportEventContent,
+} from "./project-report-detail";
 
 type ReportPeriod = "day" | "week" | "month";
 type DialogView = "generate" | "history";
+
+function readProjectReportSnapshot(report: ProjectReport | undefined): ProjectReportSnapshot | null {
+  const value = report?.data_snapshot;
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<ProjectReportSnapshot>;
+  if (!Array.isArray(candidate.issues)) return null;
+  return candidate as ProjectReportSnapshot;
+}
+
+function reportIssueComments(issue: ProjectReportIssue): ProjectReportTimelineEvent[] {
+  return (issue.timeline ?? []).filter((event) => event.type === "comment");
+}
+
+function reportAuthorLabel(event: ProjectReportTimelineEvent): string {
+  if (event.author_type === "agent") return "agent";
+  if (event.author_type === "member") return "member";
+  return event.author_type || "system";
+}
+
+function IssueReportCard({
+  issue,
+  timezone,
+}: {
+  issue: ProjectReportIssue;
+  timezone: string;
+}) {
+  const { t } = useT("projects");
+  const paths = useWorkspacePaths();
+  const comments = reportIssueComments(issue);
+  const summary = issue.summary;
+
+  return (
+    <article className="space-y-3 rounded-lg border bg-background p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-body font-medium">{issue.title}</h3>
+          <span className="text-caption text-muted-foreground">{issue.identifier} · {issue.status}</span>
+        </div>
+        <AppLink
+          href={paths.issueDetail(issue.identifier)}
+          className="inline-flex shrink-0 items-center gap-1 text-caption text-primary hover:underline"
+        >
+          {t(($) => $.detail.report_dialog.view_issue)}
+          <ExternalLink className="h-3 w-3" />
+        </AppLink>
+      </div>
+
+      <div className="space-y-2 text-caption">
+        <div>
+          <p className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.problem)}</p>
+          <p className="whitespace-pre-wrap">{summary?.problem || "—"}</p>
+        </div>
+        <div>
+          <p className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.actions)}</p>
+          {summary?.actions?.length ? (
+            <ul className="list-disc space-y-0.5 pl-5">
+              {summary.actions.map((action, index) => (
+                <li key={`${issue.issue_id}-action-${index}`}>{action}</li>
+              ))}
+            </ul>
+          ) : <p>—</p>}
+        </div>
+        <div>
+          <p className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.outcome)}</p>
+          <p className="whitespace-pre-wrap">{summary?.outcome || "—"}</p>
+        </div>
+        <div>
+          <p className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.open_items)}</p>
+          {summary?.open_items?.length ? (
+            <ul className="list-disc space-y-0.5 pl-5">
+              {summary.open_items.map((item, index) => (
+                <li key={`${issue.issue_id}-open-${index}`}>{item}</li>
+              ))}
+            </ul>
+          ) : <p>{t(($) => $.detail.report_dialog.no_open_items)}</p>}
+        </div>
+      </div>
+
+      <details className="rounded-md border border-dashed">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-caption font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+          <MessageSquare className="h-3.5 w-3.5" />
+          {t(($) => $.detail.report_dialog.discussion_records)} ({comments.length})
+        </summary>
+        <div className="space-y-3 border-t px-3 py-3">
+          {comments.length === 0 ? (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.detail.report_dialog.discussion_empty)}
+            </p>
+          ) : comments.map((event) => (
+            <div key={event.id} className="space-y-1 border-b pb-3 last:border-b-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                <span>{formatDateTimeInTimezone(event.occurred_at, timezone)}</span>
+                <span>·</span>
+                <span>{reportAuthorLabel(event)}</span>
+                {!event.in_range && (
+                  <span className="rounded bg-muted px-1.5 py-0.5">
+                    {t(($) => $.detail.report_dialog.historical_context)}
+                  </span>
+                )}
+              </div>
+              <RichContent content={event.content ?? ""} className="text-caption" />
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {issue.timeline_truncated && (
+        <p className="text-[11px] text-muted-foreground">
+          {t(($) => $.detail.report_dialog.timeline_truncated)}
+        </p>
+      )}
+    </article>
+  );
+}
+
+function IssueCenteredReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  const { t } = useT("projects");
+  const timezone = snapshot.timezone || "UTC";
+  return (
+    <div className="w-full space-y-3 text-left">
+      <div className="rounded-lg border bg-surface-hover/30 px-4 py-3">
+        <p className="text-caption font-medium text-muted-foreground">
+          {t(($) => $.detail.report_dialog.overview)}
+        </p>
+        <p className="mt-1 text-body">
+          {t(($) => $.detail.report_dialog.active_issue_count, {
+            count: snapshot.active_issue_count ?? snapshot.issues.length,
+          })}
+        </p>
+      </div>
+      <div className="space-y-3">
+        {snapshot.issues.map((issue) => (
+          <IssueReportCard key={issue.issue_id} issue={issue} timezone={timezone} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function reportInclusiveEnd(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Date(date.getTime() - 1).toISOString();
+}
+
+function DetailedReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
+  const { t } = useT("projects");
+  const paths = useWorkspacePaths();
+  const timezone = snapshot.timezone || "UTC";
+  const groups = useMemo(
+    () => groupProjectReportDetails(snapshot, timezone),
+    [snapshot, timezone],
+  );
+  const detailCount = groups.reduce((total, group) => total + group.items.length, 0);
+  const eventTypeLabel = useCallback((type: ProjectReportTimelineEvent["type"]) => {
+    switch (type) {
+      case "comment":
+        return t(($) => $.detail.report_dialog.detail_event_comment);
+      case "activity_log":
+        return t(($) => $.detail.report_dialog.detail_event_activity);
+      case "issue_status_history":
+        return t(($) => $.detail.report_dialog.detail_event_status);
+      case "agent_task_queue":
+        return t(($) => $.detail.report_dialog.detail_event_task);
+      default:
+        return t(($) => $.detail.report_dialog.detail_event_other);
+    }
+  }, [t]);
+
+  return (
+    <div className="w-full space-y-3 text-left">
+      <div className="rounded-lg border bg-surface-hover/30 px-4 py-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.detail.report_dialog.detail_records_title)}
+          </p>
+          <span className="text-[11px] text-muted-foreground">
+            {t(($) => $.detail.report_dialog.detail_records_count, { count: detailCount })}
+          </span>
+        </div>
+        <p className="mt-1 text-caption text-muted-foreground">
+          {formatDateInTimezone(snapshot.range_start, timezone)} – {formatDateInTimezone(reportInclusiveEnd(snapshot.range_end), timezone)}
+        </p>
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="rounded-md border border-dashed px-4 py-8 text-center text-caption text-muted-foreground">
+          {t(($) => $.detail.report_dialog.detail_records_empty)}
+        </div>
+      ) : (
+        <div className="max-h-[46svh] space-y-3 overflow-y-auto pr-1">
+          {groups.map((group) => (
+            <section key={group.dateKey} className="rounded-lg border bg-background p-3 shadow-sm">
+              <h3 className="text-caption font-semibold">
+                {formatDateInTimezone(`${group.dateKey}T12:00:00.000Z`, timezone)}
+              </h3>
+              <div className="mt-3 space-y-3">
+                {group.items.map(({ issue, event }) => (
+                  <article key={`${issue.issue_id}-${event.id}`} className="border-l-2 border-muted pl-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+                      <p className="min-w-0 text-caption">
+                        <AppLink
+                          href={paths.issueDetail(issue.identifier)}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {issue.identifier}
+                        </AppLink>
+                        <span className="text-muted-foreground"> · {issue.title}</span>
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        {formatDateTimeInTimezone(event.occurred_at, timezone)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="rounded bg-muted px-1.5 py-0.5">
+                        {eventTypeLabel(event.type)}
+                      </span>
+                      {event.author_type && <span>{reportAuthorLabel(event)}</span>}
+                    </div>
+                    <RichContent
+                      content={projectReportEventContent(event)}
+                      className="mt-1 text-caption"
+                    />
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function dateOnlyInTimezone(at: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -129,6 +375,17 @@ function formatDateInTimezone(value: string, timezone: string): string {
   }).format(new Date(value));
 }
 
+function formatDateTimeInTimezone(value: string, timezone: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: timezone,
+  }).format(new Date(value));
+}
+
 export function ProjectReportDialog({
   open,
   onOpenChange,
@@ -153,6 +410,7 @@ export function ProjectReportDialog({
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [showDetailedRecords, setShowDetailedRecords] = useState(false);
   const pollingTimerRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
   const createReport = useCreateProjectReport(workspaceId ?? "", projectId);
@@ -166,6 +424,7 @@ export function ProjectReportDialog({
     enabled: Boolean(workspaceId) && open && Boolean(selectedReportId),
   });
   const report = selectedReport.data;
+  const reportSnapshot = useMemo(() => readProjectReportSnapshot(report), [report]);
   const isGenerating = createReport.isPending || activeJobId !== null;
 
   const periodItems = useMemo(() => [
@@ -189,6 +448,7 @@ export function ProjectReportDialog({
       setActiveJobId(null);
       setSelectedReportId(null);
       setGenerationError(null);
+      setShowDetailedRecords(false);
     }
     onOpenChange(nextOpen);
   }, [onOpenChange, userTimezone]);
@@ -255,6 +515,7 @@ export function ProjectReportDialog({
     setActiveJobId(null);
     setSelectedReportId(null);
     setGenerationError(null);
+    setShowDetailedRecords(false);
   }, [timezone]);
 
   const invalidRange = !startDate || !endDate || startDate > endDate;
@@ -264,6 +525,7 @@ export function ProjectReportDialog({
     setActiveJobId(null);
     setSelectedReportId(null);
     setGenerationError(null);
+    setShowDetailedRecords(false);
     createReport.mutate(
       {
         period_type: periodToApiPeriod(period),
@@ -312,26 +574,62 @@ export function ProjectReportDialog({
     workspaceId,
   ]);
 
+  const reportExportContent = useMemo(() => {
+    if (!report?.content) return null;
+    if (!showDetailedRecords || !reportSnapshot) return report.content;
+
+    const detailTimezone = reportSnapshot.timezone || timezone;
+    return buildProjectReportDetailMarkdown(
+      reportSnapshot,
+      detailTimezone,
+      {
+        heading: t(($) => $.detail.report_dialog.detail_records_title),
+        range: (start, end) => t(($) => $.detail.report_dialog.detail_records_range, {
+          start: formatDateInTimezone(start, detailTimezone),
+          end: formatDateInTimezone(reportInclusiveEnd(end), detailTimezone),
+        }),
+        date: (dateKey) => formatDateInTimezone(`${dateKey}T12:00:00.000Z`, detailTimezone),
+        issue: (identifier, title) => `${identifier}：${title}`,
+        event: (type) => {
+          switch (type) {
+            case "comment":
+              return t(($) => $.detail.report_dialog.detail_event_comment);
+            case "activity_log":
+              return t(($) => $.detail.report_dialog.detail_event_activity);
+            case "issue_status_history":
+              return t(($) => $.detail.report_dialog.detail_event_status);
+            case "agent_task_queue":
+              return t(($) => $.detail.report_dialog.detail_event_task);
+            default:
+              return t(($) => $.detail.report_dialog.detail_event_other);
+          }
+        },
+        empty: t(($) => $.detail.report_dialog.detail_records_empty),
+      },
+      (value) => formatDateTimeInTimezone(value, detailTimezone),
+    );
+  }, [report?.content, reportSnapshot, showDetailedRecords, t, timezone]);
+
   const handleCopy = useCallback(async () => {
-    if (!report?.content) return;
-    const copied = await copyText(report.content);
+    if (!reportExportContent) return;
+    const copied = await copyText(reportExportContent);
     if (copied) {
       toast.success(t(($) => $.detail.report_dialog.copy_success));
     } else {
       toast.error(t(($) => $.detail.report_dialog.copy_failed));
     }
-  }, [report?.content, t]);
+  }, [reportExportContent, t]);
 
   const handleDownload = useCallback(() => {
-    if (!report?.content) return;
-    const blob = new Blob([report.content], { type: "text/markdown;charset=utf-8" });
+    if (!reportExportContent) return;
+    const blob = new Blob([reportExportContent], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = `${projectName.replace(/[^\p{L}\p{N}]+/gu, "-")}-${startDate ?? "report"}.md`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [projectName, report?.content, startDate]);
+  }, [projectName, reportExportContent, startDate]);
 
   const handleSave = useCallback(() => {
     if (!report?.content || report.saved_at) return;
@@ -349,6 +647,7 @@ export function ProjectReportDialog({
     setDialogView("generate");
     setActiveJobId(null);
     setGenerationError(null);
+    setShowDetailedRecords(false);
     setSelectedReportId(reportId);
   }, []);
 
@@ -474,7 +773,15 @@ export function ProjectReportDialog({
                 ) : generationError ? (
                   <span className="text-destructive">{generationError}</span>
                 ) : report?.content ? (
-                  <RichContent content={report.content} className="w-full text-left" />
+                  reportSnapshot ? (
+                    showDetailedRecords ? (
+                      <DetailedReport snapshot={reportSnapshot} />
+                    ) : (
+                      <IssueCenteredReport snapshot={reportSnapshot} />
+                    )
+                  ) : (
+                    <RichContent content={report.content} className="w-full text-left" />
+                  )
                 ) : (
                   t(($) => $.detail.report_dialog.preview_placeholder)
                 )}
@@ -482,6 +789,18 @@ export function ProjectReportDialog({
             </div>
 
             <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant={showDetailedRecords ? "default" : "outline"}
+                size="sm"
+                disabled={isGenerating || !reportSnapshot}
+                onClick={() => setShowDetailedRecords((visible) => !visible)}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                {showDetailedRecords
+                  ? t(($) => $.detail.report_dialog.back_to_summary)
+                  : t(($) => $.detail.report_dialog.detail_records_button)}
+              </Button>
               <Button
                 type="button"
                 variant="outline"
