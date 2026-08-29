@@ -133,7 +133,7 @@
       "detail_event_activity": "활동 로그",
       "detail_event_status": "상태 변경",
       "detail_event_task": "Agent 작업",
-      "detail_event_other": "작업 기록",
+      "detail_event_record": "작업 기록",
       "generate_tab": "생성",
       "history_tab": "기록",
       "history_empty": "아직 생성된 보고서가 없습니다.",

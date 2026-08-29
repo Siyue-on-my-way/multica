@@ -133,7 +133,7 @@
       "detail_event_activity": "操作日志",
       "detail_event_status": "状态变更",
       "detail_event_task": "Agent 任务",
-      "detail_event_other": "工作记录",
+      "detail_event_record": "工作记录",
       "generate_tab": "生成",
       "history_tab": "报告历史",
       "history_empty": "还没有生成过报告。",

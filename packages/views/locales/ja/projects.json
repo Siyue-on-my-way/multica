@@ -133,7 +133,7 @@
       "detail_event_activity": "操作ログ",
       "detail_event_status": "ステータス変更",
       "detail_event_task": "Agent タスク",
-      "detail_event_other": "作業記録",
+      "detail_event_record": "作業記録",
       "generate_tab": "生成",
       "history_tab": "履歴",
       "history_empty": "まだレポートは生成されていません。",

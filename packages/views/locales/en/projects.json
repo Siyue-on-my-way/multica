@@ -134,7 +134,7 @@
       "detail_event_activity": "Activity log",
       "detail_event_status": "Status change",
       "detail_event_task": "Agent task",
-      "detail_event_other": "Work record",
+      "detail_event_record": "Work record",
       "generate_tab": "Generate",
       "history_tab": "History",
       "history_empty": "No reports have been generated yet.",

@@ -226,7 +226,7 @@ function DetailedReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
       case "agent_task_queue":
         return t(($) => $.detail.report_dialog.detail_event_task);
       default:
-        return t(($) => $.detail.report_dialog.detail_event_other);
+        return t(($) => $.detail.report_dialog.detail_event_record);
     }
   }, [t]);
 
@@ -601,7 +601,7 @@ export function ProjectReportDialog({
             case "agent_task_queue":
               return t(($) => $.detail.report_dialog.detail_event_task);
             default:
-              return t(($) => $.detail.report_dialog.detail_event_other);
+              return t(($) => $.detail.report_dialog.detail_event_record);
           }
         },
         empty: t(($) => $.detail.report_dialog.detail_records_empty),
