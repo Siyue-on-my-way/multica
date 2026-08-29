@@ -151,6 +151,8 @@ export type {
   ProjectReportIssueSummary,
   ProjectReportIssue,
   ProjectReportWorkItem,
+  ProjectReportMilestone,
+  ProjectReportBusinessDomain,
   ProjectReportAnalysisNote,
   ProjectReportChange,
   ProjectReportProjectAnalysis,

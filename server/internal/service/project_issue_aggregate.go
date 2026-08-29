@@ -45,13 +45,14 @@ func (a *ProjectIssueAggregator) Aggregate(
 			index = len(issues)
 			issueIndexes[issueID] = index
 			issues = append(issues, ReportIssue{
-				IssueID:     issueID,
-				Identifier:  fmt.Sprintf("%s-%d", row.IssuePrefix, row.Number),
-				Title:       row.Title,
-				Description: row.Description,
-				Status:      row.Status,
-				DueDate:     reportDateString(row.DueDate),
-				Timeline:    make([]ReportTimelineEvent, 0, 8),
+				IssueID:        issueID,
+				Identifier:     fmt.Sprintf("%s-%d", row.IssuePrefix, row.Number),
+				Title:          row.Title,
+				Description:    row.Description,
+				BusinessDomain: inferReportBusinessDomain(row.Title, row.Description),
+				Status:         row.Status,
+				DueDate:        reportDateString(row.DueDate),
+				Timeline:       make([]ReportTimelineEvent, 0, 8),
 			})
 		}
 		issues[index].Timeline = append(issues[index].Timeline, reportTimelineEvent(row))

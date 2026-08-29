@@ -144,6 +144,12 @@ export interface ProjectReportIssueSummary {
   open_items: string[];
   work_types?: string[];
   work_done?: string[];
+  decision?: string;
+  deliverables?: string[];
+  verification?: string[];
+  current_state?: string;
+  dependencies?: string[];
+  risks?: string[];
   artifacts?: string[];
   impact?: string;
   evidence_ids?: string[];
@@ -156,6 +162,7 @@ export interface ProjectReportIssue {
   identifier: string;
   title: string;
   description?: string;
+  business_domain?: string;
   status: string;
   due_date?: string;
   summary: ProjectReportIssueSummary;
@@ -168,12 +175,23 @@ export interface ProjectReportWorkItem {
   issue_id: string;
   identifier: string;
   issue_title: string;
+  business_domain?: string;
+  milestone?: string;
+  milestones?: string[];
   category: string;
   categories?: string[];
   title: string;
   description: string;
+  work_done?: string[];
+  decision?: string;
+  deliverables?: string[];
+  verification?: string[];
+  current_state?: string;
+  dependencies?: string[];
+  risks?: string[];
   outcome: string;
   impact?: string;
+  business_impact?: string;
   status: string;
   evidence_ids?: string[];
   confidence?: "high" | "medium" | "low" | string;
@@ -202,9 +220,35 @@ export interface ProjectReportChange {
 
 export interface ProjectReportProjectAnalysis {
   summary: string;
+  business_domains?: ProjectReportBusinessDomain[];
+  milestones?: ProjectReportMilestone[];
   changes?: ProjectReportChange[];
   risks?: ProjectReportAnalysisNote[];
   next_steps?: ProjectReportAnalysisNote[];
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+  source?: "ai" | "deterministic" | string;
+}
+
+export interface ProjectReportMilestone {
+  id: string;
+  business_domain: string;
+  title: string;
+  summary: string;
+  work_item_ids?: string[];
+  status: string;
+  evidence_ids?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+  source?: "ai" | "deterministic" | string;
+}
+
+export interface ProjectReportBusinessDomain {
+  id: string;
+  name: string;
+  summary: string;
+  work_item_ids?: string[];
+  milestones?: ProjectReportMilestone[];
+  business_impact?: string;
   evidence_ids?: string[];
   confidence?: "high" | "medium" | "low" | string;
   source?: "ai" | "deterministic" | string;
@@ -215,6 +259,8 @@ export interface ProjectReportSnapshot {
   range_start: string;
   range_end: string;
   timezone: string;
+  project_title?: string;
+  project_description?: string;
   generated_at: string;
   summary_version: number;
   analysis_version?: number;

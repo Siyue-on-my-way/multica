@@ -40,6 +40,7 @@ import {
   useSaveProjectReport,
 } from "@multica/core/projects";
 import type {
+  ProjectReportBusinessDomain,
   ProjectReport,
   ProjectReportIssue,
   ProjectReportPeriod,
@@ -261,8 +262,20 @@ function ReportWorkItemCard({
         </span>
       </div>
       <div className="space-y-1 text-caption">
+        {item.business_domain && (
+          <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.business_domain)} · </span>{item.business_domain}</p>
+        )}
+        {item.milestones?.length ? (
+          <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.milestone)} · </span>{item.milestones.join(" / ")}</p>
+        ) : null}
         <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.work_done)} · </span>{item.description}</p>
+        {item.decision && <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.decision)} · </span>{item.decision}</p>}
+        {item.deliverables?.length ? <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.deliverables)} · </span>{item.deliverables.join("；")}</p> : null}
+        {item.verification?.length ? <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.verification)} · </span>{item.verification.join("；")}</p> : null}
         <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.outcome)} · </span>{item.outcome}</p>
+        <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.current_state)} · </span>{item.current_state || item.status}</p>
+        {item.dependencies?.length ? <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.dependencies)} · </span>{item.dependencies.join("；")}</p> : null}
+        {item.risks?.length ? <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.item_risks)} · </span>{item.risks.join("；")}</p> : null}
         <p><span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.impact)} · </span>{item.impact || t(($) => $.detail.report_dialog.impact_pending)}</p>
         <div className="flex flex-wrap items-start gap-1">
           <span className="font-medium text-muted-foreground">{t(($) => $.detail.report_dialog.evidence)} · </span>
@@ -270,6 +283,51 @@ function ReportWorkItemCard({
         </div>
       </div>
     </article>
+  );
+}
+
+function ReportBusinessDomainSection({
+  domains,
+}: {
+  domains?: ProjectReportBusinessDomain[];
+}) {
+  const { t } = useT("projects");
+  if (!domains?.length) {
+    return <p className="text-caption text-muted-foreground">{t(($) => $.detail.report_dialog.no_business_domains)}</p>;
+  }
+  return (
+    <div className="space-y-3">
+      {domains.map((domain) => (
+        <article key={domain.id || domain.name} className="rounded-md border border-l-2 border-l-primary/50 p-3 text-caption">
+          <p className="font-medium">{domain.name}</p>
+          <p className="mt-1 whitespace-pre-wrap">{domain.summary}</p>
+          {domain.business_impact && (
+            <p className="mt-1 text-muted-foreground">
+              {t(($) => $.detail.report_dialog.impact)} · {domain.business_impact}
+            </p>
+          )}
+          <div className="mt-2 space-y-2">
+            {domain.milestones?.map((milestone) => (
+              <div key={milestone.id || milestone.title} className="border-l border-muted pl-2">
+                <p className="font-medium">{t(($) => $.detail.report_dialog.milestone)} · {milestone.title}</p>
+                <p className="mt-0.5 whitespace-pre-wrap">{milestone.summary}</p>
+                <p className="mt-0.5 text-muted-foreground">
+                  {t(($) => $.detail.report_dialog.status)} · {milestone.status}
+                </p>
+                <div className="mt-0.5 flex flex-wrap items-start gap-1 text-muted-foreground">
+                  <span>{t(($) => $.detail.report_dialog.evidence)} · </span>
+                  <ReportEvidenceList evidenceIds={milestone.evidence_ids} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap items-start gap-1 text-muted-foreground">
+            <span>{t(($) => $.detail.report_dialog.evidence)} · </span>
+            <ReportEvidenceList evidenceIds={domain.evidence_ids} />
+          </div>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -303,6 +361,10 @@ function AudienceSummaryReport({ snapshot }: { snapshot: ProjectReportSnapshot }
             ))}
           </ul>
         ) : <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.detail.report_dialog.no_report_items)}</p>}
+      </div>
+      <div className="rounded-lg border bg-background p-4 shadow-sm">
+        <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.business_domains)}</h3>
+        <div className="mt-3"><ReportBusinessDomainSection domains={analysis.business_domains} /></div>
       </div>
       <div className="rounded-lg border bg-background p-4 shadow-sm">
         <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.risks_and_next_steps)}</h3>
@@ -363,6 +425,10 @@ function BusinessReport({ snapshot }: { snapshot: ProjectReportSnapshot }) {
         <p className="mt-1 text-body whitespace-pre-wrap">{analysis.summary}</p>
       </div>
       <ReportWarnings snapshot={snapshot} />
+      <section className="rounded-lg border bg-background p-4 shadow-sm">
+        <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.business_domains)}</h3>
+        <div className="mt-3"><ReportBusinessDomainSection domains={analysis.business_domains} /></div>
+      </section>
       <section className="rounded-lg border bg-background p-4 shadow-sm">
         <h3 className="text-body font-medium">{t(($) => $.detail.report_dialog.project_changes)}</h3>
         <div className="mt-3 space-y-3">
@@ -834,12 +900,21 @@ export function ProjectReportDialog({
       summary: t(($) => $.detail.report_dialog.summary_view),
       execution: t(($) => $.detail.report_dialog.execution_view),
       business: t(($) => $.detail.report_dialog.business_view),
+      businessDomains: t(($) => $.detail.report_dialog.business_domains),
+      milestone: t(($) => $.detail.report_dialog.milestone),
+      workItems: t(($) => $.detail.report_dialog.work_items),
       changes: t(($) => $.detail.report_dialog.project_changes),
       risks: t(($) => $.detail.report_dialog.risks_and_next_steps),
       nextSteps: t(($) => $.detail.report_dialog.next_steps),
       category: (category) => reportCategoryLabel(t, category),
       issue: (identifier, title) => `${identifier}：${title}`,
       description: t(($) => $.detail.report_dialog.work_done),
+      decision: t(($) => $.detail.report_dialog.decision),
+      deliverables: t(($) => $.detail.report_dialog.deliverables),
+      verification: t(($) => $.detail.report_dialog.verification),
+      currentState: t(($) => $.detail.report_dialog.current_state),
+      dependencies: t(($) => $.detail.report_dialog.dependencies),
+      itemRisks: t(($) => $.detail.report_dialog.item_risks),
       outcome: t(($) => $.detail.report_dialog.outcome),
       status: t(($) => $.detail.report_dialog.status),
       impact: t(($) => $.detail.report_dialog.impact),

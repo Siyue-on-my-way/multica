@@ -1,4 +1,5 @@
 import type {
+  ProjectReportBusinessDomain,
   ProjectReportIssue,
   ProjectReportProjectAnalysis,
   ProjectReportSnapshot,
@@ -163,6 +164,29 @@ function normalizeReportCategory(value: string | undefined): string {
   }
 }
 
+function milestoneLabel(category: string): string {
+  switch (normalizeReportCategory(category)) {
+    case "bug_fix":
+      return "问题定位与修复";
+    case "feature":
+      return "功能与能力交付";
+    case "architecture":
+      return "架构与配置改造";
+    case "design":
+      return "需求与方案决策";
+    case "research":
+      return "调研与问题分析";
+    case "operations":
+      return "验证与发布运维";
+    case "discussion":
+      return "讨论与协作决策";
+    case "risk":
+      return "风险与依赖处理";
+    default:
+      return "工作推进";
+  }
+}
+
 function inferReportCategory(issue: ProjectReportIssue): string {
   const text = [
     issue.title,
@@ -198,7 +222,27 @@ function fallbackWorkDescription(issue: ProjectReportIssue): string[] {
 
 /** Normalize new snapshots and provide a useful view for older saved reports. */
 export function getProjectReportWorkItems(snapshot: ProjectReportSnapshot): ProjectReportWorkItem[] {
-  if (snapshot.work_items?.length) return snapshot.work_items;
+  if (snapshot.work_items?.length) {
+    return snapshot.work_items.map((item) => {
+      const milestones = item.milestones?.filter(Boolean)
+        ?? (item.milestone ? [item.milestone] : [milestoneLabel(item.category)]);
+      const workDone = item.work_done?.filter(Boolean)
+        ?? (item.description ? [item.description] : []);
+      return {
+        ...item,
+        business_domain: item.business_domain || "项目级能力建设",
+        milestone: item.milestone || milestones[0],
+        milestones,
+        work_done: workDone,
+        current_state: item.current_state || item.status,
+        dependencies: item.dependencies || [],
+        risks: item.risks || [],
+        deliverables: item.deliverables || [],
+        verification: item.verification || [],
+        business_impact: item.business_impact || item.impact || "业务影响待确认。",
+      };
+    });
+  }
   return snapshot.issues.map((issue) => {
     const categories = issue.summary.work_types?.map(normalizeReportCategory).filter(Boolean) ?? [];
     const normalizedCategories = categories.length > 0 ? [...new Set(categories)] : [inferReportCategory(issue)];
@@ -211,12 +255,23 @@ export function getProjectReportWorkItems(snapshot: ProjectReportSnapshot): Proj
       issue_id: issue.issue_id || issue.identifier,
       identifier: issue.identifier,
       issue_title: issue.title,
+      business_domain: issue.business_domain || "项目级能力建设",
+      milestone: normalizedCategories.map((category) => milestoneLabel(category)).join(" / "),
+      milestones: normalizedCategories.map((category) => milestoneLabel(category)),
       category,
       categories: normalizedCategories,
       title: issue.title,
       description: workDone.join("；"),
+      work_done: workDone,
+      decision: "",
+      deliverables: [],
+      verification: [],
+      current_state: issue.summary.current_state || issue.status,
+      dependencies: issue.summary.dependencies || [],
+      risks: issue.summary.risks || [],
       outcome: issue.summary.outcome || "当前结果待确认。",
       impact: issue.summary.impact || "业务影响待确认。",
+      business_impact: issue.summary.impact || "业务影响待确认。",
       status: issue.status,
       evidence_ids: [...new Set(evidenceIds)],
       confidence: issue.summary.confidence || "low",
@@ -237,6 +292,50 @@ function fallbackAnalysisChanges(workItems: ProjectReportWorkItem[]) {
     confidence: item.confidence,
     source: "deterministic",
   }));
+}
+
+function fallbackBusinessDomains(workItems: ProjectReportWorkItem[]): ProjectReportBusinessDomain[] {
+  const domains = new Map<string, ProjectReportBusinessDomain>();
+  for (const item of workItems) {
+    const name = item.business_domain || "项目级能力建设";
+    const existing = domains.get(name);
+    const milestones = item.milestones?.length
+      ? item.milestones
+      : [item.milestone || milestoneLabel(item.category)];
+    const milestoneItems = milestones.map((title, index) => ({
+      id: `${item.id}-milestone-${index + 1}`,
+      business_domain: name,
+      title,
+      summary: item.description,
+      work_item_ids: [item.id],
+      status: item.status,
+      evidence_ids: item.evidence_ids,
+      confidence: item.confidence,
+      source: "deterministic",
+    }));
+    if (existing) {
+      existing.work_item_ids = [...new Set([...(existing.work_item_ids ?? []), item.id])];
+      existing.evidence_ids = [...new Set([...(existing.evidence_ids ?? []), ...(item.evidence_ids ?? [])])];
+      const known = new Set(existing.milestones?.map((milestone) => milestone.title) ?? []);
+      existing.milestones = [
+        ...(existing.milestones ?? []),
+        ...milestoneItems.filter((milestone) => !known.has(milestone.title)),
+      ];
+    } else {
+      domains.set(name, {
+        id: `domain-${name}`,
+        name,
+        summary: item.description,
+        work_item_ids: [item.id],
+        milestones: milestoneItems,
+        business_impact: item.business_impact || item.impact || "业务影响待确认。",
+        evidence_ids: item.evidence_ids,
+        confidence: item.confidence,
+        source: "deterministic",
+      });
+    }
+  }
+  return [...domains.values()];
 }
 
 /** Return project-level analysis while keeping old report snapshots readable. */
@@ -278,6 +377,12 @@ export function getProjectReportAnalysis(
     summary: existing?.summary || (workItems.length > 0
       ? "本周期的项目变化依据 issue 工作记录生成；业务收益和外部影响仍需结合实际验证确认。"
       : "本周期没有可用于项目变化分析的工作项。"),
+    business_domains: existing?.business_domains?.length
+      ? existing.business_domains
+      : fallbackBusinessDomains(workItems),
+    milestones: existing?.milestones?.length
+      ? existing.milestones
+      : fallbackBusinessDomains(workItems).flatMap((domain) => domain.milestones ?? []),
     changes: existing?.changes?.length ? existing.changes : fallbackAnalysisChanges(workItems),
     risks,
     next_steps: nextSteps,
@@ -296,12 +401,21 @@ export interface ProjectReportAudienceMarkdownLabels {
   summary: string;
   execution: string;
   business: string;
+  businessDomains: string;
+  milestone: string;
+  workItems: string;
   changes: string;
   risks: string;
   nextSteps: string;
   category: (category: string) => string;
   issue: (identifier: string, title: string) => string;
   description: string;
+  decision: string;
+  deliverables: string;
+  verification: string;
+  currentState: string;
+  dependencies: string;
+  itemRisks: string;
   outcome: string;
   status: string;
   impact: string;
@@ -312,6 +426,35 @@ export interface ProjectReportAudienceMarkdownLabels {
 
 function reportMarkdownEvidence(lines: string[], evidenceIds: string[] | undefined, labels: ProjectReportAudienceMarkdownLabels): void {
   lines.push(evidenceIds?.length ? `- ${labels.evidence}：${evidenceIds.join(", ")}` : `- ${labels.evidence}：${labels.noItems}`);
+}
+
+function reportMarkdownList(lines: string[], label: string, values: string[] | undefined): void {
+  if (!values?.length) return;
+  lines.push(`  - ${label}：${values.join("；")}`);
+}
+
+function reportMarkdownDomains(
+  lines: string[],
+  domains: ProjectReportBusinessDomain[] | undefined,
+  labels: ProjectReportAudienceMarkdownLabels,
+): void {
+  lines.push(`### ${labels.businessDomains}`, "");
+  if (!domains?.length) {
+    lines.push(`- ${labels.noItems}`, "");
+    return;
+  }
+  for (const domain of domains) {
+    lines.push(`#### ${domain.name}`, "", domain.summary);
+    if (domain.business_impact) lines.push(`- ${labels.impact}：${domain.business_impact}`);
+    reportMarkdownEvidence(lines, domain.evidence_ids, labels);
+    for (const milestone of domain.milestones ?? []) {
+      lines.push(`- **${labels.milestone}：${milestone.title}**（${milestone.status}）`);
+      lines.push(`  - ${milestone.summary}`);
+      if (milestone.work_item_ids?.length) lines.push(`  - ${labels.workItems}：${milestone.work_item_ids.join(", ")}`);
+      reportMarkdownEvidence(lines, milestone.evidence_ids, labels);
+    }
+    lines.push("");
+  }
 }
 
 /** Build one copyable audience section without requesting another AI analysis. */
@@ -328,9 +471,13 @@ export function buildProjectReportAudienceMarkdown(
     labels.range(snapshot.range_start, snapshot.range_end),
     "",
   ];
+  if (snapshot.project_title) {
+    lines.push(`**${labels.heading} · ${snapshot.project_title}**`, "");
+  }
 
   if (view === "summary") {
     lines.push(`### ${labels.summary}`, "", analysis.summary, "", labels.issueCount(snapshot.active_issue_count ?? snapshot.issues.length), "");
+    reportMarkdownDomains(lines, analysis.business_domains, labels);
     lines.push(`### ${labels.changes}`, "");
     const changes = analysis.changes?.slice(0, 5) ?? [];
     if (changes.length === 0) {
@@ -365,8 +512,16 @@ export function buildProjectReportAudienceMarkdown(
     } else {
       for (const item of workItems) {
         lines.push(`- **${labels.category(item.category)}** ${labels.issue(item.identifier, item.title)}`);
+        if (item.business_domain) lines.push(`  - ${labels.businessDomains}：${item.business_domain}`);
+        if (item.milestones?.length) lines.push(`  - ${labels.milestone}：${item.milestones.join("、")}`);
         lines.push(`  - ${labels.description}：${item.description}`);
+        if (item.decision) lines.push(`  - ${labels.decision}：${item.decision}`);
+        reportMarkdownList(lines, labels.deliverables, item.deliverables);
+        reportMarkdownList(lines, labels.verification, item.verification);
         lines.push(`  - ${labels.outcome}：${item.outcome}`);
+        lines.push(`  - ${labels.currentState}：${item.current_state || item.status}`);
+        reportMarkdownList(lines, labels.dependencies, item.dependencies);
+        reportMarkdownList(lines, labels.itemRisks, item.risks);
         lines.push(`  - ${labels.status}：${item.status}`);
         reportMarkdownEvidence(lines, item.evidence_ids, labels);
       }
@@ -374,7 +529,9 @@ export function buildProjectReportAudienceMarkdown(
     return lines.join("\n").trim();
   }
 
-  lines.push(`### ${labels.business}`, "", analysis.summary, "", `### ${labels.changes}`, "");
+  lines.push(`### ${labels.business}`, "", analysis.summary, "");
+  reportMarkdownDomains(lines, analysis.business_domains, labels);
+  lines.push(`### ${labels.changes}`, "");
   const changes = analysis.changes ?? [];
   if (changes.length === 0) {
     lines.push(`- ${labels.noItems}`);

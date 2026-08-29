@@ -22,7 +22,7 @@ const (
 	reportPromptMaxEvents       = 80
 	reportPromptMaxChars        = 24000
 	reportSummaryVersion        = 1
-	reportAnalysisVersion       = 1
+	reportAnalysisVersion       = 2
 )
 
 type ReportLLM interface {
@@ -55,6 +55,12 @@ type ReportIssueSummary struct {
 	OpenItems     []string `json:"open_items"`
 	WorkTypes     []string `json:"work_types,omitempty"`
 	WorkDone      []string `json:"work_done,omitempty"`
+	Decision      string   `json:"decision,omitempty"`
+	Deliverables  []string `json:"deliverables,omitempty"`
+	Verification  []string `json:"verification,omitempty"`
+	CurrentState  string   `json:"current_state,omitempty"`
+	Dependencies  []string `json:"dependencies,omitempty"`
+	Risks         []string `json:"risks,omitempty"`
 	Artifacts     []string `json:"artifacts,omitempty"`
 	Impact        string   `json:"impact,omitempty"`
 	EvidenceIDs   []string `json:"evidence_ids,omitempty"`
@@ -63,20 +69,55 @@ type ReportIssueSummary struct {
 }
 
 type ReportWorkItem struct {
-	ID          string   `json:"id"`
-	IssueID     string   `json:"issue_id"`
-	Identifier  string   `json:"identifier"`
-	IssueTitle  string   `json:"issue_title"`
-	Category    string   `json:"category"`
-	Categories  []string `json:"categories,omitempty"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Outcome     string   `json:"outcome"`
-	Impact      string   `json:"impact,omitempty"`
-	Status      string   `json:"status"`
-	EvidenceIDs []string `json:"evidence_ids,omitempty"`
-	Confidence  string   `json:"confidence,omitempty"`
-	Source      string   `json:"source,omitempty"`
+	ID             string   `json:"id"`
+	IssueID        string   `json:"issue_id"`
+	Identifier     string   `json:"identifier"`
+	IssueTitle     string   `json:"issue_title"`
+	BusinessDomain string   `json:"business_domain,omitempty"`
+	Milestone      string   `json:"milestone,omitempty"`
+	Milestones     []string `json:"milestones,omitempty"`
+	Category       string   `json:"category"`
+	Categories     []string `json:"categories,omitempty"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	WorkDone       []string `json:"work_done,omitempty"`
+	Decision       string   `json:"decision,omitempty"`
+	Deliverables   []string `json:"deliverables,omitempty"`
+	Verification   []string `json:"verification,omitempty"`
+	CurrentState   string   `json:"current_state,omitempty"`
+	Dependencies   []string `json:"dependencies,omitempty"`
+	Risks          []string `json:"risks,omitempty"`
+	Outcome        string   `json:"outcome"`
+	Impact         string   `json:"impact,omitempty"`
+	BusinessImpact string   `json:"business_impact,omitempty"`
+	Status         string   `json:"status"`
+	EvidenceIDs    []string `json:"evidence_ids,omitempty"`
+	Confidence     string   `json:"confidence,omitempty"`
+	Source         string   `json:"source,omitempty"`
+}
+
+type ReportMilestone struct {
+	ID             string   `json:"id"`
+	BusinessDomain string   `json:"business_domain"`
+	Title          string   `json:"title"`
+	Summary        string   `json:"summary"`
+	WorkItemIDs    []string `json:"work_item_ids,omitempty"`
+	Status         string   `json:"status"`
+	EvidenceIDs    []string `json:"evidence_ids,omitempty"`
+	Confidence     string   `json:"confidence,omitempty"`
+	Source         string   `json:"source,omitempty"`
+}
+
+type ReportBusinessDomain struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Summary        string            `json:"summary"`
+	WorkItemIDs    []string          `json:"work_item_ids,omitempty"`
+	Milestones     []ReportMilestone `json:"milestones,omitempty"`
+	BusinessImpact string            `json:"business_impact,omitempty"`
+	EvidenceIDs    []string          `json:"evidence_ids,omitempty"`
+	Confidence     string            `json:"confidence,omitempty"`
+	Source         string            `json:"source,omitempty"`
 }
 
 type ReportAnalysisNote struct {
@@ -100,13 +141,15 @@ type ReportProjectChange struct {
 }
 
 type ReportProjectAnalysis struct {
-	Summary     string                `json:"summary"`
-	Changes     []ReportProjectChange `json:"changes,omitempty"`
-	Risks       []ReportAnalysisNote  `json:"risks,omitempty"`
-	NextSteps   []ReportAnalysisNote  `json:"next_steps,omitempty"`
-	EvidenceIDs []string              `json:"evidence_ids,omitempty"`
-	Confidence  string                `json:"confidence,omitempty"`
-	Source      string                `json:"source,omitempty"`
+	Summary         string                 `json:"summary"`
+	BusinessDomains []ReportBusinessDomain `json:"business_domains,omitempty"`
+	Milestones      []ReportMilestone      `json:"milestones,omitempty"`
+	Changes         []ReportProjectChange  `json:"changes,omitempty"`
+	Risks           []ReportAnalysisNote   `json:"risks,omitempty"`
+	NextSteps       []ReportAnalysisNote   `json:"next_steps,omitempty"`
+	EvidenceIDs     []string               `json:"evidence_ids,omitempty"`
+	Confidence      string                 `json:"confidence,omitempty"`
+	Source          string                 `json:"source,omitempty"`
 }
 
 type ReportIssue struct {
@@ -114,6 +157,7 @@ type ReportIssue struct {
 	Identifier        string                `json:"identifier"`
 	Title             string                `json:"title"`
 	Description       string                `json:"description,omitempty"`
+	BusinessDomain    string                `json:"business_domain,omitempty"`
 	Status            string                `json:"status,omitempty"`
 	DueDate           string                `json:"due_date,omitempty"`
 	Summary           ReportIssueSummary    `json:"summary,omitempty"`
@@ -122,18 +166,20 @@ type ReportIssue struct {
 }
 
 type ReportSnapshot struct {
-	PeriodType       string                `json:"period_type"`
-	RangeStart       time.Time             `json:"range_start"`
-	RangeEnd         time.Time             `json:"range_end"`
-	Timezone         string                `json:"timezone"`
-	GeneratedAt      time.Time             `json:"generated_at"`
-	SummaryVersion   int                   `json:"summary_version"`
-	AnalysisVersion  int                   `json:"analysis_version,omitempty"`
-	Issues           []ReportIssue         `json:"issues"`
-	ActiveIssueCount int                   `json:"active_issue_count"`
-	WorkItems        []ReportWorkItem      `json:"work_items,omitempty"`
-	ProjectAnalysis  ReportProjectAnalysis `json:"project_analysis,omitempty"`
-	AnalysisWarnings []string              `json:"analysis_warnings,omitempty"`
+	PeriodType         string                `json:"period_type"`
+	RangeStart         time.Time             `json:"range_start"`
+	RangeEnd           time.Time             `json:"range_end"`
+	Timezone           string                `json:"timezone"`
+	ProjectTitle       string                `json:"project_title,omitempty"`
+	ProjectDescription string                `json:"project_description,omitempty"`
+	GeneratedAt        time.Time             `json:"generated_at"`
+	SummaryVersion     int                   `json:"summary_version"`
+	AnalysisVersion    int                   `json:"analysis_version,omitempty"`
+	Issues             []ReportIssue         `json:"issues"`
+	ActiveIssueCount   int                   `json:"active_issue_count"`
+	WorkItems          []ReportWorkItem      `json:"work_items,omitempty"`
+	ProjectAnalysis    ReportProjectAnalysis `json:"project_analysis,omitempty"`
+	AnalysisWarnings   []string              `json:"analysis_warnings,omitempty"`
 
 	// These fields are retained for existing consumers of report history. New
 	// issue-centered clients should use Issues and its current status values.
@@ -232,6 +278,10 @@ func (g *ReportGenerator) build(
 	snapshot.RangeStart = rangeStart.In(location)
 	snapshot.RangeEnd = rangeEnd.In(location)
 	snapshot.Timezone = timezoneName
+	snapshot.ProjectTitle = project.Title
+	if project.Description.Valid {
+		snapshot.ProjectDescription = project.Description.String
+	}
 
 	var content string
 	if len(snapshot.Issues) > 0 {
@@ -365,6 +415,24 @@ func mergeIssueSummary(ai, fallback ReportIssueSummary) ReportIssueSummary {
 	if len(ai.WorkDone) == 0 {
 		ai.WorkDone = fallback.WorkDone
 	}
+	if strings.TrimSpace(ai.Decision) == "" {
+		ai.Decision = fallback.Decision
+	}
+	if len(ai.Deliverables) == 0 {
+		ai.Deliverables = fallback.Deliverables
+	}
+	if len(ai.Verification) == 0 {
+		ai.Verification = fallback.Verification
+	}
+	if strings.TrimSpace(ai.CurrentState) == "" {
+		ai.CurrentState = fallback.CurrentState
+	}
+	if len(ai.Dependencies) == 0 {
+		ai.Dependencies = fallback.Dependencies
+	}
+	if len(ai.Risks) == 0 {
+		ai.Risks = fallback.Risks
+	}
 	if len(ai.Artifacts) == 0 {
 		ai.Artifacts = fallback.Artifacts
 	}
@@ -416,13 +484,15 @@ func (g *ReportGenerator) withProjectAnalysis(ctx context.Context, snapshot Repo
 }
 
 type reportProjectPrompt struct {
-	PeriodType       string               `json:"period_type"`
-	RangeStart       time.Time            `json:"range_start"`
-	RangeEnd         time.Time            `json:"range_end"`
-	Timezone         string               `json:"timezone"`
-	ActiveIssueCount int                  `json:"active_issue_count"`
-	WorkItems        []ReportWorkItem     `json:"work_items"`
-	Risks            []ReportAnalysisNote `json:"risks"`
+	PeriodType         string               `json:"period_type"`
+	RangeStart         time.Time            `json:"range_start"`
+	RangeEnd           time.Time            `json:"range_end"`
+	Timezone           string               `json:"timezone"`
+	ProjectTitle       string               `json:"project_title,omitempty"`
+	ProjectDescription string               `json:"project_description,omitempty"`
+	ActiveIssueCount   int                  `json:"active_issue_count"`
+	WorkItems          []ReportWorkItem     `json:"work_items"`
+	Risks              []ReportAnalysisNote `json:"risks"`
 }
 
 func prepareProjectPrompt(snapshot ReportSnapshot) reportProjectPrompt {
@@ -430,10 +500,19 @@ func prepareProjectPrompt(snapshot ReportSnapshot) reportProjectPrompt {
 	for _, item := range snapshot.WorkItems {
 		prepared := item
 		prepared.IssueTitle = sanitizeSensitiveText(prepared.IssueTitle)
+		prepared.BusinessDomain = sanitizeSensitiveText(prepared.BusinessDomain)
+		prepared.Milestone = sanitizeSensitiveText(prepared.Milestone)
 		prepared.Title = sanitizeSensitiveText(prepared.Title)
 		prepared.Description = sanitizeSensitiveText(prepared.Description)
+		prepared.Decision = sanitizeSensitiveText(prepared.Decision)
 		prepared.Outcome = sanitizeSensitiveText(prepared.Outcome)
 		prepared.Impact = sanitizeSensitiveText(prepared.Impact)
+		prepared.BusinessImpact = sanitizeSensitiveText(prepared.BusinessImpact)
+		prepared.WorkDone = sanitizeReportList(prepared.WorkDone)
+		prepared.Deliverables = sanitizeReportList(prepared.Deliverables)
+		prepared.Verification = sanitizeReportList(prepared.Verification)
+		prepared.Dependencies = sanitizeReportList(prepared.Dependencies)
+		prepared.Risks = sanitizeReportList(prepared.Risks)
 		workItems = append(workItems, prepared)
 	}
 	deterministic := snapshot.ProjectAnalysis
@@ -443,13 +522,15 @@ func prepareProjectPrompt(snapshot ReportSnapshot) reportProjectPrompt {
 		risks[index].Description = sanitizeSensitiveText(risks[index].Description)
 	}
 	return reportProjectPrompt{
-		PeriodType:       snapshot.PeriodType,
-		RangeStart:       snapshot.RangeStart,
-		RangeEnd:         snapshot.RangeEnd,
-		Timezone:         snapshot.Timezone,
-		ActiveIssueCount: snapshot.ActiveIssueCount,
-		WorkItems:        workItems,
-		Risks:            risks,
+		PeriodType:         snapshot.PeriodType,
+		RangeStart:         snapshot.RangeStart,
+		RangeEnd:           snapshot.RangeEnd,
+		Timezone:           snapshot.Timezone,
+		ProjectTitle:       sanitizeSensitiveText(snapshot.ProjectTitle),
+		ProjectDescription: sanitizeSensitiveText(snapshot.ProjectDescription),
+		ActiveIssueCount:   snapshot.ActiveIssueCount,
+		WorkItems:          workItems,
+		Risks:              risks,
 	}
 }
 
@@ -469,7 +550,21 @@ func parseProjectAnalysis(raw string, snapshot ReportSnapshot) (ReportProjectAna
 	if len(validEvidence) > 0 && len(analysis.EvidenceIDs) == 0 {
 		return ReportProjectAnalysis{}, fmt.Errorf("project analysis has no valid evidence")
 	}
+	validWorkItems := make(map[string]struct{}, len(snapshot.WorkItems))
+	for _, item := range snapshot.WorkItems {
+		if strings.TrimSpace(item.ID) != "" {
+			validWorkItems[item.ID] = struct{}{}
+		}
+	}
 	var err error
+	analysis.BusinessDomains, err = normalizeBusinessDomains(analysis.BusinessDomains, validEvidence, validWorkItems)
+	if err != nil {
+		return ReportProjectAnalysis{}, err
+	}
+	analysis.Milestones, err = normalizeMilestones(analysis.Milestones, validEvidence, validWorkItems)
+	if err != nil {
+		return ReportProjectAnalysis{}, err
+	}
 	analysis.Changes, err = normalizeProjectChanges(analysis.Changes, validEvidence)
 	if err != nil {
 		return ReportProjectAnalysis{}, err
@@ -485,6 +580,102 @@ func parseProjectAnalysis(raw string, snapshot ReportSnapshot) (ReportProjectAna
 	analysis.Confidence = normalizeReportConfidence(analysis.Confidence)
 	analysis.Source = "ai"
 	return analysis, nil
+}
+
+func normalizeBusinessDomains(domains []ReportBusinessDomain, validEvidence, validWorkItems map[string]struct{}) ([]ReportBusinessDomain, error) {
+	if len(domains) > 20 {
+		return nil, fmt.Errorf("too many business domains")
+	}
+	result := make([]ReportBusinessDomain, 0, len(domains))
+	for index, domain := range domains {
+		domain.ID = strings.TrimSpace(domain.ID)
+		if domain.ID == "" {
+			domain.ID = fmt.Sprintf("domain-%d", index+1)
+		}
+		domain.Name = strings.TrimSpace(sanitizeSensitiveText(domain.Name))
+		domain.Summary = strings.TrimSpace(sanitizeSensitiveText(domain.Summary))
+		domain.BusinessImpact = strings.TrimSpace(sanitizeSensitiveText(domain.BusinessImpact))
+		if domain.Name == "" || domain.Summary == "" || len(domain.Name) > 200 || len(domain.Summary) > 2000 || len(domain.BusinessImpact) > 1500 {
+			return nil, fmt.Errorf("invalid business domain at index %d", index)
+		}
+		domain.WorkItemIDs = validateReportIDs(domain.WorkItemIDs, validWorkItems, 50)
+		domain.EvidenceIDs = validateReportEvidenceIDs(domain.EvidenceIDs, validEvidence)
+		if len(validWorkItems) > 0 && len(domain.WorkItemIDs) == 0 {
+			return nil, fmt.Errorf("business domain %q has no valid work items", domain.Name)
+		}
+		if len(validEvidence) > 0 && len(domain.EvidenceIDs) == 0 {
+			return nil, fmt.Errorf("business domain %q has no valid evidence", domain.Name)
+		}
+		var err error
+		domain.Milestones, err = normalizeMilestones(domain.Milestones, validEvidence, validWorkItems)
+		if err != nil {
+			return nil, err
+		}
+		domain.Confidence = normalizeReportConfidence(domain.Confidence)
+		domain.Source = "ai"
+		result = append(result, domain)
+	}
+	return result, nil
+}
+
+func normalizeMilestones(milestones []ReportMilestone, validEvidence, validWorkItems map[string]struct{}) ([]ReportMilestone, error) {
+	if len(milestones) > 40 {
+		return nil, fmt.Errorf("too many milestones")
+	}
+	result := make([]ReportMilestone, 0, len(milestones))
+	for index, milestone := range milestones {
+		milestone.ID = strings.TrimSpace(milestone.ID)
+		if milestone.ID == "" {
+			milestone.ID = fmt.Sprintf("milestone-%d", index+1)
+		}
+		milestone.BusinessDomain = strings.TrimSpace(sanitizeSensitiveText(milestone.BusinessDomain))
+		milestone.Title = strings.TrimSpace(sanitizeSensitiveText(milestone.Title))
+		milestone.Summary = strings.TrimSpace(sanitizeSensitiveText(milestone.Summary))
+		milestone.Status = strings.TrimSpace(sanitizeSensitiveText(milestone.Status))
+		if milestone.Status == "" {
+			milestone.Status = "待确认"
+		}
+		if milestone.Title == "" || milestone.Summary == "" || len(milestone.Title) > 300 || len(milestone.Summary) > 2500 || len(milestone.BusinessDomain) > 200 {
+			return nil, fmt.Errorf("invalid milestone at index %d", index)
+		}
+		milestone.WorkItemIDs = validateReportIDs(milestone.WorkItemIDs, validWorkItems, 50)
+		milestone.EvidenceIDs = validateReportEvidenceIDs(milestone.EvidenceIDs, validEvidence)
+		if len(validWorkItems) > 0 && len(milestone.WorkItemIDs) == 0 {
+			return nil, fmt.Errorf("milestone %q has no valid work items", milestone.Title)
+		}
+		if len(validEvidence) > 0 && len(milestone.EvidenceIDs) == 0 {
+			return nil, fmt.Errorf("milestone %q has no valid evidence", milestone.Title)
+		}
+		milestone.Confidence = normalizeReportConfidence(milestone.Confidence)
+		milestone.Source = "ai"
+		result = append(result, milestone)
+	}
+	return result, nil
+}
+
+func validateReportIDs(ids []string, valid map[string]struct{}, limit int) []string {
+	result := make([]string, 0, minReportInt(len(ids), limit))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if len(valid) > 0 {
+			if _, ok := valid[id]; !ok {
+				continue
+			}
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
 }
 
 func normalizeProjectChanges(changes []ReportProjectChange, validEvidence map[string]struct{}) ([]ReportProjectChange, error) {
@@ -542,6 +733,12 @@ func normalizeAnalysisNotes(notes []ReportAnalysisNote, validEvidence map[string
 }
 
 func mergeProjectAnalysis(ai, fallback ReportProjectAnalysis) ReportProjectAnalysis {
+	if len(ai.BusinessDomains) == 0 {
+		ai.BusinessDomains = fallback.BusinessDomains
+	}
+	if len(ai.Milestones) == 0 {
+		ai.Milestones = fallback.Milestones
+	}
 	if len(ai.Changes) == 0 {
 		ai.Changes = fallback.Changes
 	}
@@ -826,31 +1023,56 @@ func reportStatusLabel(status string) string {
 	}[status]
 }
 
+func reportMilestoneLabel(category string) string {
+	switch normalizeReportCategory(category) {
+	case "bug_fix":
+		return "问题定位与修复"
+	case "feature":
+		return "功能与能力交付"
+	case "architecture":
+		return "架构与配置改造"
+	case "design":
+		return "需求与方案决策"
+	case "research":
+		return "调研与问题分析"
+	case "operations":
+		return "验证与发布运维"
+	case "discussion":
+		return "讨论与协作决策"
+	case "risk":
+		return "风险与依赖处理"
+	default:
+		return "工作推进"
+	}
+}
+
+func reportMilestonesForCategories(categories []string) []string {
+	result := make([]string, 0, len(categories))
+	for _, category := range categories {
+		result = appendUniqueReportText(result, reportMilestoneLabel(category), 8)
+	}
+	if len(result) == 0 {
+		return []string{"工作推进"}
+	}
+	return result
+}
+
 func buildReportWorkItems(snapshot ReportSnapshot) []ReportWorkItem {
 	items := make([]ReportWorkItem, 0, len(snapshot.Issues))
 	for _, issue := range snapshot.Issues {
 		fallbackCategories := inferReportCategories(issue)
 		categories := normalizeReportCategories(issue.Summary.WorkTypes, fallbackCategories)
 		category := categories[0]
-		workDone := make([]string, 0, 6)
+		workDone := make([]string, 0, 8)
 		for _, value := range issue.Summary.WorkDone {
 			value = strings.TrimSpace(sanitizeSensitiveText(value))
-			if value != "" && len(workDone) < 8 {
-				workDone = append(workDone, truncateReportText(value, 500))
-			}
+			workDone = appendUniqueReportText(workDone, truncateReportText(value, 500), 8)
 		}
 		if len(workDone) == 0 {
-			for _, event := range issue.Timeline {
-				if !event.InRange {
-					continue
-				}
-				if value := reportEventWorkDescription(event); value != "" && len(workDone) < 8 {
-					workDone = append(workDone, value)
-				}
-			}
+			workDone = reportIssueWorkFacts(issue)
 		}
 		if len(workDone) == 0 {
-			workDone = append(workDone, "已记录本周期工作活动，具体内容待人工确认。")
+			workDone = append(workDone, "当前没有可进一步拆分的具体工作内容，需人工确认。")
 		}
 		description := strings.Join(workDone, "；")
 		outcome := strings.TrimSpace(sanitizeSensitiveText(issue.Summary.Outcome))
@@ -866,6 +1088,10 @@ func buildReportWorkItems(snapshot ReportSnapshot) []ReportWorkItem {
 		if impact == "" {
 			impact = "业务影响待确认。"
 		}
+		businessImpact := strings.TrimSpace(sanitizeSensitiveText(issue.Summary.Impact))
+		if businessImpact == "" {
+			businessImpact = impact
+		}
 		evidenceIDs := validateReportEvidenceIDs(issue.Summary.EvidenceIDs, reportEvidenceSetForIssue(issue))
 		if len(evidenceIDs) == 0 {
 			evidenceIDs = reportIssueEvidence(issue)
@@ -874,21 +1100,60 @@ func buildReportWorkItems(snapshot ReportSnapshot) []ReportWorkItem {
 		if title == "" {
 			title = issue.Identifier
 		}
+		milestones := reportMilestonesForCategories(categories)
+		currentState := strings.TrimSpace(issue.Summary.CurrentState)
+		if currentState == "" {
+			currentState = reportStatusLabel(issue.Status)
+		}
+		if currentState == "" {
+			currentState = issue.Status
+		}
+		decision := strings.TrimSpace(sanitizeSensitiveText(issue.Summary.Decision))
+		if decision == "" {
+			decision = reportFirstMatchingFact(issue, []string{"方案", "决定", "确认", "拍板", "采用", "设计"})
+		}
+		deliverables := normalizeReportStringList(issue.Summary.Deliverables, 8, 1000)
+		if len(deliverables) == 0 {
+			deliverables = reportMatchingFacts(issue, []string{"实现", "新增", "完成", "支持", "产出", "生成", "上线"})
+		}
+		verification := normalizeReportStringList(issue.Summary.Verification, 8, 1000)
+		if len(verification) == 0 {
+			verification = reportMatchingFacts(issue, []string{"验证", "测试", "实测", "通过", "回归", "成功", "200"})
+		}
+		dependencies := normalizeReportStringList(issue.Summary.Dependencies, 8, 1000)
+		if len(dependencies) == 0 {
+			dependencies = reportMatchingFacts(issue, []string{"依赖", "等待", "前置", "阻塞", "需要"})
+		}
+		risks := normalizeReportStringList(issue.Summary.Risks, 8, 1000)
+		if len(risks) == 0 {
+			risks = reportMatchingFacts(issue, []string{"失败", "错误", "超时", "风险", "鉴权", "配置", "不稳定"})
+		}
 		items = append(items, ReportWorkItem{
-			ID:          issue.IssueID,
-			IssueID:     issue.IssueID,
-			Identifier:  issue.Identifier,
-			IssueTitle:  title,
-			Category:    category,
-			Categories:  categories,
-			Title:       title,
-			Description: description,
-			Outcome:     outcome,
-			Impact:      impact,
-			Status:      issue.Status,
-			EvidenceIDs: evidenceIDs,
-			Confidence:  confidence,
-			Source:      issue.Summary.SummarySource,
+			ID:             issue.IssueID,
+			IssueID:        issue.IssueID,
+			Identifier:     issue.Identifier,
+			IssueTitle:     title,
+			BusinessDomain: nonEmptyReportText(issue.BusinessDomain, reportUnclassifiedBusinessDomain),
+			Milestone:      milestones[0],
+			Milestones:     milestones,
+			Category:       category,
+			Categories:     categories,
+			Title:          title,
+			Description:    description,
+			WorkDone:       workDone,
+			Decision:       decision,
+			Deliverables:   deliverables,
+			Verification:   verification,
+			CurrentState:   currentState,
+			Dependencies:   dependencies,
+			Risks:          risks,
+			Outcome:        outcome,
+			Impact:         impact,
+			BusinessImpact: businessImpact,
+			Status:         issue.Status,
+			EvidenceIDs:    evidenceIDs,
+			Confidence:     confidence,
+			Source:         issue.Summary.SummarySource,
 		})
 	}
 	return items
@@ -922,44 +1187,144 @@ func reportUniqueEvidenceIDs(items []ReportWorkItem) []string {
 func deterministicProjectAnalysis(snapshot ReportSnapshot) ReportProjectAnalysis {
 	items := snapshot.WorkItems
 	analysis := ReportProjectAnalysis{
-		Summary:     "本周期的项目变化依据 issue 工作记录生成；业务收益和外部影响仍需结合实际验证确认。",
-		Changes:     make([]ReportProjectChange, 0, minReportInt(len(items), 20)),
-		Risks:       make([]ReportAnalysisNote, 0),
-		NextSteps:   make([]ReportAnalysisNote, 0),
-		EvidenceIDs: reportUniqueEvidenceIDs(items),
-		Confidence:  "medium",
-		Source:      "deterministic",
+		Summary:         "本周期的项目变化依据 issue 工作事实和里程碑生成；业务收益和外部影响仍需结合实际结果确认。",
+		BusinessDomains: make([]ReportBusinessDomain, 0),
+		Milestones:      make([]ReportMilestone, 0),
+		Changes:         make([]ReportProjectChange, 0, minReportInt(len(items), 20)),
+		Risks:           make([]ReportAnalysisNote, 0),
+		NextSteps:       make([]ReportAnalysisNote, 0),
+		EvidenceIDs:     reportUniqueEvidenceIDs(items),
+		Confidence:      "medium",
+		Source:          "deterministic",
 	}
-	seenChange := make(map[string]struct{})
-	seenRisk := make(map[string]struct{})
-	seenNext := make(map[string]struct{})
+
+	type milestoneAccumulator struct {
+		milestone    ReportMilestone
+		category     string
+		summaryParts []string
+	}
+	domainIndexes := make(map[string]int)
+	domainOrder := make([]string, 0)
+	milestones := make(map[string]*milestoneAccumulator)
+	milestoneOrder := make([]string, 0)
 	for _, item := range items {
-		changeKey := item.IssueID + ":" + item.Category
-		if _, exists := seenChange[changeKey]; !exists && len(analysis.Changes) < 20 {
-			seenChange[changeKey] = struct{}{}
-			impact := strings.TrimSpace(item.Impact)
-			if impact == "" {
-				impact = "业务影响待确认。"
-			}
-			analysis.Changes = append(analysis.Changes, ReportProjectChange{
-				ID:          "change-" + item.ID,
-				Category:    item.Category,
-				Title:       item.Title,
-				Description: item.Description,
-				Impact:      impact,
-				Status:      reportStatusLabel(item.Status),
-				EvidenceIDs: item.EvidenceIDs,
-				Confidence:  item.Confidence,
+		domainName := nonEmptyReportText(item.BusinessDomain, reportUnclassifiedBusinessDomain)
+		domainIndex, ok := domainIndexes[domainName]
+		if !ok {
+			domainIndex = len(analysis.BusinessDomains)
+			domainIndexes[domainName] = domainIndex
+			domainOrder = append(domainOrder, domainName)
+			analysis.BusinessDomains = append(analysis.BusinessDomains, ReportBusinessDomain{
+				ID:          "domain-" + slugReportID(domainName),
+				Name:        domainName,
+				Milestones:  make([]ReportMilestone, 0),
+				WorkItemIDs: make([]string, 0),
+				EvidenceIDs: make([]string, 0),
+				Confidence:  "medium",
 				Source:      "deterministic",
 			})
 		}
-		if item.Status == "blocked" {
-			key := item.IssueID + ":blocked"
+		domain := &analysis.BusinessDomains[domainIndex]
+		domain.WorkItemIDs = appendUniqueReportText(domain.WorkItemIDs, item.ID, 50)
+		for _, evidenceID := range item.EvidenceIDs {
+			domain.EvidenceIDs = appendUniqueReportText(domain.EvidenceIDs, evidenceID, 20)
+		}
+		if domain.BusinessImpact == "" || domain.BusinessImpact == "业务影响待确认。" {
+			domain.BusinessImpact = nonEmptyReportText(item.BusinessImpact, item.Impact)
+		}
+
+		categories := item.Categories
+		if len(categories) == 0 {
+			categories = []string{item.Category}
+		}
+		for _, category := range categories {
+			category = normalizeReportCategory(category)
+			key := domainName + ":" + category
+			acc, ok := milestones[key]
+			if !ok {
+				acc = &milestoneAccumulator{
+					milestone: ReportMilestone{
+						ID:             "milestone-" + slugReportID(key),
+						BusinessDomain: domainName,
+						Title:          reportMilestoneLabel(category),
+						WorkItemIDs:    make([]string, 0),
+						EvidenceIDs:    make([]string, 0),
+						Status:         item.Status,
+						Confidence:     item.Confidence,
+						Source:         "deterministic",
+					},
+					category:     category,
+					summaryParts: make([]string, 0, 4),
+				}
+				milestones[key] = acc
+				milestoneOrder = append(milestoneOrder, key)
+			}
+			acc.milestone.WorkItemIDs = appendUniqueReportText(acc.milestone.WorkItemIDs, item.ID, 50)
+			acc.milestone.Status = aggregateReportStatus(acc.milestone.Status, item.Status)
+			for _, evidenceID := range item.EvidenceIDs {
+				acc.milestone.EvidenceIDs = appendUniqueReportText(acc.milestone.EvidenceIDs, evidenceID, 20)
+			}
+			itemSummary := item.Title
+			if item.Description != "" {
+				itemSummary += "：" + item.Description
+			}
+			acc.summaryParts = appendUniqueReportText(acc.summaryParts, itemSummary, 4)
+		}
+	}
+
+	for _, domainName := range domainOrder {
+		domainIndex := domainIndexes[domainName]
+		domain := &analysis.BusinessDomains[domainIndex]
+		for _, key := range milestoneOrder {
+			acc := milestones[key]
+			if acc == nil || acc.milestone.BusinessDomain != domain.Name {
+				continue
+			}
+			acc.milestone.Summary = strings.Join(acc.summaryParts, "；")
+			analysis.Milestones = append(analysis.Milestones, acc.milestone)
+			domain.Milestones = append(domain.Milestones, acc.milestone)
+			analysis.Changes = append(analysis.Changes, ReportProjectChange{
+				ID:          acc.milestone.ID,
+				Category:    acc.category,
+				Title:       domain.Name + " · " + acc.milestone.Title,
+				Description: acc.milestone.Summary,
+				Impact:      nonEmptyReportText(domain.BusinessImpact, "业务影响待确认。"),
+				Status:      reportStatusOrUnknown(acc.milestone.Status),
+				EvidenceIDs: acc.milestone.EvidenceIDs,
+				Confidence:  acc.milestone.Confidence,
+				Source:      "deterministic",
+			})
+		}
+		domain.Summary = reportDomainSummary(*domain)
+	}
+
+	seenRisk := make(map[string]struct{})
+	seenNext := make(map[string]struct{})
+	for _, item := range items {
+		for _, risk := range item.Risks {
+			key := item.ID + ":" + risk
 			if _, exists := seenRisk[key]; !exists && len(analysis.Risks) < 20 {
 				seenRisk[key] = struct{}{}
 				analysis.Risks = append(analysis.Risks, ReportAnalysisNote{
+					Title:       item.Identifier + " 风险",
+					Description: risk,
+					EvidenceIDs: item.EvidenceIDs,
+					Confidence:  item.Confidence,
+					Source:      "deterministic",
+				})
+			}
+		}
+		if item.Status == "blocked" || len(item.Dependencies) > 0 {
+			key := item.IssueID + ":blocked"
+			if _, exists := seenRisk[key]; !exists && len(analysis.Risks) < 20 {
+				seenRisk[key] = struct{}{}
+				description := "该 issue 当前处于阻塞状态，解除依赖后才能继续推进。"
+				if item.Status != "blocked" {
+					description = "该工作项存在显式依赖，完成前置条件后才能继续推进。"
+				}
+				analysis.Risks = append(analysis.Risks, ReportAnalysisNote{
 					Title:       item.Identifier + " 存在阻塞",
-					Description: "该 issue 当前处于阻塞状态，解除依赖后才能继续推进。",
+					Description: description,
 					EvidenceIDs: item.EvidenceIDs,
 					Confidence:  item.Confidence,
 					Source:      "deterministic",
@@ -986,8 +1351,58 @@ func deterministicProjectAnalysis(snapshot ReportSnapshot) ReportProjectAnalysis
 	}
 	if len(items) == 0 {
 		analysis.Summary = "本周期没有可用于项目变化分析的工作项。"
+	} else {
+		domainNames := make([]string, 0, len(analysis.BusinessDomains))
+		milestoneNames := make([]string, 0, minReportInt(len(analysis.Milestones), 5))
+		for _, domain := range analysis.BusinessDomains {
+			domainNames = append(domainNames, domain.Name)
+		}
+		for _, milestone := range analysis.Milestones {
+			milestoneNames = appendUniqueReportText(milestoneNames, milestone.Title, 5)
+		}
+		analysis.Summary = fmt.Sprintf("本周期围绕%s推进，形成了%s等里程碑。已确认的变化来自工作事实和验证记录；业务收益待确认。", strings.Join(domainNames, "、"), strings.Join(milestoneNames, "、"))
 	}
 	return analysis
+}
+
+func slugReportID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "unclassified"
+	}
+	return truncateReportText(value, 80)
+}
+
+func aggregateReportStatus(current, next string) string {
+	if current == "blocked" || next == "blocked" {
+		return "blocked"
+	}
+	if current == "in_progress" || next == "in_progress" {
+		return "in_progress"
+	}
+	if current == "in_review" || next == "in_review" {
+		return "in_review"
+	}
+	if current == "todo" || current == "backlog" || next == "todo" || next == "backlog" {
+		return "in_progress"
+	}
+	if current == "cancelled" && next == "cancelled" {
+		return "cancelled"
+	}
+	return "done"
+}
+
+func reportDomainSummary(domain ReportBusinessDomain) string {
+	if len(domain.Milestones) == 0 {
+		return "本周期记录了该业务域的工作事实，具体影响待确认。"
+	}
+	titles := make([]string, 0, len(domain.Milestones))
+	for _, milestone := range domain.Milestones {
+		titles = appendUniqueReportText(titles, milestone.Title, 6)
+	}
+	return fmt.Sprintf("本周期推进%s；业务影响：%s", strings.Join(titles, "、"), nonEmptyReportText(domain.BusinessImpact, "待确认"))
 }
 
 type reportPromptSnapshot struct {
@@ -1032,6 +1447,8 @@ func prepareReportPrompt(snapshot ReportSnapshot) reportPromptSnapshot {
 func sanitizeReportIssueSummary(summary ReportIssueSummary) ReportIssueSummary {
 	summary.Problem = sanitizeSensitiveText(summary.Problem)
 	summary.Outcome = sanitizeSensitiveText(summary.Outcome)
+	summary.Decision = sanitizeSensitiveText(summary.Decision)
+	summary.CurrentState = sanitizeSensitiveText(summary.CurrentState)
 	summary.Impact = sanitizeSensitiveText(summary.Impact)
 	for index := range summary.Actions {
 		summary.Actions[index] = sanitizeSensitiveText(summary.Actions[index])
@@ -1045,10 +1462,33 @@ func sanitizeReportIssueSummary(summary ReportIssueSummary) ReportIssueSummary {
 	for index := range summary.WorkDone {
 		summary.WorkDone[index] = sanitizeSensitiveText(summary.WorkDone[index])
 	}
+	for index := range summary.Deliverables {
+		summary.Deliverables[index] = sanitizeSensitiveText(summary.Deliverables[index])
+	}
+	for index := range summary.Verification {
+		summary.Verification[index] = sanitizeSensitiveText(summary.Verification[index])
+	}
+	for index := range summary.Dependencies {
+		summary.Dependencies[index] = sanitizeSensitiveText(summary.Dependencies[index])
+	}
+	for index := range summary.Risks {
+		summary.Risks[index] = sanitizeSensitiveText(summary.Risks[index])
+	}
 	for index := range summary.Artifacts {
 		summary.Artifacts[index] = sanitizeSensitiveText(summary.Artifacts[index])
 	}
 	return summary
+}
+
+func sanitizeReportList(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(sanitizeSensitiveText(value))
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func cloneAndLimitTimeline(events []ReportTimelineEvent, truncated *bool) []ReportTimelineEvent {
@@ -1189,7 +1629,33 @@ var (
 	reportTokenPattern            = regexp.MustCompile(`(?i)\b(?:ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b`)
 	reportSecretAssignmentPattern = regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|passwd|secret|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^,\s}]+)`)
 	reportPrivateKeyPattern       = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
+	reportBusinessPrefixPattern   = regexp.MustCompile(`^\s*(?:【([^】]+)】|\[([^\]]+)\])`)
+	reportBusinessLabelPattern    = regexp.MustCompile(`(?i)(?:业务域|业务|business)\s*[:：]\s*([^\n,，;；]+)`)
 )
+
+const reportUnclassifiedBusinessDomain = "项目级能力建设"
+
+func inferReportBusinessDomain(title, description string) string {
+	for _, value := range []string{title, description} {
+		value = strings.TrimSpace(sanitizeSensitiveText(value))
+		if value == "" {
+			continue
+		}
+		if matches := reportBusinessPrefixPattern.FindStringSubmatch(value); len(matches) > 0 {
+			for index := 1; index < len(matches); index++ {
+				if domain := strings.TrimSpace(matches[index]); domain != "" {
+					return truncateReportText(domain, 120)
+				}
+			}
+		}
+		if matches := reportBusinessLabelPattern.FindStringSubmatch(value); len(matches) == 2 {
+			if domain := strings.TrimSpace(matches[1]); domain != "" {
+				return truncateReportText(domain, 120)
+			}
+		}
+	}
+	return reportUnclassifiedBusinessDomain
+}
 
 func sanitizeSensitiveText(value string) string {
 	if value == "" {
@@ -1264,11 +1730,17 @@ func parseIssueSummaries(raw string, issues []ReportIssue) (map[string]ReportIss
 		summary.OpenItems = normalizeReportStringList(summary.OpenItems, 8, 1000)
 		summary.WorkTypes = normalizeReportStringList(summary.WorkTypes, 8, 100)
 		summary.WorkDone = normalizeReportStringList(summary.WorkDone, 8, 1000)
+		summary.Deliverables = normalizeReportStringList(summary.Deliverables, 8, 1000)
+		summary.Verification = normalizeReportStringList(summary.Verification, 8, 1000)
+		summary.Dependencies = normalizeReportStringList(summary.Dependencies, 8, 1000)
+		summary.Risks = normalizeReportStringList(summary.Risks, 8, 1000)
 		summary.Artifacts = normalizeReportStringList(summary.Artifacts, 8, 1000)
 		summary.Problem = strings.TrimSpace(sanitizeSensitiveText(summary.Problem))
 		summary.Outcome = strings.TrimSpace(sanitizeSensitiveText(summary.Outcome))
+		summary.Decision = strings.TrimSpace(sanitizeSensitiveText(summary.Decision))
+		summary.CurrentState = strings.TrimSpace(sanitizeSensitiveText(summary.CurrentState))
 		summary.Impact = strings.TrimSpace(sanitizeSensitiveText(summary.Impact))
-		if len(summary.Problem) > 2000 || len(summary.Outcome) > 2000 || len(summary.Impact) > 1500 {
+		if len(summary.Problem) > 2000 || len(summary.Outcome) > 2000 || len(summary.Decision) > 1500 || len(summary.CurrentState) > 500 || len(summary.Impact) > 1500 {
 			continue
 		}
 		issue := issuesByID[summary.IssueID]
@@ -1311,86 +1783,133 @@ func deterministicIssueSummary(issue ReportIssue) ReportIssueSummary {
 		statusLabel = issue.Status
 	}
 
-	commentCount := 0
-	activityCount := 0
-	statusChanges := make([]string, 0, 4)
-	taskCount := 0
-	for _, event := range issue.Timeline {
-		if !event.InRange {
-			continue
-		}
-		switch event.Type {
-		case "comment":
-			commentCount++
-		case "activity_log":
-			activityCount++
-		case "issue_status_history":
-			var details struct {
-				From string `json:"from_status"`
-				To   string `json:"to_status"`
-			}
-			if json.Unmarshal(event.Details, &details) == nil && details.From != "" && details.To != "" {
-				statusChanges = append(statusChanges, fmt.Sprintf("状态从 %s 变更为 %s", details.From, details.To))
-			}
-		case "agent_task_queue":
-			taskCount++
-		}
-	}
-
-	problem := fmt.Sprintf("本周期有 %d 条工作记录，当前状态为%s。", commentCount+activityCount+len(statusChanges)+taskCount, statusLabel)
-	if len(issue.Timeline) == 0 {
-		problem = fmt.Sprintf("当前状态为%s。", statusLabel)
-	}
-	actions := make([]string, 0, 4)
-	actions = append(actions, statusChanges...)
-	if commentCount > 0 {
-		actions = append(actions, fmt.Sprintf("处理 %d 条新增讨论。", commentCount))
-	}
-	if taskCount > 0 {
-		actions = append(actions, fmt.Sprintf("记录 %d 次 agent task 执行。", taskCount))
-	}
-	if activityCount > 0 {
-		actions = append(actions, fmt.Sprintf("记录 %d 条操作日志。", activityCount))
-	}
-	if len(actions) == 0 {
-		actions = append(actions, "本周期没有可进一步拆分的操作记录。")
-	}
-
-	workDone := make([]string, 0, 8)
-	for _, event := range issue.Timeline {
-		if !event.InRange || len(workDone) >= 8 {
-			continue
-		}
-		if value := reportEventWorkDescription(event); value != "" {
-			workDone = append(workDone, value)
-		}
-	}
+	workDone := reportIssueWorkFacts(issue)
 	if len(workDone) == 0 {
-		workDone = append(workDone, "已记录本周期工作活动，具体内容待人工确认。")
+		workDone = []string{"当前没有可进一步拆分的具体工作内容，需人工确认。"}
 	}
-
-	openItems := make([]string, 0, 2)
-	switch issue.Status {
-	case "blocked":
-		openItems = append(openItems, "解除阻塞并确认后续执行条件。")
-	case "done", "cancelled":
-		// Terminal states have no default follow-up.
-	default:
-		openItems = append(openItems, "继续推进该 issue 并在完成后更新状态。")
+	actions := append([]string(nil), workDone...)
+	if len(actions) > 8 {
+		actions = actions[:8]
+	}
+	problem := reportIssueProblem(issue, statusLabel, workDone)
+	lastFact := workDone[len(workDone)-1]
+	outcome := fmt.Sprintf("当前状态：%s。", statusLabel)
+	if lastFact != "" {
+		outcome += " 最近记录：" + lastFact
+	}
+	openItems := reportIssueOpenItems(issue)
+	decision := reportFirstMatchingFact(issue, []string{"方案", "决定", "确认", "拍板", "采用", "设计"})
+	deliverables := reportMatchingFacts(issue, []string{"实现", "新增", "完成", "支持", "产出", "生成", "上线"})
+	verification := reportMatchingFacts(issue, []string{"验证", "测试", "实测", "通过", "回归", "成功", "200"})
+	dependencies := reportMatchingFacts(issue, []string{"依赖", "等待", "前置", "阻塞", "需要"})
+	risks := reportMatchingFacts(issue, []string{"失败", "错误", "超时", "风险", "鉴权", "配置", "不稳定"})
+	currentState := statusLabel
+	if currentState == "" {
+		currentState = issue.Status
 	}
 	return ReportIssueSummary{
 		IssueID:       issue.IssueID,
 		Problem:       problem,
 		Actions:       actions,
-		Outcome:       fmt.Sprintf("当前状态：%s。", statusLabel),
+		Outcome:       outcome,
 		OpenItems:     openItems,
 		WorkTypes:     inferReportCategories(issue),
 		WorkDone:      workDone,
+		Decision:      decision,
+		Deliverables:  deliverables,
+		Verification:  verification,
+		CurrentState:  currentState,
+		Dependencies:  dependencies,
+		Risks:         risks,
 		Impact:        "业务影响待确认。",
 		EvidenceIDs:   reportIssueEvidence(issue),
-		Confidence:    "low",
+		Confidence:    reportSummaryConfidence(issue, workDone),
 		SummarySource: "deterministic",
 	}
+}
+
+func reportIssueWorkFacts(issue ReportIssue) []string {
+	facts := make([]string, 0, 8)
+	for _, event := range issue.Timeline {
+		if !event.InRange {
+			continue
+		}
+		if value := reportEventWorkDescription(event); value != "" {
+			facts = appendUniqueReportText(facts, value, 8)
+		}
+	}
+	return facts
+}
+
+func reportIssueProblem(issue ReportIssue, statusLabel string, workDone []string) string {
+	if description := strings.TrimSpace(sanitizeSensitiveText(issue.Description)); description != "" {
+		return truncateReportText(strings.Join(strings.Fields(description), " "), 800)
+	}
+	if len(workDone) > 0 && workDone[0] != "" {
+		return "本周期围绕「" + strings.TrimSpace(issue.Title) + "」推进：" + workDone[0]
+	}
+	return fmt.Sprintf("围绕「%s」推进，当前状态为%s。", issue.Title, statusLabel)
+}
+
+func reportIssueOpenItems(issue ReportIssue) []string {
+	items := make([]string, 0, 3)
+	switch issue.Status {
+	case "blocked":
+		items = append(items, "解除阻塞并确认后续执行条件。")
+	case "done", "cancelled":
+		// Terminal states have no default follow-up.
+	default:
+		items = append(items, "继续推进该 issue，并在完成后更新状态。")
+	}
+	for _, fact := range reportMatchingFacts(issue, []string{"待确认", "待审核", "TODO", "下一步", "需要"}) {
+		items = appendUniqueReportText(items, "待确认："+fact, 3)
+	}
+	return items
+}
+
+func reportMatchingFacts(issue ReportIssue, keywords []string) []string {
+	result := make([]string, 0, 4)
+	for _, fact := range reportIssueWorkFacts(issue) {
+		lower := strings.ToLower(fact)
+		for _, keyword := range keywords {
+			if strings.Contains(lower, strings.ToLower(keyword)) {
+				result = appendUniqueReportText(result, fact, 4)
+				break
+			}
+		}
+	}
+	return result
+}
+
+func reportFirstMatchingFact(issue ReportIssue, keywords []string) string {
+	values := reportMatchingFacts(issue, keywords)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func appendUniqueReportText(values []string, value string, limit int) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(values) >= limit {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func reportSummaryConfidence(issue ReportIssue, workDone []string) string {
+	if len(workDone) == 0 {
+		return "low"
+	}
+	if len(issue.Timeline) > 0 {
+		return "medium"
+	}
+	return "low"
 }
 
 func deterministicReportFallback(snapshot ReportSnapshot, reason string, err error) (string, error) {
@@ -1483,10 +2002,19 @@ func buildIssueReportContent(snapshot ReportSnapshot) string {
 
 	var content strings.Builder
 	content.WriteString("## 报告\n\n")
-	content.WriteString(fmt.Sprintf("本周期共记录 %d 个活跃 issue 的工作过程。\n\n", len(snapshot.Issues)))
+	if snapshot.ProjectTitle != "" {
+		fmt.Fprintf(&content, "**项目：** %s\n\n", snapshot.ProjectTitle)
+	}
+	content.WriteString("**报告结论：** ")
+	content.WriteString(snapshot.ProjectAnalysis.Summary)
+	content.WriteString("\n\n")
+	content.WriteString("以下正文按事实、里程碑和领导视图组织；活动数量仅保留在文末指标附录。\n\n")
 	content.WriteString("## Issue 工作摘要\n\n")
 	for _, issue := range snapshot.Issues {
 		fmt.Fprintf(&content, "### %s：%s\n\n", issue.Identifier, issue.Title)
+		if issue.BusinessDomain != "" {
+			fmt.Fprintf(&content, "- 业务域：%s\n", issue.BusinessDomain)
+		}
 		fmt.Fprintf(&content, "- 问题：%s\n", issue.Summary.Problem)
 		content.WriteString("- 操作：\n")
 		for _, action := range issue.Summary.Actions {
@@ -1504,26 +2032,22 @@ func buildIssueReportContent(snapshot ReportSnapshot) string {
 		}
 	}
 
+	content.WriteString("## 按业务域和里程碑\n\n")
+	appendReportBusinessDomains(&content, snapshot.ProjectAnalysis.BusinessDomains)
+
 	content.WriteString("## 工作执行版\n\n")
 	if len(snapshot.WorkItems) == 0 {
 		content.WriteString("- 本周期没有可列出的工作项。\n\n")
 	} else {
 		for _, item := range snapshot.WorkItems {
-			fmt.Fprintf(&content, "- **%s** %s：%s\n", reportCategoryLabel(item.Category), item.Identifier, item.Title)
-			fmt.Fprintf(&content, "  - 实际工作：%s\n", item.Description)
-			fmt.Fprintf(&content, "  - 结果：%s\n", item.Outcome)
-			fmt.Fprintf(&content, "  - 状态：%s\n", reportStatusOrUnknown(item.Status))
-			if len(item.EvidenceIDs) == 0 {
-				content.WriteString("  - 证据：待人工确认\n")
-			} else {
-				fmt.Fprintf(&content, "  - 证据：%s\n", strings.Join(item.EvidenceIDs, ", "))
-			}
+			appendReportWorkItem(&content, item, true)
 		}
 		content.WriteString("\n")
 	}
 
 	content.WriteString("## 项目业务推进版\n\n")
 	content.WriteString(snapshot.ProjectAnalysis.Summary + "\n\n")
+	appendReportBusinessDomains(&content, snapshot.ProjectAnalysis.BusinessDomains)
 	if len(snapshot.ProjectAnalysis.Changes) == 0 {
 		content.WriteString("- 暂无可确认的项目能力变化。\n\n")
 	} else {
@@ -1564,6 +2088,69 @@ func buildIssueReportContent(snapshot ReportSnapshot) string {
 		content.WriteString("暂无活跃 issue。\n")
 	}
 	return buildReportContent(content.String(), snapshot)
+}
+
+func appendReportBusinessDomains(content *strings.Builder, domains []ReportBusinessDomain) {
+	if len(domains) == 0 {
+		content.WriteString("- 暂无已识别的业务域；请人工补充业务归属。\n\n")
+		return
+	}
+	for _, domain := range domains {
+		fmt.Fprintf(content, "### %s\n\n", domain.Name)
+		if domain.Summary != "" {
+			fmt.Fprintf(content, "%s\n\n", domain.Summary)
+		}
+		if domain.BusinessImpact != "" {
+			fmt.Fprintf(content, "- 业务影响：%s\n", domain.BusinessImpact)
+		}
+		if len(domain.EvidenceIDs) > 0 {
+			fmt.Fprintf(content, "- 证据：%s\n", strings.Join(domain.EvidenceIDs, ", "))
+		}
+		for _, milestone := range domain.Milestones {
+			fmt.Fprintf(content, "- **里程碑：%s**（%s）\n", milestone.Title, reportStatusOrUnknown(milestone.Status))
+			if milestone.Summary != "" {
+				fmt.Fprintf(content, "  - 变化：%s\n", milestone.Summary)
+			}
+			if len(milestone.WorkItemIDs) > 0 {
+				fmt.Fprintf(content, "  - 工作项：%s\n", strings.Join(milestone.WorkItemIDs, ", "))
+			}
+			if len(milestone.EvidenceIDs) > 0 {
+				fmt.Fprintf(content, "  - 证据：%s\n", strings.Join(milestone.EvidenceIDs, ", "))
+			}
+		}
+		content.WriteString("\n")
+	}
+}
+
+func appendReportWorkItem(content *strings.Builder, item ReportWorkItem, detailed bool) {
+	fmt.Fprintf(content, "- **%s** %s：%s\n", reportCategoryLabel(item.Category), item.Identifier, item.Title)
+	if item.BusinessDomain != "" {
+		fmt.Fprintf(content, "  - 业务域：%s\n", item.BusinessDomain)
+	}
+	if len(item.Milestones) > 0 {
+		fmt.Fprintf(content, "  - 里程碑：%s\n", strings.Join(item.Milestones, "、"))
+	}
+	if item.Description != "" {
+		fmt.Fprintf(content, "  - 实际工作：%s\n", item.Description)
+	}
+	if detailed && item.Decision != "" {
+		fmt.Fprintf(content, "  - 决策：%s\n", item.Decision)
+	}
+	appendReportList(content, "产出", item.Deliverables)
+	appendReportList(content, "验证", item.Verification)
+	fmt.Fprintf(content, "  - 结果：%s\n", item.Outcome)
+	fmt.Fprintf(content, "  - 当前状态：%s\n", nonEmptyReportText(item.CurrentState, reportStatusOrUnknown(item.Status)))
+	appendReportList(content, "依赖", item.Dependencies)
+	appendReportList(content, "风险", item.Risks)
+	fmt.Fprintf(content, "  - 业务影响：%s\n", nonEmptyReportText(item.BusinessImpact, nonEmptyReportText(item.Impact, "业务影响待确认。")))
+	appendReportEvidenceLine(content, item.EvidenceIDs)
+}
+
+func appendReportList(content *strings.Builder, label string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	fmt.Fprintf(content, "  - %s：%s\n", label, strings.Join(values, "；"))
 }
 
 func reportCategoryLabel(category string) string {
@@ -1680,15 +2267,15 @@ func buildReportContent(modelContent string, snapshot ReportSnapshot) string {
 - 取消事项：%d`, content, snapshot.CompletedCount, snapshot.InProgressCount, snapshot.BlockedCount, snapshot.OverdueCount, snapshot.CancelledCount)
 }
 
-const reportSystemPrompt = `You are an issue-centered project reporting assistant. Return exactly one JSON object shaped {"summaries":[{"issue_id":"...","problem":"...","actions":["..."],"outcome":"...","open_items":["..."],"work_types":["bug_fix|feature|architecture|design|research|operations|discussion|risk|misc"],"work_done":["..."],"artifacts":["..."],"impact":"...","evidence_ids":["..."],"confidence":"high|medium|low"}]}.
+const reportSystemPrompt = `You are an issue-centered project reporting assistant. Return exactly one JSON object shaped {"summaries":[{"issue_id":"...","problem":"...","actions":["..."],"outcome":"...","open_items":["..."],"work_types":["bug_fix|feature|architecture|design|research|operations|discussion|risk|misc"],"work_done":["..."],"decision":"...","deliverables":["..."],"verification":["..."],"current_state":"...","dependencies":["..."],"risks":["..."],"artifacts":["..."],"impact":"...","evidence_ids":["..."],"confidence":"high|medium|low"}]}.
 Do not wrap the JSON in Markdown code fences. Do not add prose before or after the JSON object.
 Return at most one summary for each supplied issue_id. Use the exact supplied issue_id; never invent, merge, or omit an issue silently. Every field is required. actions and open_items must be arrays of concise strings.
-Summarize only the supplied issue timeline. A timeline entry with in_range=false is historical context and must not be counted as work in the requested period. The optional work fields must describe actual work evidenced by in-range events. evidence_ids must contain only IDs from that issue's in-range timeline. When optional work fields cannot be established, return empty arrays or a low confidence instead of guessing.
+Summarize only the supplied issue timeline. A timeline entry with in_range=false is historical context and must not be counted as work in the requested period. The optional work fields must describe actual work evidenced by in-range events: decision means a confirmed choice, deliverables means concrete outputs, verification means tests or observed validation, dependencies and risks mean explicit constraints or failures. evidence_ids must contain only IDs from that issue's in-range timeline. When optional work fields cannot be established, return empty arrays or a low confidence instead of guessing.
 Do not reveal or repeat tokens, passwords, API keys, authorization headers, private keys, or other secrets even if they appear in the input.
 Do not introduce other projects, periods, numbers, status changes, or assumptions. The AI's role is wording only. Write concise, professional Chinese.`
 
-const projectReportSystemPrompt = `You are a project reporting analyst. Return exactly one JSON object shaped {"summary":"...","changes":[],"risks":[],"next_steps":[],"evidence_ids":[],"confidence":"high|medium|low"}.
-Each changes item must have category, title, description, impact, status, and evidence_ids. Each risks and next_steps item must have title, description, and evidence_ids. Use only the supplied work_items and their evidence IDs. Every change, risk, and next step must cite at least one supplied evidence ID; if the business impact is not explicit in the evidence, say "业务影响待确认" instead of guessing.
+const projectReportSystemPrompt = `You are a project reporting analyst. Return exactly one JSON object shaped {"summary":"...","business_domains":[],"milestones":[],"changes":[],"risks":[],"next_steps":[],"evidence_ids":[],"confidence":"high|medium|low"}.
+Each business_domains item must have name, summary, work_item_ids, milestones, business_impact, and evidence_ids. Each milestone must have business_domain, title, summary, work_item_ids, status, and evidence_ids. Each changes item must have category, title, description, impact, status, and evidence_ids. Each risks and next_steps item must have title, description, and evidence_ids. Use only the supplied project, work_items, and their evidence IDs. Every domain, milestone, change, risk, and next step must cite at least one supplied evidence ID and only supplied work_item_ids; if the business impact is not explicit in the evidence, say "业务影响待确认" instead of guessing.
 Do not introduce other projects, periods, numbers, statuses, milestones, users, or facts. Do not treat comment or task counts as business value. Do not reveal secrets. Do not wrap the JSON in Markdown fences or add prose. Write concise, professional Chinese.`
 
 const legacyReportSystemPrompt = `You are a project reporting assistant. Return exactly one JSON object shaped {"content":"markdown"}.
