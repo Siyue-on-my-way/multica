@@ -77,13 +77,14 @@ import { ExecutionLogSection } from "./execution-log-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, childIssueProgressOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { issueListOptions, issueDetailOptions, issueKeys, childIssuesOptions, childIssueProgressOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -647,7 +648,7 @@ function SubIssueRow({
     <IssueActionsContextMenu issue={child}>
       <div
         className={cn(
-          "flex items-center gap-2.5 px-3 py-2 hover:bg-accent/50 transition-colors group/row",
+          "flex min-w-0 items-center gap-2 px-2 py-2 hover:bg-accent/50 transition-colors group/row",
           selected && "bg-accent/30",
         )}
       >
@@ -692,7 +693,7 @@ function SubIssueRow({
         />
         <AppLink
           href={paths.issueDetail(child.id)}
-          className="flex min-w-0 flex-1 items-center gap-2.5"
+          className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2.5"
         >
           <span className="text-micro text-muted-foreground tabular-nums font-medium shrink-0">
             {child.identifier}
@@ -1173,6 +1174,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Issue data from TQ — uses detail query, seeded from list cache if available.
   // Only seed when description is present; the list API omits it, so a partial
   // list row must not masquerade as a hydrated issue detail.
+  const queryClient = useQueryClient();
   const { data: issue = null, isLoading: issueLoading } = useQuery({
     ...issueDetailOptions(wsId, id),
     initialData: () => {
@@ -1180,6 +1182,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       return cached?.description != null ? cached : undefined;
     },
   });
+
+  useEffect(() => {
+    if (!issue || issueLoading || !issue.has_unread_agent_result) return;
+    void api.markIssueAgentResultRead(issue.id).then(() => {
+      queryClient.setQueryData(issueDetailOptions(wsId, id).queryKey, (current: Issue | undefined) =>
+        current ? { ...current, has_unread_agent_result: false } : current,
+      );
+      queryClient.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+    });
+  }, [id, issue, issueLoading, queryClient, wsId]);
 
   // Record recent visit
   const recordVisit = useRecentIssuesStore((s) => s.recordVisit);
@@ -1816,6 +1828,135 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return <IssueNotFound showBackLink={!onDelete} />;
   }
 
+  // Keep the direct-child panel beside the parent relationship so the
+  // hierarchy is discoverable before the description and activity timeline.
+  const subIssuesSection = (
+    <>
+          {/* Sub-issues — Linear-style */}
+          {childIssues.length === 0 && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed bg-muted/20 px-3 py-2.5 sm:px-4">
+              <span className="text-caption text-muted-foreground">
+                {t(($) => $.detail.no_sub_issues)}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => actions.openCreateSubIssue()}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>{t(($) => $.detail.add_sub_issues)}</span>
+              </Button>
+            </div>
+          )}
+          {childIssues.length > 0 && (() => {
+            const doneCount = childIssues.filter((c) => c.status === "done").length;
+            return (
+              // Provider hosts the shared right-click actions menu the rows
+              // delegate to (one singleton menu, not one per row).
+              <IssueContextMenuProvider>
+              <div className="group/sub-issues">
+                {/* Header */}
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setSubIssuesCollapsed((v) => !v)}
+                    className="flex items-center gap-1.5 text-body font-medium text-foreground hover:text-foreground/80 transition-colors"
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                        subIssuesCollapsed && "-rotate-90",
+                      )}
+                    />
+                    <span>{t(($) => $.detail.sub_issues_label)}</span>
+                  </button>
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5">
+                    <ProgressRing done={doneCount} total={childIssues.length} size={11} />
+                    <span className="text-micro text-muted-foreground tabular-nums font-medium">
+                      {doneCount}/{childIssues.length}
+                    </span>
+                  </div>
+                  {/* issue.id, not the route param — the endpoint takes a
+                      UUID and the route may carry a human-readable id. */}
+                  <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
+                  <input
+                    type="checkbox"
+                    checked={allChildrenSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
+                    }}
+                    onChange={handleToggleSelectAllChildren}
+                    aria-label="Select all sub-issues"
+                    className={cn(
+                      "ml-1 cursor-pointer accent-primary transition-opacity",
+                      someChildrenSelected
+                        ? "opacity-100"
+                        : "opacity-0 group-hover/sub-issues:opacity-100 focus-visible:opacity-100",
+                    )}
+                  />
+                  <div className="ml-auto flex items-center gap-0.5">
+                    <SubIssueDisplayPopover workspaceProperties={activeWorkspaceProperties} />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                            onClick={() => actions.openCreateSubIssue()}
+                            aria-label={t(($) => $.detail.add_sub_issue_aria)}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                        }
+                      />
+                      <TooltipContent side="bottom">{t(($) => $.detail.add_sub_issue_tooltip)}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+
+                {/* Inline batch toolbar — appears next to the rows when
+                    selections exist, instead of as a far-away fixed bar. */}
+                <BatchActionToolbar issues={childIssues} placement="inline" />
+
+                {/* List */}
+                {!subIssuesCollapsed && (() => {
+                  const groups = groupSubIssuesByStage(childIssues);
+                  const staged = childIssues.some((c) => c.stage != null);
+                  return (
+                    <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
+                      {groups.map(({ stage: groupStage, items }) => (
+                        <Fragment key={groupStage ?? "unstaged"}>
+                          {staged && (
+                            <div className="bg-muted/40 px-3 py-1 text-micro font-medium uppercase tracking-wider text-muted-foreground">
+                              {groupStage == null
+                                ? t(($) => $.stage.none)
+                                : t(($) => $.stage.value, { n: groupStage })}
+                            </div>
+                          )}
+                          {items.map((child) => (
+                            <SubIssueRow
+                              key={child.id}
+                              child={child}
+                              childProgress={subIssueProgress?.get(child.id)}
+                              rowProps={subIssueRowProps}
+                              customProperties={subIssueCustomProps}
+                            />
+                          ))}
+                        </Fragment>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+              </IssueContextMenuProvider>
+            );
+          })()}
+    </>
+  );
+
+
   const sidebarContent = (
     <div className="space-y-5">
       {/* Properties */}
@@ -2055,6 +2196,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       )}
 
+      {subIssuesSection}
+
       {/* Pull requests — hidden when the workspace disables the PR sidebar
           (or the GitHub master switch is off). Backend data is kept either
           way so re-enabling restores the section instantly. */}
@@ -2233,28 +2376,39 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     );
   };
 
-  // Breadcrumb shows the single most-direct container, never a fabricated chain.
-  // project_id and parent_issue_id are orthogonal (a sub-issue can live in a
-  // different project than its parent), so we never render both: parent wins,
-  // else project, else nothing. The project is still shown in the properties
-  // panel. The workspace name is intentionally absent — "all issues" is a view,
-  // not a container.
-  const breadcrumbSegments: BreadcrumbSegment[] = parentIssue
-    ? [{ href: paths.issueDetail(parentIssue.id), label: parentIssue.identifier }]
-    : breadcrumbProject
-      ? [
-          {
-            href: paths.projectDetail(breadcrumbProject.id),
-            className: "flex items-center gap-1 min-w-0 max-w-72",
-            label: (
-              <>
-                <ProjectIcon project={breadcrumbProject} size="sm" />
-                <span className="min-w-0 truncate">{breadcrumbProject.title}</span>
-              </>
-            ),
-          },
-        ]
-      : [];
+  // Breadcrumb follows the full issue context: project, optional parent issue,
+  // then the current issue leaf. A project lookup failure keeps the project
+  // position visible with a localized fallback, while an issue without a
+  // project uses the explicit no-project label without creating a dead link.
+  const breadcrumbProjectSegment: BreadcrumbSegment = breadcrumbProject
+    ? {
+        href: paths.projectDetail(breadcrumbProject.id),
+        className: "flex items-center gap-1 min-w-0 max-w-72",
+        label: (
+          <>
+            <ProjectIcon project={breadcrumbProject} size="sm" />
+            <span className="min-w-0 truncate" title={breadcrumbProject.title}>
+              {breadcrumbProject.title}
+            </span>
+          </>
+        ),
+      }
+    : {
+        label: issueProjectId
+          ? t(($) => $.detail.breadcrumb_project_unknown)
+          : t(($) => $.detail.breadcrumb_project_none),
+        className: "min-w-0 max-w-40 truncate",
+      };
+
+  const breadcrumbSegments: BreadcrumbSegment[] = [
+    breadcrumbProjectSegment,
+    ...(parentIssue
+      ? [{
+          href: paths.issueDetail(parentIssue.id),
+          label: parentIssue.identifier,
+        }]
+      : []),
+  ];
 
   const detailContent = (
     <div className="relative flex h-full min-w-0 flex-1 flex-col">
@@ -2502,122 +2656,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             {descDragOver && <FileDropOverlay />}
           </div>
 
-          {/* Sub-issues — Linear-style */}
-          {childIssues.length === 0 && (
-            <div className="mt-6">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 text-caption text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => actions.openCreateSubIssue()}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>{t(($) => $.detail.add_sub_issues)}</span>
-              </button>
-            </div>
-          )}
-          {childIssues.length > 0 && (() => {
-            const doneCount = childIssues.filter((c) => c.status === "done").length;
-            return (
-              // Provider hosts the shared right-click actions menu the rows
-              // delegate to (one singleton menu, not one per row).
-              <IssueContextMenuProvider>
-              <div className="mt-10 group/sub-issues">
-                {/* Header */}
-                <div className="flex items-center gap-2 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setSubIssuesCollapsed((v) => !v)}
-                    className="flex items-center gap-1.5 text-body font-medium text-foreground hover:text-foreground/80 transition-colors"
-                  >
-                    <ChevronDown
-                      className={cn(
-                        "h-3.5 w-3.5 text-muted-foreground transition-transform",
-                        subIssuesCollapsed && "-rotate-90",
-                      )}
-                    />
-                    <span>{t(($) => $.detail.sub_issues_label)}</span>
-                  </button>
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5">
-                    <ProgressRing done={doneCount} total={childIssues.length} size={11} />
-                    <span className="text-micro text-muted-foreground tabular-nums font-medium">
-                      {doneCount}/{childIssues.length}
-                    </span>
-                  </div>
-                  {/* issue.id, not the route param — the endpoint takes a
-                      UUID and the route may carry a human-readable id. */}
-                  <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
-                  <input
-                    type="checkbox"
-                    checked={allChildrenSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
-                    }}
-                    onChange={handleToggleSelectAllChildren}
-                    aria-label="Select all sub-issues"
-                    className={cn(
-                      "ml-1 cursor-pointer accent-primary transition-opacity",
-                      someChildrenSelected
-                        ? "opacity-100"
-                        : "opacity-0 group-hover/sub-issues:opacity-100 focus-visible:opacity-100",
-                    )}
-                  />
-                  <div className="ml-auto flex items-center gap-0.5">
-                    <SubIssueDisplayPopover workspaceProperties={activeWorkspaceProperties} />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                            onClick={() => actions.openCreateSubIssue()}
-                            aria-label={t(($) => $.detail.add_sub_issue_aria)}
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        }
-                      />
-                      <TooltipContent side="bottom">{t(($) => $.detail.add_sub_issue_tooltip)}</TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-
-                {/* Inline batch toolbar — appears next to the rows when
-                    selections exist, instead of as a far-away fixed bar. */}
-                <BatchActionToolbar issues={childIssues} placement="inline" />
-
-                {/* List */}
-                {!subIssuesCollapsed && (() => {
-                  const groups = groupSubIssuesByStage(childIssues);
-                  const staged = childIssues.some((c) => c.stage != null);
-                  return (
-                    <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
-                      {groups.map(({ stage: groupStage, items }) => (
-                        <Fragment key={groupStage ?? "unstaged"}>
-                          {staged && (
-                            <div className="bg-muted/40 px-3 py-1 text-micro font-medium uppercase tracking-wider text-muted-foreground">
-                              {groupStage == null
-                                ? t(($) => $.stage.none)
-                                : t(($) => $.stage.value, { n: groupStage })}
-                            </div>
-                          )}
-                          {items.map((child) => (
-                            <SubIssueRow
-                              key={child.id}
-                              child={child}
-                              childProgress={subIssueProgress?.get(child.id)}
-                              rowProps={subIssueRowProps}
-                              customProperties={subIssueCustomProps}
-                            />
-                          ))}
-                        </Fragment>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </div>
-              </IssueContextMenuProvider>
-            );
-          })()}
+          {/* Keep sub-issues in the primary detail flow as well as the
+              collapsible sidebar, so the hierarchy remains visible when the
+              sidebar is closed. */}
+          <div className="mt-8">
+            {subIssuesSection}
+          </div>
 
           <div className="my-8 border-t" />
 
