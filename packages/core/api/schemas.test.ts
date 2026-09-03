@@ -88,12 +88,21 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[0]?.metadata).toEqual({});
   });
 
-  it("rejects metadata with non-primitive values (nested object)", () => {
+  it("drops non-primitive metadata values without invalidating the issue", () => {
     const payload = {
-      issues: [{ ...baseIssue, metadata: { nested: { x: 1 } } }],
+      issues: [{
+        ...baseIssue,
+        metadata: {
+          pipeline_status: "waiting",
+          nested: { x: 1 },
+          ancestor_context_refs: [],
+        },
+      }],
       total: 1,
     };
-    expect(ListIssuesResponseSchema.safeParse(payload).success).toBe(false);
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues).toHaveLength(1);
+    expect(parsed.issues[0]?.metadata).toEqual({ pipeline_status: "waiting" });
   });
 
   it("accepts a numeric stage", () => {

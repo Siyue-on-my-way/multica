@@ -356,6 +356,42 @@ describe("ApiClient schema fallback", () => {
       const res = await client.listChildIssues("issue-1");
       expect(res).toEqual({ issues: [] });
     });
+
+    it("keeps the children list when a row has additive array metadata", async () => {
+      stubFetchJson({
+        issues: [{
+          id: "child-1",
+          workspace_id: "ws-1",
+          number: 2,
+          identifier: "MUL-2",
+          title: "Child issue",
+          description: null,
+          status: "todo",
+          priority: "none",
+          assignee_type: null,
+          assignee_id: null,
+          creator_type: "member",
+          creator_id: "user-1",
+          parent_issue_id: "issue-1",
+          project_id: null,
+          position: 0,
+          stage: null,
+          start_date: null,
+          due_date: null,
+          metadata: { ancestor_context_refs: [] },
+          properties: {},
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const client = new ApiClient("https://api.example.test");
+
+      const res = await client.listChildIssues("issue-1");
+
+      expect(res.issues).toHaveLength(1);
+      expect(res.issues[0]?.id).toBe("child-1");
+      expect(res.issues[0]?.metadata).toEqual({});
+    });
   });
 
   // Agent template catalog is hit by the desktop create-agent picker.

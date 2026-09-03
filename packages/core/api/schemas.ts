@@ -667,10 +667,29 @@ export const IssueTriggerPreviewSchema = z.object({
   total_count: z.number().default(0),
 }).loose();
 
-// Metadata is primitive-only by API/DB contract. Stay lenient on shape:
-// unknown keys land as `unknown` to a caller, but the field itself defaults
-// to {} so consumers never need to nil-guard `issue.metadata`.
-const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+// Metadata is primitive-only by API/DB contract. A few additive issue fields
+// (for example, ancestor-context references written by newer create flows)
+// can nevertheless leave a non-primitive value in older rows. Drop only the
+// incompatible entry instead of rejecting the whole IssueSchema: a single
+// malformed metadata key must not turn a valid list/children response into
+// the empty fallback used by parseWithFallback.
+const IssueMetadataSchema = z.preprocess(
+  (raw) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+    const out: Record<string, string | number | boolean> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        out[key] = value;
+      }
+    }
+    return out;
+  },
+  z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+);
 
 export const IssueSchema = z.object({
   id: z.string(),
