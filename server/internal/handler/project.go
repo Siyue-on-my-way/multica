@@ -116,6 +116,12 @@ type UpdateProjectRequest struct {
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
+	if requested := strings.TrimSpace(r.URL.Query().Get("workspace_id")); requested != "" {
+		workspaceID = requested
+		if _, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found"); !ok {
+			return
+		}
+	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
 		return
@@ -242,6 +248,12 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := h.resolveWorkspaceID(r)
+	if requested := strings.TrimSpace(r.URL.Query().Get("workspace_id")); requested != "" {
+		workspaceID = requested
+		if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+			return
+		}
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -757,19 +769,49 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to migrate project")
 		return
 	}
+	// A sub-issue is part of the project tree even when older clients left its
+	// project_id unset (or pointed it at a different project). Move descendants
+	// by the parent relationship as well as by project_id; otherwise the parent
+	// and child end up in different workspaces and workspace-scoped child
+	// queries make the child disappear from both the board and issue detail.
+	if _, err = tx.Exec(r.Context(), `
+		CREATE TEMP TABLE project_migration_issue_ids (
+			id UUID PRIMARY KEY
+		) ON COMMIT DROP`); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare issue migration")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `
+		WITH RECURSIVE project_roots AS (
+			SELECT id
+			FROM issue
+			WHERE project_id = $1 AND workspace_id = $2
+		), descendants AS (
+			SELECT id FROM project_roots
+			UNION ALL
+			SELECT child.id
+			FROM issue child
+			JOIN descendants parent ON parent.id = child.parent_issue_id
+			WHERE child.workspace_id = $2
+		)
+		INSERT INTO project_migration_issue_ids (id)
+		SELECT id FROM descendants
+		ON CONFLICT DO NOTHING`, idUUID, sourceUUID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to collect project issues")
+		return
+	}
 	var issueCount int32
 	if err = tx.QueryRow(r.Context(), `
 		SELECT count(*)::int
-		FROM issue
-		WHERE project_id = $1 AND workspace_id = $2`, idUUID, sourceUUID).Scan(&issueCount); err != nil {
+		FROM project_migration_issue_ids`).Scan(&issueCount); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count project issues")
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `
 		WITH moving AS (
-			SELECT id, ($1 + ROW_NUMBER() OVER (ORDER BY created_at, id))::int AS next_number
-			FROM issue
-			WHERE project_id = $2 AND workspace_id = $4
+			SELECT i.id, ($1 + ROW_NUMBER() OVER (ORDER BY i.created_at, i.id))::int AS next_number
+			FROM issue i
+			JOIN project_migration_issue_ids ids ON ids.id = i.id
 		)
 		UPDATE issue AS i
 		SET workspace_id = $3,
@@ -778,7 +820,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 			assignee_id = NULL,
 			updated_at = now()
 		FROM moving
-		WHERE i.id = moving.id`, targetIssueCounter, idUUID, targetUUID, sourceUUID); err != nil {
+		WHERE i.id = moving.id`, targetIssueCounter, idUUID, targetUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate issues")
 		return
 	}
@@ -794,11 +836,9 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		FROM project_migration_label_map lm
 		WHERE il.label_id = lm.source_id
 		  AND EXISTS (
-			SELECT 1 FROM issue i
-			WHERE i.id = il.issue_id
-			  AND i.project_id = $1
-			  AND i.workspace_id = $2
-		  )`, idUUID, targetUUID); err != nil {
+			SELECT 1 FROM project_migration_issue_ids ids
+			WHERE ids.id = il.issue_id
+		  )`, targetUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remap issue labels")
 		return
 	}
@@ -814,10 +854,13 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 			CROSS JOIN LATERAL jsonb_each(i2.properties) AS entry(key, value)
 			LEFT JOIN project_migration_property_map pm
 			  ON pm.source_id::text = entry.key
-			WHERE i2.project_id = $1 AND i2.workspace_id = $2
+			WHERE EXISTS (
+				SELECT 1 FROM project_migration_issue_ids ids
+				WHERE ids.id = i2.id
+			)
 			GROUP BY i2.id
 		) AS mapped
-		WHERE i.id = mapped.id`, idUUID, targetUUID); err != nil {
+		WHERE i.id = mapped.id`, targetUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remap issue properties")
 		return
 	}
@@ -829,8 +872,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		SET workspace_id = $1
 		WHERE workspace_id = $3
 		  AND issue_id IN (
-			SELECT id FROM issue
-			WHERE project_id = $2 AND workspace_id = $1
+			SELECT id FROM project_migration_issue_ids
 		  )`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate comments")
 		return
@@ -841,9 +883,9 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		WHERE workspace_id = $3
 		  AND comment_id IN (
 			SELECT c.id FROM comment c
-			JOIN issue i ON i.id = c.issue_id
-			WHERE i.project_id = $2 AND i.workspace_id = $1
-		)`, targetUUID, idUUID, sourceUUID); err != nil {
+			JOIN project_migration_issue_ids ids ON ids.id = c.issue_id
+			WHERE c.workspace_id = $1
+		)`, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate comment reactions")
 		return
 	}
@@ -852,8 +894,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		SET workspace_id = $1
 		WHERE workspace_id = $3
 		  AND issue_id IN (
-			SELECT id FROM issue
-			WHERE project_id = $2 AND workspace_id = $1
+			SELECT id FROM project_migration_issue_ids
 		  )`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate issue reactions")
 		return
@@ -864,15 +905,14 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		WHERE workspace_id = $3
 		  AND (
 			issue_id IN (
-				SELECT id FROM issue
-				WHERE project_id = $2 AND workspace_id = $1
+				SELECT id FROM project_migration_issue_ids
 			)
 			OR comment_id IN (
 				SELECT c.id FROM comment c
-				JOIN issue i ON i.id = c.issue_id
-				WHERE i.project_id = $2 AND i.workspace_id = $1
+				JOIN project_migration_issue_ids ids ON ids.id = c.issue_id
+				WHERE c.workspace_id = $1
 			)
-		)`, targetUUID, idUUID, sourceUUID); err != nil {
+		)`, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate attachments")
 		return
 	}
@@ -883,8 +923,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		  AND (
 			(item_type = 'project' AND item_id = $2)
 			OR (item_type = 'issue' AND item_id IN (
-				SELECT id FROM issue
-				WHERE project_id = $2 AND workspace_id = $1
+				SELECT id FROM project_migration_issue_ids
 			))
 		)`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate pins")
@@ -895,8 +934,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		SET workspace_id = $1
 		WHERE workspace_id = $3
 		  AND issue_id IN (
-			SELECT id FROM issue
-			WHERE project_id = $2 AND workspace_id = $1
+			SELECT id FROM project_migration_issue_ids
 		  )`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate activity history")
 		return
@@ -906,8 +944,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		SET workspace_id = $1
 		WHERE workspace_id = $3
 		  AND issue_id IN (
-			SELECT id FROM issue
-			WHERE project_id = $2 AND workspace_id = $1
+			SELECT id FROM project_migration_issue_ids
 		  )`, targetUUID, idUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate notifications")
 		return
