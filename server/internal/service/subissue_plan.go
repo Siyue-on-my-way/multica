@@ -14,6 +14,7 @@ const (
 	SubissuePlanTitleMaxLength = 300
 	SubissuePlanGoalMaxLength  = 1200
 	SubissuePlanConstraintMax  = 2000
+	SubissuePlanBusinessMaxLen = 80
 
 	SubissuePlanItemImplementation = "implementation"
 	SubissuePlanItemSummaryTest    = "summary_test"
@@ -56,7 +57,7 @@ const subissuePlanSystemPrompt = `你是一个任务拆分方案设计助手。�
 2. 平衡拆分：只拆出边界清晰且有独立价值的任务。
 3. 并行优先：把确实可以独立并行处理的任务分开，但不要为了增加数量而拆散强相关工作。
 
-每个方案只返回子issue的 title、goal 和 business。不要生成 description、stage、依赖、父issue或其他字段。business 是条目所属的业务名称；强相关条目必须使用同一个 business，没有明确业务时可以使用“整体流程”。方案必须来自原始讨论，不能凭空添加工作。系统会在每个包含至少两个条目的业务后自动补充汇总测试，因此不要自己生成汇总测试。严格只输出 JSON，不要输出 Markdown 或解释文字。
+每个方案只返回子issue的 title、goal 和 business。不要生成 description、stage、依赖、父issue或其他字段。business 必须是从原始评论、当前 issue 标题/description 和上级上下文中识别出的具体业务概念或产品能力，例如“生成子issue”“日报/周报/年报生成”“订单支付”，不能写成“任务”“功能”这类空泛词。强相关条目必须使用同一个 business；只要上下文能识别出业务，就必须填写该业务，不能留空，也不能使用“整体流程”。只有确实没有任何可识别业务概念时，才允许使用“整体流程”。business 不要包含【】；title 只写任务名称，服务端会统一添加【business】前缀。方案必须来自原始讨论，不能凭空添加工作。系统会在每个包含至少两个条目的业务后自动补充汇总测试，因此不要自己生成汇总测试。严格只输出 JSON，不要输出 Markdown 或解释文字。
 
 输出结构：
 {"plans":[{"name":"上下文优先","items":[{"title":"...","goal":"...","business":"..."}]}]}`
@@ -65,6 +66,13 @@ const subissuePlanUserTemplate = `原始评论内容：
 {{comment_text}}
 
 当前 issue：{{issue_identifier}} {{issue_title}}
+当前 issue description：
+{{issue_description}}
+
+{{ancestor_brief}}
+
+当前业务概念（优先用于每个条目的 business 和标题前缀；只有原始讨论明确包含多个不同业务时才分别使用不同概念）：
+{{business_context}}
 
 已有兄弟子issue（避免重复）：
 {{siblings}}
@@ -104,7 +112,7 @@ func SuggestSubissuePlans(
 	if err != nil {
 		return nil, fmt.Errorf("generate subissue plans: %w", err)
 	}
-	return parseSubissuePlansResponse(raw)
+	return parseSubissuePlansResponseWithBusiness(raw, inferSubissueBusiness(sourceIssue, sourceContent))
 }
 
 const subissueDetailSystemPrompt = `你是一个 Multica 子issue详情生成助手。用户已经人工确认了拆分草稿，你只能为草稿中的每个条目补充可执行的详细 description、stage、依赖关系、建议父issue和 confidence。
@@ -118,6 +126,13 @@ const subissueDetailUserTemplate = `原始评论内容：
 {{comment_text}}
 
 当前 issue：{{issue_identifier}} {{issue_title}}
+当前 issue description：
+{{issue_description}}
+
+{{ancestor_brief}}
+
+当前业务概念（已用于确认草稿的标题前缀）：
+{{business_context}}
 
 已有兄弟子issue：
 {{siblings}}
@@ -163,7 +178,7 @@ func ExpandSubissuePlan(
 	if llmClient == nil || !llmClient.Enabled() {
 		return nil, ErrLLMNotConfigured
 	}
-	plan.Items = normalizeSubissuePlanTitles(plan.Items)
+	plan.Items = normalizeSubissuePlanTitlesWithBusiness(plan.Items, inferSubissueBusiness(sourceIssue, sourceContent))
 	if err := validateApprovedSubissuePlan(plan); err != nil {
 		return nil, err
 	}
@@ -183,7 +198,11 @@ func ExpandSubissuePlan(
 	if err != nil {
 		return nil, fmt.Errorf("generate subissue details: %w", err)
 	}
-	return parseSubissueDetailsResponse(raw, plan)
+	details, err := parseSubissueDetailsResponse(raw, plan)
+	if err != nil {
+		return nil, err
+	}
+	return includeAncestorBriefInSubissueDescriptions(details, sourceIssue.AncestorBrief), nil
 }
 
 func buildSubissuePlanVariables(
@@ -198,6 +217,9 @@ func buildSubissuePlanVariables(
 		"comment_text":      truncateSubissueSuggestContent(strings.TrimSpace(sourceContent)),
 		"issue_identifier":  sourceIssue.Identifier,
 		"issue_title":       sourceIssue.Title,
+		"issue_description": truncateSubissueSuggestContent(strings.TrimSpace(sourceIssue.Description)),
+		"ancestor_brief":    sourceIssue.AncestorBrief,
+		"business_context":  businessContextForPrompt(inferSubissueBusiness(sourceIssue, sourceContent)),
 		"siblings":          formatSubissueSuggestCandidates(siblings),
 		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),
 		"human_constraints": truncateSubissuePlanConstraint(humanConstraints),
@@ -218,6 +240,10 @@ func truncateSubissuePlanConstraint(value string) string {
 }
 
 func parseSubissuePlansResponse(raw string) ([]SubissuePlan, error) {
+	return parseSubissuePlansResponseWithBusiness(raw, "")
+}
+
+func parseSubissuePlansResponseWithBusiness(raw, fallbackBusiness string) ([]SubissuePlan, error) {
 	var parsed subissuePlanLLMResponse
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 		return nil, fmt.Errorf("parse subissue plans: %w", err)
@@ -244,10 +270,7 @@ func parseSubissuePlansResponse(raw string) ([]SubissuePlan, error) {
 			if len([]rune(goal)) > SubissuePlanGoalMaxLength {
 				return nil, errors.New("parse subissue plans: goal is too long")
 			}
-			business := strings.TrimSpace(item.Business)
-			if business == "" {
-				business = SubissuePlanOverallBusiness
-			}
+			business := resolveSubissuePlanBusiness(item.Business, fallbackBusiness)
 			title, err := formatSubissuePlanTitle(title, business)
 			if err != nil {
 				return nil, err
@@ -320,13 +343,14 @@ func validateApprovedSubissuePlan(plan SubissuePlan) error {
 }
 
 func normalizeSubissuePlanTitles(items []SubissuePlanItem) []SubissuePlanItem {
+	return normalizeSubissuePlanTitlesWithBusiness(items, "")
+}
+
+func normalizeSubissuePlanTitlesWithBusiness(items []SubissuePlanItem, fallbackBusiness string) []SubissuePlanItem {
 	normalized := make([]SubissuePlanItem, len(items))
 	copy(normalized, items)
 	for index, item := range normalized {
-		business := strings.TrimSpace(item.Business)
-		if business == "" {
-			business = SubissuePlanOverallBusiness
-		}
+		business := resolveSubissuePlanBusiness(item.Business, fallbackBusiness)
 		normalized[index].Business = business
 		title, err := formatSubissuePlanTitle(strings.TrimSpace(item.Title), business)
 		if err != nil {
@@ -342,7 +366,7 @@ func formatSubissuePlanTitle(title, business string) (string, error) {
 	if title == "" {
 		return "", errors.New("subissue plan title is required")
 	}
-	business = strings.TrimSpace(business)
+	business = cleanSubissueBusinessCandidate(business)
 	if business == "" {
 		business = SubissuePlanOverallBusiness
 	}
@@ -361,6 +385,126 @@ func formatSubissuePlanTitle(title, business string) (string, error) {
 		return "", fmt.Errorf("subissue plan title exceeds %d runes including the business prefix", SubissuePlanTitleMaxLength)
 	}
 	return formatted, nil
+}
+
+func resolveSubissuePlanBusiness(modelBusiness, fallbackBusiness string) string {
+	business := cleanSubissueBusinessCandidate(modelBusiness)
+	fallback := cleanSubissueBusinessCandidate(fallbackBusiness)
+	if (business == "" || isGenericSubissueBusiness(business)) && fallback != "" {
+		return fallback
+	}
+	if business == "" {
+		return SubissuePlanOverallBusiness
+	}
+	return business
+}
+
+func businessContextForPrompt(business string) string {
+	if business == "" {
+		return "（未识别；请从原始评论和上下文提取具体业务概念，确实无法识别时才使用“整体流程”）"
+	}
+	return business
+}
+
+func inferSubissueBusiness(sourceIssue SubissueSuggestSourceIssue, sourceContent string) string {
+	// The triggering comment is the closest business signal: it often contains
+	// an explicit label such as “订单支付” or 【日报/周报/年报生成】. The issue
+	// title and description then provide stable fallbacks for short comments.
+	texts := []string{sourceContent, sourceIssue.Title, sourceIssue.Description, sourceIssue.AncestorBrief}
+	for _, text := range texts {
+		if business := extractDelimitedSubissueBusiness(text); business != "" {
+			return business
+		}
+	}
+	for _, text := range texts {
+		if business := extractVerbSubissueBusiness(text); business != "" {
+			return business
+		}
+	}
+	if business := cleanSubissueBusinessCandidate(sourceIssue.Title); len([]rune(business)) <= 40 && business != "" {
+		return business
+	}
+	return ""
+}
+
+func extractDelimitedSubissueBusiness(text string) string {
+	for _, pair := range []struct{ open, close string }{
+		{open: "【", close: "】"},
+		{open: "「", close: "」"},
+		{open: "『", close: "』"},
+		{open: "“", close: "”"},
+		{open: "\"", close: "\""},
+	} {
+		remaining := text
+		for {
+			start := strings.Index(remaining, pair.open)
+			if start < 0 {
+				break
+			}
+			valueStart := start + len(pair.open)
+			end := strings.Index(remaining[valueStart:], pair.close)
+			if end < 0 {
+				break
+			}
+			if business := cleanSubissueBusinessCandidate(remaining[valueStart : valueStart+end]); business != "" {
+				return business
+			}
+			remaining = remaining[valueStart+end+len(pair.close):]
+		}
+	}
+	return ""
+}
+
+func extractVerbSubissueBusiness(text string) string {
+	for _, verb := range []string{"实现", "开发", "新增", "支持", "优化", "改造", "构建", "设计"} {
+		remaining := text
+		for {
+			start := strings.Index(remaining, verb)
+			if start < 0 {
+				break
+			}
+			candidate := remaining[start+len(verb):]
+			end := len(candidate)
+			for _, delimiter := range []string{"功能", "模块", "能力", "：", ":", "，", ",", "。", "；", ";", "\n"} {
+				if index := strings.Index(candidate, delimiter); index >= 0 && index < end {
+					end = index
+				}
+			}
+			if business := cleanSubissueBusinessCandidate(candidate[:end]); business != "" {
+				return business
+			}
+			remaining = remaining[start+len(verb):]
+		}
+	}
+	return ""
+}
+
+func cleanSubissueBusinessCandidate(value string) string {
+	value = strings.TrimSpace(value)
+	for strings.HasPrefix(value, "【") && strings.Contains(value, "】") {
+		value = strings.TrimSpace(value[strings.Index(value, "】")+len("】"):])
+	}
+	value = strings.Trim(value, " \t\r\n\"“”‘’「」『』【】[]()（）:：,，。；;|-")
+	for _, prefix := range []string{"一键式", "一键", "实现", "开发", "新增", "支持", "优化", "改造", "构建", "设计"} {
+		value = strings.TrimSpace(strings.TrimPrefix(value, prefix))
+	}
+	for _, suffix := range []string{"产品能力", "功能", "业务", "模块", "能力"} {
+		value = strings.TrimSpace(strings.TrimSuffix(value, suffix))
+	}
+	value = strings.Trim(value, " \t\r\n\"“”‘’「」『』【】[]()（）:：,，。；;|-")
+	if value == "" || len([]rune(value)) > SubissuePlanBusinessMaxLen || isGenericSubissueBusiness(value) {
+		return ""
+	}
+	return value
+}
+
+func isGenericSubissueBusiness(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "整体流程", "整个流程", "任务", "功能", "业务", "需求", "项目", "工作", "通用功能":
+		return true
+	default:
+		return false
+	}
 }
 
 func appendSubissueSummaryTests(items []SubissuePlanItem) []SubissuePlanItem {

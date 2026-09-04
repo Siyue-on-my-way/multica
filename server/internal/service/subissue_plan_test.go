@@ -111,6 +111,90 @@ func TestNormalizeSubissuePlanTitlesAddsPrefixOnce(t *testing.T) {
 	}
 }
 
+func TestBuildSubissuePlanVariablesIncludesBusinessContext(t *testing.T) {
+	variables := buildSubissuePlanVariables(
+		SubissueSuggestSourceIssue{
+			Identifier:    "SIY-63",
+			Title:         "在评论区实现「一键生成子issue」功能",
+			Description:   "把评论中的任务拆成可执行的子issue。",
+			AncestorBrief: "上级业务：生成子issue",
+		},
+		"我现在做的是“生成子issue”的业务，请拆分这个功能",
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if variables["issue_description"] != "把评论中的任务拆成可执行的子issue。" {
+		t.Fatalf("issue description = %q", variables["issue_description"])
+	}
+	if variables["ancestor_brief"] != "上级业务：生成子issue" {
+		t.Fatalf("ancestor brief = %q", variables["ancestor_brief"])
+	}
+	if variables["business_context"] != "生成子issue" {
+		t.Fatalf("business context = %q, want 生成子issue", variables["business_context"])
+	}
+}
+
+func TestInferSubissueBusinessUsesExplicitCommentConcept(t *testing.T) {
+	issue := SubissueSuggestSourceIssue{
+		Title: "在评论区实现「一键生成子issue」功能：AI 批量拆解",
+	}
+	got := inferSubissueBusiness(issue, "我现在做的是“生成子issue”的业务")
+	if got != "生成子issue" {
+		t.Fatalf("business = %q, want 生成子issue", got)
+	}
+}
+
+func TestInferSubissueBusinessUsesBusinessPrefix(t *testing.T) {
+	issue := SubissueSuggestSourceIssue{}
+	got := inferSubissueBusiness(issue, "请拆分【日报/周报/年报生成】的查询和存储任务")
+	if got != "日报/周报/年报生成" {
+		t.Fatalf("business = %q, want 日报/周报/年报生成", got)
+	}
+}
+
+func TestParseSubissuePlansUsesInferredBusinessForGenericModelValues(t *testing.T) {
+	plans, err := parseSubissuePlansResponseWithBusiness(`{"plans":[{
+		"name":"上下文优先",
+		"items":[
+			{"title":"接口实现","goal":"实现接口" ,"business":""},
+			{"title":"页面接入","goal":"接入页面" ,"business":"整体流程"},
+			{"title":"支付对账","goal":"完成对账" ,"business":"支付"}
+		]
+	}]}`, "生成子issue")
+	if err != nil {
+		t.Fatalf("parse plans: %v", err)
+	}
+	items := plans[0].Items
+	if items[0].Title != "【生成子issue】接口实现" || items[0].Business != "生成子issue" {
+		t.Fatalf("empty business was not inferred: %+v", items[0])
+	}
+	if items[1].Title != "【生成子issue】页面接入" || items[1].Business != "生成子issue" {
+		t.Fatalf("generic business was not inferred: %+v", items[1])
+	}
+	var paymentItem *SubissuePlanItem
+	for index := range items {
+		if items[index].Title == "【支付】支付对账" {
+			paymentItem = &items[index]
+			break
+		}
+	}
+	if paymentItem == nil || paymentItem.Business != "支付" {
+		t.Fatalf("specific model business should be preserved: %+v", items)
+	}
+}
+
+func TestNormalizeSubissuePlanTitlesUsesFallbackBusiness(t *testing.T) {
+	items := normalizeSubissuePlanTitlesWithBusiness([]SubissuePlanItem{
+		{ID: "item-1", Title: "任务一", Goal: "目标", Business: ""},
+		{ID: "item-2", Title: "任务二", Goal: "目标", Business: "整体流程"},
+	}, "生成子issue")
+	if items[0].Title != "【生成子issue】任务一" || items[1].Title != "【生成子issue】任务二" {
+		t.Fatalf("titles did not use fallback business: %+v", items)
+	}
+}
+
 func TestParseSubissueDetailsKeepsNormalizedApprovedTitle(t *testing.T) {
 	plan := SubissuePlan{Items: []SubissuePlanItem{
 		{ID: "item-1", Title: "用户标题", Goal: "用户目标", Business: "日报/周报/年报生成"},

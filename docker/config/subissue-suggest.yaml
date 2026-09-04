@@ -23,14 +23,23 @@ stages:
         1. 上下文优先：尽量合并强相关内容，允许最终只有一个子issue，保证接手者拥有连贯上下文。
         2. 平衡拆分：只拆出边界清晰且有独立价值的任务。
         3. 并行优先：把确实可以独立并行处理的任务分开，但不要为了增加数量而拆散强相关工作。
-        每个方案只返回子issue的 title 和 goal，不要生成 description、stage、依赖、父issue或其他字段。方案必须来自原始讨论，不能凭空添加工作。严格只输出 JSON，不要输出 Markdown 或解释文字。
+        每个方案只返回子issue的 title、goal 和 business，不要生成 description、stage、依赖、父issue或其他字段。business 必须是从原始评论、当前 issue 标题/description 和上级上下文中识别出的具体业务概念或产品能力，例如“生成子issue”“日报/周报/年报生成”“订单支付”，不能写成“任务”“功能”这类空泛词。提示中提供的“当前业务概念”是标题前缀的优先依据；只要上下文能识别出业务，就必须填写该业务，不能留空，也不能使用“整体流程”。只有确实没有任何可识别业务概念时，才允许使用“整体流程”。business 不要包含【】；title 只写任务名称，服务端会统一添加【business】前缀。方案必须来自原始讨论，不能凭空添加工作。严格只输出 JSON，不要输出 Markdown 或解释文字。
         输出必须是一个 JSON 对象，结构固定为：
-        {"plans":[{"name":"上下文优先|平衡拆分|并行优先","items":[{"title":"...","goal":"..."}]}]}
+        {"plans":[{"name":"上下文优先|平衡拆分|并行优先","items":[{"title":"...","goal":"...","business":"..."}]}]}
       user_template: |-
         原始评论内容：
         {{comment_text}}
 
         当前 issue：{{issue_identifier}} {{issue_title}}
+
+        当前 issue description：
+        {{issue_description}}
+
+        上级 issue 上下文：
+        {{ancestor_brief}}
+
+        当前业务概念（优先用于每个条目的 business 和标题前缀；只有原始讨论明确包含多个不同业务时才分别使用不同概念）：
+        {{business_context}}
 
         已有兄弟子issue（避免重复）：
         {{siblings}}
@@ -60,10 +69,11 @@ stages:
                   type: array
                   items:
                     type: object
-                    required: [title, goal]
+                    required: [title, goal, business]
                     properties:
                       title: {type: string}
                       goal: {type: string}
+                      business: {type: string}
 
   detail:
     llm:
@@ -87,6 +97,15 @@ stages:
         {{comment_text}}
 
         当前 issue：{{issue_identifier}} {{issue_title}}
+
+        当前 issue description：
+        {{issue_description}}
+
+        上级 issue 上下文：
+        {{ancestor_brief}}
+
+        当前业务概念（已用于确认草稿的标题前缀）：
+        {{business_context}}
 
         已有兄弟子issue：
         {{siblings}}

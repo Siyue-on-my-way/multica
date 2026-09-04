@@ -79,9 +79,12 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
+	ancestorBrief := service.BuildAncestorBrief(r.Context(), h.Queries, issue)
 	sourceIssue := service.SubissueSuggestSourceIssue{
-		Identifier: prefix + "-" + strconv.Itoa(int(issue.Number)),
-		Title:      issue.Title,
+		Identifier:    prefix + "-" + strconv.Itoa(int(issue.Number)),
+		Title:         issue.Title,
+		Description:   issue.Description.String,
+		AncestorBrief: ancestorBrief.Text,
 	}
 
 	siblings, err := h.Queries.ListChildIssues(r.Context(), issue.ID)

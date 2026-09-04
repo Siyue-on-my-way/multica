@@ -89,8 +89,10 @@ func (c LegacySubissueSuggestConfiguredLLM) GenerateJSONTemplate(
 // issue whose comment is being decomposed, its existing children (to avoid
 // suggesting a duplicate), and the candidate parent list.
 type SubissueSuggestSourceIssue struct {
-	Identifier string
-	Title      string
+	Identifier    string
+	Title         string
+	Description   string
+	AncestorBrief string
 }
 
 type SubissueCandidateParent struct {
@@ -136,6 +138,10 @@ const subissueSuggestUserTemplate = `要拆解的评论原文：
 {{comment_text}}
 
 当前 issue：{{issue_identifier}} {{issue_title}}
+当前 issue description：
+{{issue_description}}
+
+{{ancestor_brief}}
 
 当前 issue 下已有的兄弟子issue（避免拆出重复任务）：
 {{siblings}}
@@ -173,7 +179,11 @@ func SuggestSubissues(
 	if err != nil {
 		return nil, fmt.Errorf("generate subissue suggestions: %w", err)
 	}
-	return parseSubissueSuggestResponse(raw)
+	suggestions, err := parseSubissueSuggestResponse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return includeAncestorBriefInSubissueDescriptions(suggestions, sourceIssue.AncestorBrief), nil
 }
 
 // SuggestSubissuesWithConfig is the per-business counterpart of
@@ -202,7 +212,11 @@ func SuggestSubissuesWithConfig(
 	if err != nil {
 		return nil, fmt.Errorf("generate subissue suggestions: %w", err)
 	}
-	return parseSubissueSuggestResponse(raw)
+	suggestions, err := parseSubissueSuggestResponse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return includeAncestorBriefInSubissueDescriptions(suggestions, sourceIssue.AncestorBrief), nil
 }
 
 func parseSubissueSuggestResponse(raw string) ([]SubissueSuggestion, error) {
@@ -255,6 +269,8 @@ func buildSubissueSuggestVariables(
 		"comment_text":      truncateSubissueSuggestContent(strings.TrimSpace(sourceContent)),
 		"issue_identifier":  sourceIssue.Identifier,
 		"issue_title":       sourceIssue.Title,
+		"issue_description": truncateSubissueSuggestContent(strings.TrimSpace(sourceIssue.Description)),
+		"ancestor_brief":    sourceIssue.AncestorBrief,
 		"siblings":          formatSubissueSuggestCandidates(siblings),
 		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),
 	}

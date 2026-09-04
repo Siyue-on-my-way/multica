@@ -19,13 +19,15 @@ import (
 // The server resolves comment_id inside the requested issue; raw text remains
 // available for trusted callers that already have the content.
 type SubissuePlanSourceRequest struct {
-	CommentID        *string `json:"comment_id,omitempty"`
-	Text             *string `json:"text,omitempty"`
-	HumanConstraints string  `json:"human_constraints,omitempty"`
+	CommentID            *string `json:"comment_id,omitempty"`
+	Text                 *string `json:"text,omitempty"`
+	HumanConstraints     string  `json:"human_constraints,omitempty"`
+	CarryAncestorContext *bool   `json:"carry_ancestor_context,omitempty"`
 }
 
 type SuggestSubissuePlansResponse struct {
-	Plans []service.SubissuePlan `json:"plans"`
+	Plans             []service.SubissuePlan     `json:"plans"`
+	AncestorBriefRefs []service.AncestorBriefRef `json:"ancestor_brief_refs,omitempty"`
 }
 
 type ExpandSubissuePlanRequest struct {
@@ -45,7 +47,7 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	ctxData, ok := h.loadSubissuePlanContext(w, r, issue, req.CommentID, req.Text)
+	ctxData, ok := h.loadSubissuePlanContext(w, r, issue, req.CommentID, req.Text, req.CarryAncestorContext)
 	if !ok {
 		return
 	}
@@ -74,7 +76,12 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to generate subissue plans")
 		return
 	}
-	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: plans})
+	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: plans, AncestorBriefRefs: func() []service.AncestorBriefRef {
+		if req.CarryAncestorContext != nil && !*req.CarryAncestorContext {
+			return nil
+		}
+		return service.BuildAncestorBrief(r.Context(), h.Queries, issue).Refs
+	}()})
 }
 
 // ExpandSubissuePlan generates detail only for the user-approved outline.
@@ -90,7 +97,7 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	ctxData, ok := h.loadSubissuePlanContext(w, r, issue, req.CommentID, req.Text)
+	ctxData, ok := h.loadSubissuePlanContext(w, r, issue, req.CommentID, req.Text, req.CarryAncestorContext)
 	if !ok {
 		return
 	}
@@ -131,7 +138,7 @@ type subissuePlanContext struct {
 	parentByIdentifier map[string]subissueCandidateParentRef
 }
 
-func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request, issue db.Issue, commentID, text *string) (subissuePlanContext, bool) {
+func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request, issue db.Issue, commentID, text *string, carryAncestorContext *bool) (subissuePlanContext, bool) {
 	content, ok := h.resolveSubissueSuggestContent(w, r, issue, SuggestSubIssuesRequest{
 		CommentID: commentID,
 		Text:      text,
@@ -140,9 +147,15 @@ func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request
 		return subissuePlanContext{}, false
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
+	ancestorBrief := service.BuildAncestorBrief(r.Context(), h.Queries, issue)
+	if carryAncestorContext != nil && !*carryAncestorContext {
+		ancestorBrief = service.AncestorBrief{}
+	}
 	sourceIssue := service.SubissueSuggestSourceIssue{
-		Identifier: prefix + "-" + strconv.Itoa(int(issue.Number)),
-		Title:      issue.Title,
+		Identifier:    prefix + "-" + strconv.Itoa(int(issue.Number)),
+		Title:         issue.Title,
+		Description:   issue.Description.String,
+		AncestorBrief: ancestorBrief.Text,
 	}
 	siblings, err := h.Queries.ListChildIssues(r.Context(), issue.ID)
 	if err != nil {
