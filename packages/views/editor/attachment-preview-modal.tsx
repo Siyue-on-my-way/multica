@@ -61,6 +61,7 @@ import { ReadonlyContent } from "./readonly-content";
 import {
   extensionToLanguage,
   getPreviewKind,
+  previewKindFromUrl,
   type PreviewKind,
 } from "./utils/preview";
 import { useDownloadAttachment } from "./use-download-attachment";
@@ -86,8 +87,8 @@ import { CodeBlockStatic } from "./code-block-static";
 // from the URL without hitting the text-content proxy.
 
 export type PreviewSource =
-  | { kind: "full"; attachment: Attachment }
-  | { kind: "url"; url: string; filename: string };
+  | { kind: "full"; attachment: Attachment; forceKind?: PreviewKind }
+  | { kind: "url"; url: string; filename: string; forceKind?: PreviewKind };
 
 // PreviewKinds that can render from a URL-only source. Text-based kinds
 // (markdown / html / text) need the /content proxy which is ID-keyed.
@@ -107,6 +108,27 @@ function resolvePreviewMediaUrl(attachment: Attachment): string {
   const raw =
     attachment.download_url || attachment.markdown_url || attachment.url;
   return resolvePublicFileUrl(raw) ?? raw;
+}
+
+// Resolve the effective PreviewKind for a preview source. Order matters:
+//
+//   1. `forceKind` — a structural hint from the call site that already KNOWS
+//      the kind from context (markdown `![]()` is always an image even when
+//      the alt/filename are empty; see rich-content.tsx). Without this the
+//      URL-only path below re-derives from metadata the source simply does
+//      not carry, and the 放大 button silently no-ops on exactly those
+//      embeds the forceKind exists for.
+//   2. Metadata dispatch (content type, then filename extension).
+//   3. URL-path extension — last resort for URL-only sources whose filename
+//      is empty but whose URL still names a recognizable media extension.
+//      Never returns a text kind on its own (unknown extensions → null), so
+//      an arbitrary external URL stays "not previewable".
+function resolvePreviewKind(source: PreviewSource, state: PreviewState): PreviewKind | null {
+  if (source.forceKind) return source.forceKind;
+  return (
+    getPreviewKind(state.contentType, state.filename) ??
+    (source.kind === "url" ? previewKindFromUrl(state.mediaUrl) : null)
+  );
 }
 
 function normalize(source: PreviewSource): PreviewState {
@@ -181,7 +203,7 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
   }, []);
   const tryOpen = useCallback((source: PreviewSource) => {
     const state = normalize(source);
-    const kind = getPreviewKind(state.contentType, state.filename);
+    const kind = resolvePreviewKind(source, state);
     if (!kind) return false;
     // URL-only sources cannot drive text kinds — the /content proxy is ID-keyed.
     if (source.kind === "url" && !URL_ONLY_KINDS.has(kind)) return false;
@@ -233,7 +255,7 @@ export function AttachmentPreviewModal({
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  const kind = getPreviewKind(state.contentType, state.filename);
+  const kind = resolvePreviewKind(source, state);
 
   // Download dispatcher: re-sign through `getAttachment` when an id is
   // available; otherwise fall back to opening the (possibly stale) URL

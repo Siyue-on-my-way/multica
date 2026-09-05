@@ -201,6 +201,27 @@ export function isPreviewable(contentType: string, filename: string): boolean {
   return getPreviewKind(contentType, filename) !== null;
 }
 
+/**
+ * Infer a PreviewKind from a URL's path extension alone — the URL-only
+ * preview source carries no server metadata, and markdown `![]()` embeds
+ * commonly have an empty alt/filename (agent-posted images, cross-issue
+ * references), leaving nothing for getPreviewKind to dispatch on. Only
+ * known media/text extensions match, so arbitrary hosts and paths without
+ * a recognizable suffix return null and the caller keeps its
+ * "not previewable" behaviour.
+ */
+export function previewKindFromUrl(url: string): PreviewKind | null {
+  if (!url) return null;
+  let path: string;
+  try {
+    path = new URL(url, "https://multica.invalid").pathname;
+  } catch {
+    return null;
+  }
+  const lastSegment = path.split("/").pop() ?? "";
+  return getPreviewKind("", lastSegment);
+}
+
 // Pick the hljs language token for a file. Returns undefined when the file
 // doesn't have a recognizable extension — callers can fall back to a plain
 // `<pre>` render. Kept tiny and ext-driven on purpose: lowlight's `common`

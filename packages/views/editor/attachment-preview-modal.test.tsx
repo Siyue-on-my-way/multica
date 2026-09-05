@@ -713,6 +713,80 @@ describe("useAttachmentPreview — tryOpen gate", () => {
     });
     expect(opened).toBe(false);
   });
+
+  // Regression: markdown `![]()` embeds of agent-posted / cross-referenced
+  // images carry an empty filename and no resolvable record. Rendering works
+  // because the caller passes forceKind: "image", but tryOpen re-derived the
+  // kind from the missing metadata and silently returned false — the 放大
+  // button did nothing on exactly those images.
+  it("accepts a URL source with an empty filename when forceKind is image", () => {
+    const { result } = renderHook(() => useAttachmentPreview());
+    let opened = false;
+    hookAct(() => {
+      opened = result.current.tryOpen({
+        kind: "url",
+        url: "https://renderer.example/diagram/abc123",
+        filename: "",
+        forceKind: "image",
+      });
+    });
+    expect(opened).toBe(true);
+  });
+
+  it("accepts a URL source with an empty filename via URL extension inference", () => {
+    const { result } = renderHook(() => useAttachmentPreview());
+    let opened = false;
+    hookAct(() => {
+      opened = result.current.tryOpen({
+        kind: "url",
+        url: "https://x/attachments/photo.PNG?token=1",
+        filename: "",
+      });
+    });
+    expect(opened).toBe(true);
+  });
+
+  it("forceKind cannot push a URL-only source into a text kind", () => {
+    const { result } = renderHook(() => useAttachmentPreview());
+    let opened = true;
+    hookAct(() => {
+      opened = result.current.tryOpen({
+        kind: "url",
+        url: "https://x/note",
+        filename: "",
+        forceKind: "markdown",
+      });
+    });
+    expect(opened).toBe(false);
+  });
+
+  it("still rejects an extension-less URL source with no forceKind", () => {
+    const { result } = renderHook(() => useAttachmentPreview());
+    let opened = true;
+    hookAct(() => {
+      opened = result.current.tryOpen({
+        kind: "url",
+        url: "https://renderer.example/diagram/abc123",
+        filename: "",
+      });
+    });
+    expect(opened).toBe(false);
+  });
+
+  it("renders the image canvas when opened with forceKind despite empty metadata", () => {
+    stubCanvasViewport();
+    const { result } = renderHook(() => useAttachmentPreview());
+    hookAct(() => {
+      result.current.tryOpen({
+        kind: "url",
+        url: "https://renderer.example/diagram/abc123",
+        filename: "",
+        forceKind: "image",
+      });
+    });
+    rtlRender(<>{result.current.modal}</>);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------

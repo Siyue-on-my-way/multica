@@ -477,6 +477,13 @@ export function Attachment({
   const shareUrl = isObjectURL(mediaUrl) ? state.url : mediaUrl;
 
   const openPreview = () => {
+    // Thread the locally-resolved kind through as forceKind: this component
+    // may render an image whose filename/contentType are both empty (markdown
+    // `![]()` embeds of agent-posted or cross-referenced URLs). tryOpen would
+    // otherwise re-derive from that missing metadata, fail, and silently
+    // swallow the 放大 click — the same asymmetry that makes the inline image
+    // render (forceKind) while its preview gate failed. See the matching
+    // resolvePreviewKind fallback in attachment-preview-modal.tsx.
     if (state.record) {
       preview.tryOpen({
         kind: "full",
@@ -484,6 +491,7 @@ export function Attachment({
           ...state.record,
           download_url: mediaUrl || state.record.download_url,
         },
+        forceKind: kind ?? undefined,
       });
       return;
     }
@@ -492,6 +500,7 @@ export function Attachment({
         kind: "url",
         url: mediaUrl,
         filename: state.filename,
+        forceKind: kind ?? undefined,
       });
     }
   };
