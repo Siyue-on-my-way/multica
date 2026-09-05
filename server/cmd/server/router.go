@@ -1144,7 +1144,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
 					r.Put("/", h.UpdateIssue)
+					r.Post("/move-workspace", h.MoveIssueToWorkspace)
 					r.Post("/move", h.MoveIssue)
+					r.Post("/agent-result-read", h.MarkIssueAgentResultRead)
+					r.Post("/restore-auto-order", h.ClearIssueManualPositionLock)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
 					r.Post("/suggest-subissues", h.SuggestSubIssues)
@@ -1192,6 +1195,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/", h.UpdateQuickAction)
 					r.Delete("/", h.DeleteQuickAction)
 				})
+			})
+
+			// Report Templates
+			r.Route("/api/report-templates", func(r chi.Router) {
+				r.Get("/", h.ListReportTemplates)
 			})
 
 			// Custom issue properties (definitions; values live under /api/issues/{id}/properties)

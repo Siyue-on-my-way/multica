@@ -72,7 +72,10 @@ type IssueResponse struct {
 	// WS broadcast) emit no `labels` field at all — the client merge then
 	// preserves whatever labels are already in cache. nil pointer = "field
 	// absent, do not touch"; non-nil (incl. empty slice) = authoritative list.
-	Labels *[]LabelResponse `json:"labels,omitempty"`
+	Labels               *[]LabelResponse `json:"labels,omitempty"`
+	ManualPositionLocked bool             `json:"manual_position_locked"`
+	AgentResultAt        *string          `json:"agent_result_at,omitempty"`
+	HasUnreadAgentResult bool             `json:"has_unread_agent_result"`
 }
 
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
@@ -95,31 +98,33 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		WorkingBranch:  textToPtr(i.WorkingBranch),
-		AgentStatus:    textToPtr(i.AgentStatus),
-		HandoffSummary: json.RawMessage(i.HandoffSummary),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                   uuidToString(i.ID),
+		WorkspaceID:          uuidToString(i.WorkspaceID),
+		Number:               i.Number,
+		Identifier:           identifier,
+		Title:                i.Title,
+		Description:          textToPtr(i.Description),
+		Status:               i.Status,
+		Priority:             i.Priority,
+		AssigneeType:         textToPtr(i.AssigneeType),
+		AssigneeID:           uuidToPtr(i.AssigneeID),
+		CreatorType:          i.CreatorType,
+		CreatorID:            uuidToString(i.CreatorID),
+		ParentIssueID:        uuidToPtr(i.ParentIssueID),
+		ProjectID:            uuidToPtr(i.ProjectID),
+		Position:             i.Position,
+		Stage:                int4ToPtr(i.Stage),
+		WorkingBranch:        textToPtr(i.WorkingBranch),
+		AgentStatus:          textToPtr(i.AgentStatus),
+		HandoffSummary:       json.RawMessage(i.HandoffSummary),
+		ManualPositionLocked: i.ManualPositionLocked,
+		AgentResultAt:        timestampToPtr(i.AgentResultAt),
+		StartDate:            dateToPtr(i.StartDate),
+		DueDate:              dateToPtr(i.DueDate),
+		CreatedAt:            timestampToString(i.CreatedAt),
+		UpdatedAt:            timestampToString(i.UpdatedAt),
+		Metadata:             parseIssueMetadata(i.Metadata),
+		Properties:           parseIssueProperties(i.Properties),
 	}
 }
 
@@ -127,32 +132,53 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		Stage:         int4ToPtr(i.Stage),
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
-		Properties:    parseIssueProperties(i.Properties),
+		ID:                   uuidToString(i.ID),
+		WorkspaceID:          uuidToString(i.WorkspaceID),
+		Number:               i.Number,
+		Identifier:           identifier,
+		Title:                i.Title,
+		Description:          textToPtr(i.Description),
+		Status:               i.Status,
+		Priority:             i.Priority,
+		AssigneeType:         textToPtr(i.AssigneeType),
+		AssigneeID:           uuidToPtr(i.AssigneeID),
+		CreatorType:          i.CreatorType,
+		CreatorID:            uuidToString(i.CreatorID),
+		ParentIssueID:        uuidToPtr(i.ParentIssueID),
+		ProjectID:            uuidToPtr(i.ProjectID),
+		Position:             i.Position,
+		Stage:                int4ToPtr(i.Stage),
+		StartDate:            dateToPtr(i.StartDate),
+		DueDate:              dateToPtr(i.DueDate),
+		CreatedAt:            timestampToString(i.CreatedAt),
+		UpdatedAt:            timestampToString(i.UpdatedAt),
+		Metadata:             parseIssueMetadata(i.Metadata),
+		Properties:           parseIssueProperties(i.Properties),
+		ManualPositionLocked: i.ManualPositionLocked,
+		AgentResultAt:        timestampToPtr(i.AgentResultAt),
 	}
 }
 
-// labelsByIssue bulk-loads labels for the given issue IDs and returns a map
+func (h *Handler) unreadAgentResultIssueIDs(ctx context.Context, workspaceID, userID pgtype.UUID, issueIDs []pgtype.UUID) map[string]bool {
+	out := make(map[string]bool)
+	if !userID.Valid || len(issueIDs) == 0 {
+		return out
+	}
+	ids, err := h.Queries.ListUnreadAgentResultIssueIDs(ctx, db.ListUnreadAgentResultIssueIDsParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Column3:     issueIDs,
+	})
+	if err != nil {
+		slog.Warn("list unread agent results failed", "error", err)
+		return out
+	}
+	for _, id := range ids {
+		out[uuidToString(id)] = true
+	}
+	return out
+}
+
 // keyed by issue UUID string. On error or empty input, returns an empty map —
 // label rendering is non-critical and we'd rather serve issues without labels
 // than fail the whole list call.
@@ -188,28 +214,30 @@ func (h *Handler) labelsByIssue(ctx context.Context, wsUUID pgtype.UUID, issueID
 func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		Stage:         int4ToPtr(i.Stage),
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
-		Properties:    parseIssueProperties(i.Properties),
+		ID:                   uuidToString(i.ID),
+		WorkspaceID:          uuidToString(i.WorkspaceID),
+		Number:               i.Number,
+		Identifier:           identifier,
+		Title:                i.Title,
+		Description:          textToPtr(i.Description),
+		Status:               i.Status,
+		Priority:             i.Priority,
+		AssigneeType:         textToPtr(i.AssigneeType),
+		AssigneeID:           uuidToPtr(i.AssigneeID),
+		CreatorType:          i.CreatorType,
+		CreatorID:            uuidToString(i.CreatorID),
+		ParentIssueID:        uuidToPtr(i.ParentIssueID),
+		ProjectID:            uuidToPtr(i.ProjectID),
+		Position:             i.Position,
+		Stage:                int4ToPtr(i.Stage),
+		StartDate:            dateToPtr(i.StartDate),
+		DueDate:              dateToPtr(i.DueDate),
+		CreatedAt:            timestampToString(i.CreatedAt),
+		UpdatedAt:            timestampToString(i.UpdatedAt),
+		Metadata:             parseIssueMetadata(i.Metadata),
+		Properties:           parseIssueProperties(i.Properties),
+		ManualPositionLocked: i.ManualPositionLocked,
+		AgentResultAt:        timestampToPtr(i.AgentResultAt),
 	}
 }
 
@@ -906,6 +934,15 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			resp[i].Labels = &labels
 		}
 
+		if userID := requestUserID(r); userID != "" {
+			if parsed, err := util.ParseUUID(userID); err == nil {
+				unread := h.unreadAgentResultIssueIDs(ctx, wsUUID, parsed, ids)
+				for i := range resp {
+					resp[i].HasUnreadAgentResult = unread[resp[i].ID]
+				}
+			}
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"issues": resp,
 			"total":  len(resp),
@@ -1196,7 +1233,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata, i.stage, i.properties
+       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
+       i.manual_position_locked, i.agent_result_at
 FROM issue i
 WHERE %s
 ORDER BY %s
@@ -1235,6 +1273,8 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Metadata,
 			&row.Stage,
 			&row.Properties,
+			&row.ManualPositionLocked,
+			&row.AgentResultAt,
 		); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -1271,6 +1311,15 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			labels = []LabelResponse{}
 		}
 		resp[i].Labels = &labels
+	}
+
+	if userID := requestUserID(r); userID != "" {
+		if parsed, err := util.ParseUUID(userID); err == nil {
+			unread := h.unreadAgentResultIssueIDs(ctx, wsUUID, parsed, ids)
+			for i := range resp {
+				resp[i].HasUnreadAgentResult = unread[resp[i].ID]
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1349,8 +1398,8 @@ func appendIssueDateFilter(where []string, addArg func(any) string, filter *issu
 // appendIssueTableSearchFilter adds a quick identity search to the ordinary
 // ListIssues window. Unlike the ranked global search endpoint, this predicate
 // preserves the table's active filters, explicit sort, total, and pagination.
-// Every word must appear in the title; a complete identifier (or bare issue
-// number) also matches the immutable numeric issue number.
+// Every word must appear in the title or description; a complete identifier
+// (or bare issue number) also matches the immutable numeric issue number.
 func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw string) []string {
 	query := strings.TrimSpace(raw)
 	if query == "" {
@@ -1360,12 +1409,17 @@ func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw s
 	words := splitSearchTerms(strings.ToLower(query))
 	ors := make([]string, 0, 2)
 	if len(words) > 0 {
-		titleMatches := make([]string, 0, len(words))
+		wordMatches := make([]string, 0, len(words))
 		for _, word := range words {
 			pattern := "%" + escapeLike(word) + "%"
-			titleMatches = append(titleMatches, fmt.Sprintf("LOWER(i.title) LIKE %s", addArg(pattern)))
+			ref := addArg(pattern)
+			wordMatches = append(wordMatches, fmt.Sprintf(
+				"(LOWER(i.title) LIKE %s OR LOWER(COALESCE(i.description, '')) LIKE %s)",
+				ref,
+				ref,
+			))
 		}
-		ors = append(ors, "("+strings.Join(titleMatches, " AND ")+")")
+		ors = append(ors, "("+strings.Join(wordMatches, " AND ")+")")
 	}
 	if number, ok := parseQueryNumber(query); ok {
 		ors = append(ors, fmt.Sprintf("i.number = %s", addArg(number)))
@@ -1659,6 +1713,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	where = appendIssueDateFilter(where, addArg, dateFilter)
+	where = appendIssueTableSearchFilter(where, addArg, r.URL.Query().Get("q"))
 
 	if groupAssigneeType := r.URL.Query().Get("group_assignee_type"); groupAssigneeType != "" {
 		if groupAssigneeType == "none" {
@@ -1901,6 +1956,13 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 		resp.Attachments = make([]AttachmentResponse, len(attachments))
 		for i, a := range attachments {
 			resp.Attachments[i] = h.attachmentToResponse(a, mode)
+		}
+	}
+
+	if userID := requestUserID(r); userID != "" {
+		if parsed, err := util.ParseUUID(userID); err == nil {
+			unread := h.unreadAgentResultIssueIDs(r.Context(), issue.WorkspaceID, parsed, []pgtype.UUID{issue.ID})
+			resp.HasUnreadAgentResult = unread[resp.ID]
 		}
 	}
 
@@ -2401,7 +2463,8 @@ type CreateIssueRequest struct {
 	// LabelIDs are issue-scoped labels to attach to the new issue in the same
 	// transaction as the create. Unknown or non-issue ids are rejected with
 	// 400 (service.ErrIssueLabelNotFound) rather than silently dropped.
-	LabelIDs []string `json:"label_ids,omitempty"`
+	LabelIDs            []string        `json:"label_ids,omitempty"`
+	AncestorContextRefs json.RawMessage `json:"ancestor_context_refs,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -2531,6 +2594,24 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Determine creator identity: agent (via X-Agent-ID header) or member.
 	creatorType, actualCreatorID := h.resolveActor(r, creatorID, workspaceID)
+
+	// Comment-triggered agents creating a child must attach it to the issue
+	// whose discussion triggered the run. This prevents a natural-language
+	// request from silently producing an unrelated root issue; quick-create and
+	// assignment tasks are intentionally outside this guard.
+	if creatorType == "agent" && r.Header.Get("X-Task-ID") != "" {
+		if taskUUID, parseErr := util.ParseUUID(r.Header.Get("X-Task-ID")); parseErr == nil {
+			if task, taskErr := h.Queries.GetAgentTask(r.Context(), taskUUID); taskErr == nil &&
+				task.IssueID.Valid && task.TriggerCommentID.Valid &&
+				uuidToString(task.AgentID) == actualCreatorID {
+				currentIssueID := uuidToString(task.IssueID)
+				if !parentIssueID.Valid || uuidToString(parentIssueID) != currentIssueID {
+					writeError(w, http.StatusBadRequest, "comment-triggered sub-issue creation requires parent_issue_id to equal the current issue")
+					return
+				}
+			}
+		}
+	}
 
 	// Optional origin stamping (quick-create / autopilot). Only the
 	// allowed origin types are accepted; anything else is rejected so a
@@ -2679,6 +2760,19 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issue := res.Issue
+	if len(req.AncestorContextRefs) > 0 {
+		refsValue, marshalErr := json.Marshal(string(req.AncestorContextRefs))
+		if marshalErr != nil {
+			slog.Warn("marshal ancestor context refs failed", append(logger.RequestAttrs(r), "error", marshalErr, "issue_id", uuidToString(issue.ID))...)
+		} else if _, metadataErr := h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         "ancestor_context_refs",
+			Value:       refsValue,
+		}); metadataErr != nil {
+			slog.Warn("persist ancestor context refs failed", append(logger.RequestAttrs(r), "error", metadataErr, "issue_id", uuidToString(issue.ID))...)
+		}
+	}
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)

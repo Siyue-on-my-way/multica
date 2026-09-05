@@ -13,6 +13,7 @@ import {
   dropdownPrimitives,
 } from "./issue-actions-menu-items";
 import { AssigneePicker } from "../components/pickers";
+import { MoveIssueWorkspaceDialog } from "../components/move-issue-workspace-dialog";
 
 interface IssueActionsDropdownProps {
   issue: Issue;
@@ -32,6 +33,7 @@ export function IssueActionsDropdown({
 }: IssueActionsDropdownProps) {
   const actions = useIssueActions(issue);
   const [assigneeOpen, setAssigneeOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
 
   // The outer `relative inline-flex` is the picker's anchor box: the
   // absolute, pointer-events-none span inside `triggerRender` fills it, so
@@ -47,6 +49,7 @@ export function IssueActionsDropdown({
             actions={actions}
             primitives={dropdownPrimitives}
             onOpenAssignee={() => setAssigneeOpen(true)}
+            onOpenMove={() => setMoveOpen(true)}
             onDeletedFallbackPath={onDeletedFallbackPath}
           />
         </DropdownMenuContent>
@@ -70,6 +73,9 @@ export function IssueActionsDropdown({
           trigger={<span />}
           align={align}
         />
+      )}
+      {moveOpen && (
+        <MoveIssueWorkspaceDialog issue={issue} open={moveOpen} onOpenChange={setMoveOpen} />
       )}
     </span>
   );

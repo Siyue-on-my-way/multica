@@ -62,7 +62,9 @@
     "source_runtime_unknown": "From a runtime",
     "source_clawhub": "From ClawHub",
     "source_skills_sh": "From Skills.sh",
-    "source_github": "From GitHub"
+    "source_github": "From GitHub",
+    "global_badge": "global",
+    "global_tooltip": "Shared across all workspaces"
   },
   "actions": {
     "row_menu": "Actions",
@@ -226,20 +228,26 @@
       },
       "url": {
         "title": "Import from URL",
-        "desc": "Fetch a published skill by URL. Files are pulled server-side."
+        "desc": "Fetch a published skill by URL — ClawHub, Skills.sh, GitHub, or a direct .zip/.skill link. Files are pulled server-side."
       },
       "runtime": {
         "title": "Copy from runtime",
         "desc": "Scan a local runtime and promote one of its on-disk skills into this workspace."
+      },
+      "archive": {
+        "title": "Upload zip archive",
+        "desc": "Import a local .skill/.zip bundle. Same-name conflicts follow your chosen strategy."
       }
     },
     "method_card": {
       "manual_title": "Create manually",
       "manual_desc": "Start from a blank SKILL.md and write your own instructions.",
       "url_title": "Import from URL",
-      "url_desc": "Pull a published skill from ClawHub or Skills.sh.",
+      "url_desc": "Pull a published skill from ClawHub, Skills.sh, GitHub, or any .zip/.skill link.",
       "runtime_title": "Copy from runtime",
-      "runtime_desc": "Promote a skill already installed on your local runtime."
+      "runtime_desc": "Promote a skill already installed on your local runtime.",
+      "archive_title": "Upload zip archive",
+      "archive_desc": "Import a .skill/.zip bundle with scripts, data, and resources."
     },
     "manual": {
       "name_label": "Name",
@@ -265,7 +273,25 @@
       "name_conflict_hint": " The imported skill's name already exists — delete the existing one before retrying.",
       "fallback_error": "Import failed",
       "cancel": "Cancel",
-      "toast_imported": "Skill imported"
+      "toast_imported": "Skill imported",
+      "direct_zip_hint": "Direct .zip/.skill download links also work — e.g. a GitHub release asset or repo zipball. It is fetched and unpacked automatically."
+    },
+    "archive": {
+      "pick_file": "Choose a .zip or .skill file",
+      "pick_hint": "Bundles may include scripts, data and binary resources (up to 100 MB)",
+      "conflict_label": "If a skill with the same name exists",
+      "conflict_overwrite": "Overwrite",
+      "conflict_rename": "Rename",
+      "conflict_skip": "Skip",
+      "global_label": "Share with all workspaces (global)",
+      "global_hint": "Readable everywhere, editable by admins only; a run picks it up when its text names the skill",
+      "import": "Import",
+      "importing": "Importing…",
+      "cancel": "Cancel",
+      "toast_imported": "Skill imported",
+      "toast_updated": "Skill updated",
+      "fallback_error": "Import failed",
+      "too_large": "The archive exceeds the 100 MB upload limit — trim it and retry."
     }
   },
   "runtime_import": {
@@ -338,6 +364,7 @@
     "no_content": "*No content yet*",
     "markdown_placeholder": "Write markdown content...",
     "raw_placeholder": "File content...",
-    "raw_aria": "Plain text content of {{path}}"
+    "raw_aria": "Plain text content of {{path}}",
+    "binary_resource": "Binary resource ({{bytes}} bytes) — not previewable, but available to the agent"
   }
 }

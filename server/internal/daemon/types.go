@@ -6,7 +6,11 @@ import (
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 )
 
-// AgentEntry describes a single available agent CLI.
+type AncestorBriefRef struct {
+	ID        string `json:"id"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type AgentEntry struct {
 	Path string // path to CLI binary (pinned at startup; symlink-resolved to a concrete, possibly versioned, path)
 	// Command is the bare command name or MULTICA_*_PATH value that Path was
@@ -68,6 +72,10 @@ type Task struct {
 	// into the brief. Empty when the owner hasn't set one.
 	WorkspaceContext              string                 `json:"workspace_context,omitempty"`
 	ThreadName                    string                 `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	CurrentIssueTitle             string                 `json:"current_issue_title,omitempty"`
+	CurrentIssueDescription       string                 `json:"current_issue_description,omitempty"`
+	AncestorBrief                 string                 `json:"ancestor_brief,omitempty"`
+	AncestorBriefRefs             []AncestorBriefRef     `json:"ancestor_brief_refs,omitempty"`
 	Agent                         *AgentData             `json:"agent,omitempty"`
 	ConnectedApps                 []ConnectedAppData     `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
 	Repos                         []RepoData             `json:"repos,omitempty"`
@@ -221,10 +229,13 @@ type SkillData struct {
 
 // SkillFileData represents a supporting file within a skill.
 type SkillFileData struct {
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	SHA256    string `json:"sha256,omitempty"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Path            string `json:"path"`
+	Content         string `json:"content,omitempty"`
+	ContentBase64   string `json:"content_base64,omitempty"`
+	ContentEncoding string `json:"content_encoding,omitempty"`
+	Mode            int32  `json:"mode,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
+	SizeBytes       int64  `json:"size_bytes,omitempty"`
 }
 
 type SkillRefData struct {
@@ -239,9 +250,11 @@ type SkillRefData struct {
 }
 
 type SkillFileRefData struct {
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	SizeBytes int64  `json:"size_bytes"`
+	Path            string `json:"path"`
+	SHA256          string `json:"sha256"`
+	SizeBytes       int64  `json:"size_bytes"`
+	ContentEncoding string `json:"content_encoding,omitempty"`
+	Mode            int32  `json:"mode,omitempty"`
 }
 
 // TaskUsageEntry represents token usage for a single model during a task execution.

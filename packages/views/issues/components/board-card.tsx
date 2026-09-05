@@ -299,7 +299,13 @@ export const BoardCardContent = memo(function BoardCardContent({
                 </div>
               )}
               {showUpdatedHint && (
-                <span className="shrink-0 text-caption text-muted-foreground">
+                <span
+                  className={`shrink-0 text-caption ${
+                    issue.has_unread_agent_result
+                      ? "font-bold text-destructive"
+                      : "text-muted-foreground"
+                  }`}
+                >
                   {t(($) => $.card.updated_ago, { time: timeAgo(issue.updated_at) })}
                 </span>
               )}

@@ -27,12 +27,22 @@ export function useCreateProject() {
   });
 }
 
+export function useCreateProjectInWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ data, workspaceId }: { data: CreateProjectRequest; workspaceId: string }) => api.createProject(data, workspaceId),
+    onSuccess: (_project, { workspaceId }) => {
+      void qc.invalidateQueries({ queryKey: projectKeys.list(workspaceId) });
+      void qc.invalidateQueries({ queryKey: workspaceKeys.list() });
+    },
+  });
+}
+
 export function useUpdateProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: string } & UpdateProjectRequest) =>
-      api.updateProject(id, data),
+    mutationFn: ({ id, ...data }: { id: string } & UpdateProjectRequest) => api.updateProject(id, data),
     onMutate: ({ id, ...data }) => {
       qc.cancelQueries({ queryKey: projectKeys.list(wsId) });
       const prevList = qc.getQueryData<ListProjectsResponse>(projectKeys.list(wsId));
@@ -89,9 +99,6 @@ export function useMigrateProject() {
   return useMutation({
     mutationFn: ({ id, targetWorkspaceId }: { id: string; targetWorkspaceId: string }) => api.migrateProject(id, targetWorkspaceId),
     onSuccess: async (_project, vars) => {
-      // Migration moves both the project and every issue into another
-      // workspace. Invalidate both sides before the caller navigates so the
-      // destination detail/list cannot render stale server state.
       qc.removeQueries({ queryKey: projectKeys.detail(wsId, vars.id) });
       await Promise.all([
         qc.invalidateQueries({ queryKey: projectKeys.all(wsId) }),

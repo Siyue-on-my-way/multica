@@ -23,6 +23,21 @@ const (
 	reportPromptMaxChars        = 24000
 	reportSummaryVersion        = 1
 	reportAnalysisVersion       = 2
+	// Report history is user-visible evidence, so it is bounded independently
+	// from the LLM prompt. PostgreSQL already compresses JSONB, but storing the
+	// same raw task payloads and bookkeeping rows still makes every report
+	// unnecessarily large.
+	reportSnapshotMaxBytes            = 512 * 1024
+	reportSnapshotMaxIssues           = 200
+	reportSnapshotMaxReferences       = 100
+	reportSnapshotEvidenceBudget      = 320 * 1024
+	reportSnapshotMaxEventsPerIssue   = 80
+	reportSnapshotMaxCharsPerIssue    = 12000
+	reportSnapshotMaxEventContent     = 1200
+	reportSnapshotMaxIssueDescription = 1200
+	reportSnapshotMaxWarnings         = 8
+	reportContentMaxBytes             = 256 * 1024
+	reportContentMaxEvidenceEvents    = 400
 )
 
 type ReportLLM interface {
@@ -166,20 +181,24 @@ type ReportIssue struct {
 }
 
 type ReportSnapshot struct {
-	PeriodType         string                `json:"period_type"`
-	RangeStart         time.Time             `json:"range_start"`
-	RangeEnd           time.Time             `json:"range_end"`
-	Timezone           string                `json:"timezone"`
-	ProjectTitle       string                `json:"project_title,omitempty"`
-	ProjectDescription string                `json:"project_description,omitempty"`
-	GeneratedAt        time.Time             `json:"generated_at"`
-	SummaryVersion     int                   `json:"summary_version"`
-	AnalysisVersion    int                   `json:"analysis_version,omitempty"`
-	Issues             []ReportIssue         `json:"issues"`
-	ActiveIssueCount   int                   `json:"active_issue_count"`
-	WorkItems          []ReportWorkItem      `json:"work_items,omitempty"`
-	ProjectAnalysis    ReportProjectAnalysis `json:"project_analysis,omitempty"`
-	AnalysisWarnings   []string              `json:"analysis_warnings,omitempty"`
+	PeriodType         string                 `json:"period_type"`
+	RangeStart         time.Time              `json:"range_start"`
+	RangeEnd           time.Time              `json:"range_end"`
+	Timezone           string                 `json:"timezone"`
+	ProjectTitle       string                 `json:"project_title,omitempty"`
+	ProjectDescription string                 `json:"project_description,omitempty"`
+	GeneratedAt        time.Time              `json:"generated_at"`
+	SummaryVersion     int                    `json:"summary_version"`
+	AnalysisVersion    int                    `json:"analysis_version,omitempty"`
+	Issues             []ReportIssue          `json:"issues"`
+	ActiveIssueCount   int                    `json:"active_issue_count"`
+	WorkItems          []ReportWorkItem       `json:"work_items,omitempty"`
+	ProjectAnalysis    ReportProjectAnalysis  `json:"project_analysis,omitempty"`
+	AnalysisWarnings   []string               `json:"analysis_warnings,omitempty"`
+	NarrativeVersion   int                    `json:"narrative_version,omitempty"`
+	Narratives         []ReportIssueNarrative `json:"narratives,omitempty"`
+	ExecutiveSummary   string                 `json:"executive_summary,omitempty"`
+	StorageTruncated   bool                   `json:"storage_truncated,omitempty"`
 
 	// These fields are retained for existing consumers of report history. New
 	// issue-centered clients should use Issues and its current status values.
@@ -203,6 +222,7 @@ type ReportGenerator struct {
 func (g *ReportGenerator) Generate(
 	ctx context.Context,
 	project db.Project,
+	templateID pgtype.UUID,
 	periodType string,
 	rangeStart time.Time,
 	rangeEnd time.Time,
@@ -210,25 +230,38 @@ func (g *ReportGenerator) Generate(
 	generatedByType string,
 	generatedByID pgtype.UUID,
 ) (db.ReportHistory, error) {
-	snapshotJSON, content, err := g.build(ctx, project, periodType, rangeStart, rangeEnd, timezoneName)
+	snapshotJSON, content, storageTruncated, err := g.build(ctx, project, templateID, periodType, rangeStart, rangeEnd, timezoneName)
 	if err != nil {
 		return db.ReportHistory{}, err
+	}
+	manifest, compressed, err := prepareReportSnapshotStorage(snapshotJSON, storageTruncated)
+	if err != nil {
+		return db.ReportHistory{}, fmt.Errorf("encode report snapshot: %w", err)
 	}
 	report, err := g.Queries.CreateReportHistory(ctx, db.CreateReportHistoryParams{
 		WorkspaceID:     project.WorkspaceID,
 		ProjectID:       project.ID,
+		TemplateID:      templateID,
 		PeriodType:      periodType,
 		RangeStart:      pgtype.Timestamptz{Time: rangeStart, Valid: true},
 		RangeEnd:        pgtype.Timestamptz{Time: rangeEnd, Valid: true},
 		Timezone:        timezoneName,
 		GeneratedByType: generatedByType,
 		GeneratedByID:   generatedByID,
-		DataSnapshot:    snapshotJSON,
+		DataSnapshot:    manifest,
 		Content:         content,
 	})
 	if err != nil {
 		return db.ReportHistory{}, fmt.Errorf("save report history: %w", err)
 	}
+	// Persist the compressed evidence after the row exists (FK) but before the
+	// report is returned. A failure here degrades only the evidence view —
+	// ResolveReportSnapshot surfaces an expired manifest — never the summary,
+	// so it is logged rather than failing an otherwise-complete report.
+	if err := g.persistReportSnapshot(ctx, report.ID, project, compressed, snapshotJSON, storageTruncated); err != nil {
+		slog.Warn("project report: snapshot persistence skipped", "project_id", project.ID, "error", err)
+	}
+	g.pruneReportHistory(ctx, project)
 	return report, nil
 }
 
@@ -236,43 +269,56 @@ func (g *ReportGenerator) GenerateInto(
 	ctx context.Context,
 	project db.Project,
 	reportID pgtype.UUID,
+	templateID pgtype.UUID,
 	periodType string,
 	rangeStart time.Time,
 	rangeEnd time.Time,
 	timezoneName string,
 ) error {
-	snapshotJSON, content, err := g.build(ctx, project, periodType, rangeStart, rangeEnd, timezoneName)
+	snapshotJSON, content, storageTruncated, err := g.build(ctx, project, templateID, periodType, rangeStart, rangeEnd, timezoneName)
 	if err != nil {
 		return err
 	}
-	if _, err := g.Queries.UpdateReportHistoryGeneration(ctx, db.UpdateReportHistoryGenerationParams{
+	manifest, compressed, err := prepareReportSnapshotStorage(snapshotJSON, storageTruncated)
+	if err != nil {
+		return fmt.Errorf("encode report snapshot: %w", err)
+	}
+	// Persist the compressed evidence before flipping content to non-empty so
+	// that once a report is "done" its snapshot is guaranteed durable. A
+	// failure leaves the row pending (content='') and the scheduler retries.
+	if err := g.persistReportSnapshot(ctx, reportID, project, compressed, snapshotJSON, storageTruncated); err != nil {
+		return fmt.Errorf("persist report snapshot: %w", err)
+	}
+	if err := g.Queries.UpdateReportHistoryGeneration(ctx, db.UpdateReportHistoryGenerationParams{
 		ID:           reportID,
-		DataSnapshot: snapshotJSON,
+		DataSnapshot: manifest,
 		Content:      content,
 	}); err != nil {
 		return fmt.Errorf("save generated report: %w", err)
 	}
+	g.pruneReportHistory(ctx, project)
 	return nil
 }
 
 func (g *ReportGenerator) build(
 	ctx context.Context,
 	project db.Project,
+	templateID pgtype.UUID,
 	periodType string,
 	rangeStart time.Time,
 	rangeEnd time.Time,
 	timezoneName string,
-) ([]byte, string, error) {
+) ([]byte, string, bool, error) {
 	location, err := time.LoadLocation(timezoneName)
 	if err != nil {
-		return nil, "", fmt.Errorf("invalid timezone %q: %w", timezoneName, err)
+		return nil, "", false, fmt.Errorf("invalid timezone %q: %w", timezoneName, err)
 	}
 
 	now := time.Now().In(location)
 	aggregator := &ProjectIssueAggregator{Queries: g.Queries}
 	snapshot, err := aggregator.Aggregate(ctx, project, rangeStart, rangeEnd, now)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	snapshot.PeriodType = periodType
 	snapshot.RangeStart = rangeStart.In(location)
@@ -284,28 +330,487 @@ func (g *ReportGenerator) build(
 	}
 
 	var content string
-	if len(snapshot.Issues) > 0 {
-		snapshot = g.withIssueSummaries(ctx, snapshot)
-		snapshot = g.withProjectAnalysis(ctx, snapshot)
-		content = buildIssueReportContent(snapshot)
-	} else {
-		content, err = g.generateContent(ctx, snapshot)
-		if err != nil {
-			return nil, "", err
+	var templatePrompt string
+	if templateID.Valid {
+		template, err := g.Queries.GetReportTemplate(ctx, db.GetReportTemplateParams{
+			ID:          templateID,
+			WorkspaceID: project.WorkspaceID,
+		})
+		if err == nil {
+			templatePrompt = template.SystemPrompt
 		}
 	}
 
-	snapshotJSON, err := json.Marshal(snapshot)
+	// Narrative pipeline: Stage 0+1 per-issue conversation summaries, then
+	// Stage 2 project-level executive narrative. A custom template prompt takes
+	// over the Stage-2 system prompt. The same deterministic path is used when
+	// there are no discussion/task records, so a status-only window never sends
+	// the legacy status buckets to the LLM.
+	snapshot = g.withNarratives(ctx, snapshot)
+	snapshot = g.withExecutiveSummary(ctx, snapshot, templatePrompt)
+	content = buildNarrativeReportContent(snapshot)
+
+	snapshotJSON, storageTruncated, err := marshalReportSnapshot(snapshot)
 	if err != nil {
-		return nil, "", fmt.Errorf("encode report snapshot: %w", err)
+		return nil, "", false, fmt.Errorf("encode report snapshot: %w", err)
 	}
-	return snapshotJSON, content, nil
+	slog.Info("project report: storage footprint",
+		"project_id", project.ID,
+		"snapshot_input_events", reportSnapshotEventCount(snapshot.Issues),
+		"snapshot_bytes", len(snapshotJSON),
+		"content_bytes", len(content),
+		"total_bytes", len(snapshotJSON)+len(content),
+		"storage_truncated", storageTruncated,
+	)
+	return snapshotJSON, content, storageTruncated, nil
+}
+
+func (g *ReportGenerator) pruneReportHistory(ctx context.Context, project db.Project) {
+	if err := g.Queries.PruneProjectReportHistory(ctx, db.PruneProjectReportHistoryParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+	}); err != nil {
+		// Cleanup is deliberately best effort. A report that was already saved
+		// must not be turned into a failed report merely because retention
+		// maintenance could not run.
+		slog.Warn("project report: history cleanup skipped", "project_id", project.ID, "error", err)
+	}
+}
+
+// marshalReportSnapshot is the storage boundary for report evidence. Prompts
+// may use a larger in-memory view, but the persisted snapshot only needs the
+// conversation that supports the narrative. Status/activity bookkeeping is
+// represented by status fields, counters, and the narrative status span; raw
+// JSON payloads are not useful evidence and can be very large.
+func marshalReportSnapshot(snapshot ReportSnapshot) ([]byte, bool, error) {
+	compacted := compactReportSnapshot(snapshot)
+	encoded, err := json.Marshal(compacted)
+	if err != nil {
+		return nil, compacted.StorageTruncated, err
+	}
+	if len(encoded) <= reportSnapshotMaxBytes {
+		return encoded, compacted.StorageTruncated, nil
+	}
+
+	// Keep the L1/L2 report useful even for an unusually large project. The
+	// evidence appendix is the only part that can be dropped without changing
+	// counts or the executive narrative.
+	compacted.StorageTruncated = true
+	for index := range compacted.Issues {
+		if len(compacted.Issues[index].Timeline) > 0 {
+			compacted.Issues[index].Timeline = nil
+			compacted.Issues[index].TimelineTruncated = true
+		}
+	}
+	encoded, err = json.Marshal(compacted)
+	if err != nil {
+		return nil, compacted.StorageTruncated, err
+	}
+	if len(encoded) <= reportSnapshotMaxBytes {
+		return encoded, compacted.StorageTruncated, nil
+	}
+
+	// The analysis/work-item structures repeat issue facts. Retain the
+	// executive summary and issue headers as a final bounded fallback; the full
+	// Markdown content remains available in report_history.content.
+	compacted.WorkItems = nil
+	compacted.ProjectAnalysis = ReportProjectAnalysis{
+		Summary:    compactReportText(compacted.ProjectAnalysis.Summary, 2000),
+		Confidence: compacted.ProjectAnalysis.Confidence,
+		Source:     compacted.ProjectAnalysis.Source,
+	}
+	compacted.Narratives = compactReportNarratives(compacted.Narratives, 100)
+	for index := range compacted.Issues {
+		compacted.Issues[index] = compactReportIssueHeader(compacted.Issues[index])
+	}
+	encoded, err = json.Marshal(compacted)
+	if err != nil {
+		return nil, compacted.StorageTruncated, err
+	}
+	if len(encoded) <= reportSnapshotMaxBytes {
+		return encoded, compacted.StorageTruncated, nil
+	}
+
+	// This path is intentionally lossier but deterministic. It protects the
+	// report write from a single pathological description or a project with an
+	// unusually high issue count.
+	compacted.ProjectDescription = ""
+	compacted.Narratives = nil
+	if len(compacted.Issues) > 50 {
+		compacted.Issues = compacted.Issues[:50]
+	}
+	encoded, err = json.Marshal(compacted)
+	if err != nil {
+		return nil, compacted.StorageTruncated, err
+	}
+	if len(encoded) <= reportSnapshotMaxBytes {
+		return encoded, compacted.StorageTruncated, nil
+	}
+
+	// A final metadata-only representation makes the size limit a hard
+	// contract even if a future field introduces an unexpectedly large slice or
+	// string. The complete Markdown report is stored separately in content.
+	minimal := minimalReportSnapshot(compacted)
+	encoded, err = json.Marshal(minimal)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(encoded) > reportSnapshotMaxBytes {
+		return nil, true, fmt.Errorf("minimal report snapshot is %d bytes, limit is %d", len(encoded), reportSnapshotMaxBytes)
+	}
+	return encoded, true, nil
+}
+
+func compactReportSnapshot(snapshot ReportSnapshot) ReportSnapshot {
+	compacted := snapshot
+	compacted.PeriodType = compactReportText(compacted.PeriodType, 64)
+	compacted.Timezone = compactReportText(compacted.Timezone, 128)
+	compacted.ProjectTitle = compactReportText(compacted.ProjectTitle, 500)
+	compacted.ProjectDescription = compactReportText(compacted.ProjectDescription, 2000)
+	compacted.AnalysisWarnings = compactReportStringList(compacted.AnalysisWarnings, reportSnapshotMaxWarnings, 300)
+
+	if len(compacted.Issues) > reportSnapshotMaxIssues {
+		compacted.Issues = compacted.Issues[:reportSnapshotMaxIssues]
+		compacted.StorageTruncated = true
+	}
+	issues := make([]ReportIssue, 0, len(compacted.Issues))
+	remainingEvidence := reportSnapshotEvidenceBudget
+	for _, issue := range compacted.Issues {
+		compact := compactReportIssue(issue)
+		if remainingEvidence <= 0 {
+			if len(compact.Timeline) > 0 {
+				compact.Timeline = nil
+				compact.TimelineTruncated = true
+				compacted.StorageTruncated = true
+			}
+		} else if eventBytes := reportTimelineBytes(compact.Timeline); eventBytes > remainingEvidence {
+			compact.Timeline = fitTimelineToCharacterBudget(compact.Timeline, remainingEvidence)
+			compact.TimelineTruncated = true
+			compacted.StorageTruncated = true
+			remainingEvidence = 0
+		} else {
+			remainingEvidence -= eventBytes
+		}
+		if compact.TimelineTruncated {
+			compacted.StorageTruncated = true
+		}
+		issues = append(issues, compact)
+	}
+	compacted.Issues = issues
+	compacted.Completed = compactReportIssueReferencesForStorage(compacted.Completed, &compacted.StorageTruncated)
+	compacted.InProgress = compactReportIssueReferencesForStorage(compacted.InProgress, &compacted.StorageTruncated)
+	compacted.Blocked = compactReportIssueReferencesForStorage(compacted.Blocked, &compacted.StorageTruncated)
+	compacted.Overdue = compactReportIssueReferencesForStorage(compacted.Overdue, &compacted.StorageTruncated)
+	compacted.Cancelled = compactReportIssueReferencesForStorage(compacted.Cancelled, &compacted.StorageTruncated)
+	compacted.WorkItems = compactReportWorkItems(compacted.WorkItems)
+	compacted.ProjectAnalysis = compactReportProjectAnalysis(compacted.ProjectAnalysis)
+	compacted.Narratives = compactReportNarratives(compacted.Narratives, reportSnapshotMaxIssues)
+	compacted.ExecutiveSummary = compactReportText(compacted.ExecutiveSummary, 4000)
+	return compacted
+}
+
+func compactReportIssue(issue ReportIssue) ReportIssue {
+	issue.IssueID = compactReportText(issue.IssueID, 100)
+	issue.Identifier = compactReportText(issue.Identifier, 100)
+	issue.Title = compactReportText(issue.Title, 500)
+	issue.Description = compactReportText(issue.Description, reportSnapshotMaxIssueDescription)
+	issue.BusinessDomain = compactReportText(issue.BusinessDomain, 200)
+	issue.Status = compactReportText(issue.Status, 64)
+	issue.DueDate = compactReportText(issue.DueDate, 32)
+	issue.Summary = compactReportIssueSummary(issue.Summary)
+	issue.Timeline = compactReportTimeline(issue.Timeline, &issue.TimelineTruncated)
+	return issue
+}
+
+func compactReportIssueHeader(issue ReportIssue) ReportIssue {
+	return ReportIssue{
+		IssueID:        compactReportText(issue.IssueID, 100),
+		Identifier:     compactReportText(issue.Identifier, 100),
+		Title:          compactReportText(issue.Title, 500),
+		BusinessDomain: compactReportText(issue.BusinessDomain, 200),
+		Status:         compactReportText(issue.Status, 64),
+		DueDate:        compactReportText(issue.DueDate, 32),
+	}
+}
+
+func compactReportIssueReferences(issues []ReportIssue) []ReportIssue {
+	if len(issues) == 0 {
+		return []ReportIssue{}
+	}
+	result := make([]ReportIssue, 0, len(issues))
+	for _, issue := range issues {
+		result = append(result, compactReportIssueHeader(issue))
+	}
+	return result
+}
+
+func compactReportIssueReferencesForStorage(issues []ReportIssue, truncated *bool) []ReportIssue {
+	result := compactReportIssueReferences(issues)
+	if len(result) <= reportSnapshotMaxReferences {
+		return result
+	}
+	if truncated != nil {
+		*truncated = true
+	}
+	return result[:reportSnapshotMaxReferences]
+}
+
+func minimalReportSnapshot(snapshot ReportSnapshot) ReportSnapshot {
+	summary := strings.TrimSpace(snapshot.ExecutiveSummary)
+	if summary == "" {
+		summary = snapshot.ProjectAnalysis.Summary
+	}
+	summary = compactReportText(summary, 4000)
+	return ReportSnapshot{
+		PeriodType:       compactReportText(snapshot.PeriodType, 64),
+		RangeStart:       snapshot.RangeStart,
+		RangeEnd:         snapshot.RangeEnd,
+		Timezone:         compactReportText(snapshot.Timezone, 128),
+		ProjectTitle:     compactReportText(snapshot.ProjectTitle, 500),
+		GeneratedAt:      snapshot.GeneratedAt,
+		SummaryVersion:   snapshot.SummaryVersion,
+		AnalysisVersion:  snapshot.AnalysisVersion,
+		ActiveIssueCount: snapshot.ActiveIssueCount,
+		ProjectAnalysis: ReportProjectAnalysis{
+			Summary: summary,
+		},
+		NarrativeVersion: snapshot.NarrativeVersion,
+		ExecutiveSummary: summary,
+		StorageTruncated: true,
+		Completed:        []ReportIssue{},
+		InProgress:       []ReportIssue{},
+		Blocked:          []ReportIssue{},
+		Overdue:          []ReportIssue{},
+		Cancelled:        []ReportIssue{},
+		CompletedCount:   snapshot.CompletedCount,
+		InProgressCount:  snapshot.InProgressCount,
+		BlockedCount:     snapshot.BlockedCount,
+		OverdueCount:     snapshot.OverdueCount,
+		CancelledCount:   snapshot.CancelledCount,
+	}
+}
+
+func compactReportIssueSummary(summary ReportIssueSummary) ReportIssueSummary {
+	summary.Problem = compactReportText(summary.Problem, 600)
+	summary.Outcome = compactReportText(summary.Outcome, 600)
+	summary.Decision = compactReportText(summary.Decision, 500)
+	summary.CurrentState = compactReportText(summary.CurrentState, 300)
+	summary.Impact = compactReportText(summary.Impact, 500)
+	summary.Actions = compactReportStringList(summary.Actions, 4, 300)
+	summary.OpenItems = compactReportStringList(summary.OpenItems, 4, 300)
+	summary.WorkTypes = compactReportStringList(summary.WorkTypes, 6, 100)
+	summary.WorkDone = compactReportStringList(summary.WorkDone, 4, 300)
+	summary.Deliverables = compactReportStringList(summary.Deliverables, 4, 300)
+	summary.Verification = compactReportStringList(summary.Verification, 4, 300)
+	summary.Dependencies = compactReportStringList(summary.Dependencies, 4, 300)
+	summary.Risks = compactReportStringList(summary.Risks, 4, 300)
+	summary.Artifacts = compactReportStringList(summary.Artifacts, 4, 300)
+	summary.EvidenceIDs = compactReportStringList(summary.EvidenceIDs, 12, 100)
+	return summary
+}
+
+func compactReportTimeline(events []ReportTimelineEvent, truncated *bool) []ReportTimelineEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	conversationEvents := reportPromptTimelineEvents(events)
+	selected := cloneAndLimitTimeline(conversationEvents, truncated)
+	if len(conversationEvents) > len(selected) && truncated != nil {
+		*truncated = true
+	}
+	result := make([]ReportTimelineEvent, 0, minReportInt(len(selected), reportSnapshotMaxEventsPerIssue))
+	for _, event := range selected {
+		content := reportConversationEventContent(event)
+		if content == "" {
+			continue
+		}
+		event.Content = compactReportText(content, reportSnapshotMaxEventContent)
+		event.Action = ""
+		event.Details = nil
+		if event.Type != "comment" {
+			event.AuthorID = ""
+			event.CommentType = ""
+			event.ParentID = ""
+		}
+		result = append(result, event)
+	}
+	if len(result) > reportSnapshotMaxEventsPerIssue {
+		result = result[len(result)-reportSnapshotMaxEventsPerIssue:]
+		if truncated != nil {
+			*truncated = true
+		}
+	}
+	if reportTimelineBytes(result) > reportSnapshotMaxCharsPerIssue {
+		result = fitTimelineToCharacterBudget(result, reportSnapshotMaxCharsPerIssue)
+		if truncated != nil {
+			*truncated = true
+		}
+	}
+	return result
+}
+
+func compactReportWorkItems(items []ReportWorkItem) []ReportWorkItem {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]ReportWorkItem, 0, minReportInt(len(items), reportSnapshotMaxIssues))
+	for index, item := range items {
+		if index >= reportSnapshotMaxIssues {
+			break
+		}
+		item.IssueTitle = compactReportText(item.IssueTitle, 500)
+		item.BusinessDomain = compactReportText(item.BusinessDomain, 200)
+		item.Milestone = compactReportText(item.Milestone, 300)
+		item.Title = compactReportText(item.Title, 500)
+		item.Description = compactReportText(item.Description, 600)
+		item.Decision = compactReportText(item.Decision, 400)
+		item.CurrentState = compactReportText(item.CurrentState, 300)
+		item.Outcome = compactReportText(item.Outcome, 600)
+		item.Impact = compactReportText(item.Impact, 500)
+		item.BusinessImpact = compactReportText(item.BusinessImpact, 500)
+		item.Milestones = compactReportStringList(item.Milestones, 4, 200)
+		item.Categories = compactReportStringList(item.Categories, 6, 100)
+		item.WorkDone = compactReportStringList(item.WorkDone, 4, 300)
+		item.Deliverables = compactReportStringList(item.Deliverables, 4, 300)
+		item.Verification = compactReportStringList(item.Verification, 4, 300)
+		item.Dependencies = compactReportStringList(item.Dependencies, 4, 300)
+		item.Risks = compactReportStringList(item.Risks, 4, 300)
+		item.EvidenceIDs = compactReportStringList(item.EvidenceIDs, 12, 100)
+		result = append(result, item)
+	}
+	return result
+}
+
+func compactReportProjectAnalysis(analysis ReportProjectAnalysis) ReportProjectAnalysis {
+	analysis.Summary = compactReportText(analysis.Summary, 2000)
+	analysis.EvidenceIDs = compactReportStringList(analysis.EvidenceIDs, 30, 100)
+	if len(analysis.BusinessDomains) > 50 {
+		analysis.BusinessDomains = analysis.BusinessDomains[:50]
+	}
+	for index := range analysis.BusinessDomains {
+		domain := &analysis.BusinessDomains[index]
+		domain.ID = compactReportText(domain.ID, 120)
+		domain.Name = compactReportText(domain.Name, 200)
+		domain.Summary = compactReportText(domain.Summary, 600)
+		domain.BusinessImpact = compactReportText(domain.BusinessImpact, 500)
+		domain.WorkItemIDs = compactReportStringList(domain.WorkItemIDs, 50, 100)
+		domain.EvidenceIDs = compactReportStringList(domain.EvidenceIDs, 20, 100)
+		if len(domain.Milestones) > 20 {
+			domain.Milestones = domain.Milestones[:20]
+		}
+		for milestoneIndex := range domain.Milestones {
+			domain.Milestones[milestoneIndex] = compactReportMilestone(domain.Milestones[milestoneIndex])
+		}
+	}
+	if len(analysis.Milestones) > 100 {
+		analysis.Milestones = analysis.Milestones[:100]
+	}
+	for index := range analysis.Milestones {
+		analysis.Milestones[index] = compactReportMilestone(analysis.Milestones[index])
+	}
+	if len(analysis.Changes) > 100 {
+		analysis.Changes = analysis.Changes[:100]
+	}
+	for index := range analysis.Changes {
+		change := &analysis.Changes[index]
+		change.ID = compactReportText(change.ID, 120)
+		change.Category = compactReportText(change.Category, 100)
+		change.Title = compactReportText(change.Title, 300)
+		change.Description = compactReportText(change.Description, 600)
+		change.Impact = compactReportText(change.Impact, 500)
+		change.EvidenceIDs = compactReportStringList(change.EvidenceIDs, 20, 100)
+	}
+	analysis.Risks = compactReportAnalysisNotes(analysis.Risks)
+	analysis.NextSteps = compactReportAnalysisNotes(analysis.NextSteps)
+	return analysis
+}
+
+func compactReportMilestone(milestone ReportMilestone) ReportMilestone {
+	milestone.ID = compactReportText(milestone.ID, 120)
+	milestone.BusinessDomain = compactReportText(milestone.BusinessDomain, 200)
+	milestone.Title = compactReportText(milestone.Title, 300)
+	milestone.Summary = compactReportText(milestone.Summary, 600)
+	milestone.WorkItemIDs = compactReportStringList(milestone.WorkItemIDs, 50, 100)
+	milestone.EvidenceIDs = compactReportStringList(milestone.EvidenceIDs, 20, 100)
+	return milestone
+}
+
+func compactReportAnalysisNotes(notes []ReportAnalysisNote) []ReportAnalysisNote {
+	if len(notes) > 20 {
+		notes = notes[:20]
+	}
+	result := make([]ReportAnalysisNote, 0, len(notes))
+	for _, note := range notes {
+		note.Title = compactReportText(note.Title, 300)
+		note.Description = compactReportText(note.Description, 600)
+		note.EvidenceIDs = compactReportStringList(note.EvidenceIDs, 20, 100)
+		result = append(result, note)
+	}
+	return result
+}
+
+func compactReportNarratives(narratives []ReportIssueNarrative, maxItems int) []ReportIssueNarrative {
+	if len(narratives) > maxItems {
+		narratives = narratives[:maxItems]
+	}
+	result := make([]ReportIssueNarrative, 0, len(narratives))
+	for _, narrative := range narratives {
+		narrative.Identifier = compactReportText(narrative.Identifier, 100)
+		narrative.Title = compactReportText(narrative.Title, 500)
+		narrative.Business = compactReportText(narrative.Business, 200)
+		narrative.StatusFrom = compactReportText(narrative.StatusFrom, 100)
+		narrative.StatusTo = compactReportText(narrative.StatusTo, 100)
+		narrative.Done = compactReportText(narrative.Done, 600)
+		narrative.Outcome = compactReportText(narrative.Outcome, 600)
+		narrative.Evidence = compactReportStringList(narrative.Evidence, 8, 120)
+		narrative.Risks = compactReportStringList(narrative.Risks, 4, 300)
+		result = append(result, narrative)
+	}
+	return result
+}
+
+func compactReportStringList(values []string, maxItems, maxLength int) []string {
+	if len(values) == 0 || maxItems <= 0 {
+		return nil
+	}
+	result := make([]string, 0, minReportInt(len(values), maxItems))
+	for _, value := range values {
+		value = compactReportText(value, maxLength)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+		if len(result) == maxItems {
+			break
+		}
+	}
+	return result
+}
+
+func compactReportText(value string, maxLength int) string {
+	return truncateReportText(strings.TrimSpace(sanitizeSensitiveText(value)), maxLength)
+}
+
+func reportTimelineBytes(events []ReportTimelineEvent) int {
+	total := 0
+	for _, event := range events {
+		total += eventChars(event)
+	}
+	return total
+}
+
+func reportSnapshotEventCount(issues []ReportIssue) int {
+	total := 0
+	for _, issue := range issues {
+		total += len(issue.Timeline)
+	}
+	return total
 }
 
 // generateContent keeps the legacy path available for old saved snapshots and
-// tests. New snapshots use withIssueSummaries, which always returns one
-// deterministic summary per issue even if the model fails for another issue.
-func (g *ReportGenerator) generateContent(ctx context.Context, snapshot ReportSnapshot) (string, error) {
+// focused compatibility tests. New snapshots use the narrative pipeline in
+// build, which always returns deterministic output when the model is absent.
+func (g *ReportGenerator) generateContent(ctx context.Context, snapshot ReportSnapshot, templatePrompt string) (string, error) {
 	if len(snapshot.Issues) > 0 {
 		snapshot = g.withIssueSummaries(ctx, snapshot)
 		snapshot = g.withProjectAnalysis(ctx, snapshot)
@@ -320,12 +825,17 @@ func (g *ReportGenerator) generateContent(ctx context.Context, snapshot ReportSn
 		return buildDeterministicReportContent(snapshot), nil
 	}
 
+	sysPrompt := legacyReportSystemPrompt
+	if templatePrompt != "" {
+		sysPrompt = templatePrompt
+	}
+
 	generateCtx, cancel := context.WithTimeout(ctx, reportLLMTimeout)
 	defer cancel()
 	raw, err := g.LLM.GenerateJSON(
 		generateCtx,
 		"",
-		legacyReportSystemPrompt,
+		sysPrompt,
 		string(snapshotJSON),
 		reportLLMTemperature,
 		reportLLMMaxCompletionToken,
@@ -898,7 +1408,7 @@ func reportIssueEvidence(issue ReportIssue) []string {
 	result := make([]string, 0, len(issue.Timeline))
 	seen := make(map[string]struct{}, len(issue.Timeline))
 	for _, event := range issue.Timeline {
-		if !event.InRange || strings.TrimSpace(event.ID) == "" {
+		if !event.InRange || strings.TrimSpace(event.ID) == "" || reportConversationEventContent(event) == "" {
 			continue
 		}
 		if _, duplicate := seen[event.ID]; duplicate {
@@ -974,41 +1484,99 @@ func normalizeReportCategories(values []string, fallback []string) []string {
 }
 
 func reportEventWorkDescription(event ReportTimelineEvent) string {
+	if value := reportConversationEventContent(event); value != "" {
+		return value
+	}
+
+	// Status transitions and generic activity-log rows are bookkeeping. They
+	// remain available in the snapshot for counters and auditability, but must
+	// not become work facts in the narrative or deterministic fallback.
+	if event.Type == "issue_status_history" || event.Type == "activity_log" {
+		return ""
+	}
+
 	var value string
 	switch event.Type {
-	case "comment":
-		value = event.Content
-	case "issue_status_history":
-		var details struct {
-			From string `json:"from_status"`
-			To   string `json:"to_status"`
-		}
-		if json.Unmarshal(event.Details, &details) == nil && details.From != "" && details.To != "" {
-			value = fmt.Sprintf("状态从 %s 变更为 %s", details.From, details.To)
-		}
-	case "agent_task_queue":
-		var details struct {
-			Status string          `json:"status"`
-			Error  string          `json:"error"`
-			Result json.RawMessage `json:"result"`
-		}
-		if json.Unmarshal(event.Details, &details) == nil {
-			switch {
-			case details.Error != "":
-				value = "任务失败：" + details.Error
-			case details.Status != "":
-				value = "任务状态：" + details.Status
-			case len(details.Result) > 0 && string(details.Result) != "null":
-				value = "任务结果：" + string(details.Result)
-			}
-		}
-	case "activity_log":
-		value = strings.TrimSpace(strings.Join([]string{event.Action, event.Content}, " · "))
 	default:
 		value = strings.TrimSpace(strings.Join([]string{event.Action, event.Content}, " · "))
 	}
 	value = strings.Join(strings.Fields(sanitizeSensitiveText(value)), " ")
 	return truncateReportText(value, 500)
+}
+
+// reportConversationEventContent is the Stage-0 allowlist. Only discussion
+// bodies and useful agent-task outcomes are allowed to become work facts or
+// LLM prompt lines. Status changes and generic activity records deliberately
+// return an empty string.
+func reportConversationEventContent(event ReportTimelineEvent) string {
+	switch event.Type {
+	case "comment":
+		return truncateReportText(strings.Join(strings.Fields(sanitizeSensitiveText(event.Content)), " "), 500)
+	case "agent_task_queue", "agent_task":
+		if content := strings.TrimSpace(sanitizeSensitiveText(event.Content)); content != "" {
+			return truncateReportText(strings.Join(strings.Fields(content), " "), 500)
+		}
+		return reportAgentTaskOutcome(event)
+	default:
+		return ""
+	}
+}
+
+func reportAgentTaskOutcome(event ReportTimelineEvent) string {
+	var details struct {
+		Status string          `json:"status"`
+		Error  string          `json:"error"`
+		Result json.RawMessage `json:"result"`
+	}
+	if len(event.Details) > 0 {
+		if err := json.Unmarshal(event.Details, &details); err != nil {
+			return ""
+		}
+	}
+
+	if errorText := reportJSONValueText(details.Error); errorText != "" {
+		return truncateReportText("任务失败："+errorText, 500)
+	}
+	if resultText := reportJSONValueText(details.Result); resultText != "" {
+		return truncateReportText("任务结果："+resultText, 500)
+	}
+
+	// A terminal task without a result still carries a useful, bounded fact.
+	switch strings.ToLower(strings.TrimSpace(details.Status)) {
+	case "completed", "succeeded", "success", "done":
+		return "执行完成"
+	case "failed", "error":
+		return "执行失败"
+	}
+	return ""
+}
+
+func reportJSONValueText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.Join(strings.Fields(sanitizeSensitiveText(typed)), " ")
+	case json.RawMessage:
+		if len(typed) == 0 || string(typed) == "null" {
+			return ""
+		}
+		var stringValue string
+		if json.Unmarshal(typed, &stringValue) == nil {
+			return strings.Join(strings.Fields(sanitizeSensitiveText(stringValue)), " ")
+		}
+		var generic any
+		if json.Unmarshal(typed, &generic) != nil {
+			return ""
+		}
+		encoded, err := json.Marshal(generic)
+		if err != nil || string(encoded) == "null" {
+			return ""
+		}
+		return strings.Join(strings.Fields(sanitizeSensitiveText(string(encoded))), " ")
+	default:
+		return strings.Join(strings.Fields(sanitizeSensitiveText(fmt.Sprint(typed))), " ")
+	}
 }
 
 func reportStatusLabel(status string) string {
@@ -1162,7 +1730,7 @@ func buildReportWorkItems(snapshot ReportSnapshot) []ReportWorkItem {
 func reportEvidenceSetForIssue(issue ReportIssue) map[string]struct{} {
 	valid := make(map[string]struct{})
 	for _, event := range issue.Timeline {
-		if event.InRange && strings.TrimSpace(event.ID) != "" {
+		if event.InRange && strings.TrimSpace(event.ID) != "" && reportConversationEventContent(event) != "" {
 			valid[event.ID] = struct{}{}
 		}
 	}
@@ -1495,8 +2063,13 @@ func cloneAndLimitTimeline(events []ReportTimelineEvent, truncated *bool) []Repo
 	if len(events) == 0 {
 		return nil
 	}
-	cloned := make([]ReportTimelineEvent, len(events))
-	copy(cloned, events)
+	cloned := reportPromptTimelineEvents(events)
+	if len(cloned) == 0 {
+		if truncated != nil {
+			*truncated = false
+		}
+		return nil
+	}
 	for index := range cloned {
 		if cloned[index].Details != nil {
 			cloned[index].Details = append(json.RawMessage(nil), cloned[index].Details...)
@@ -1539,11 +2112,14 @@ func cloneAndLimitTimeline(events []ReportTimelineEvent, truncated *bool) []Repo
 		return selected[left].OccurredAt.Before(selected[right].OccurredAt)
 	})
 	selected = fitTimelineToCharacterBudget(selected, reportPromptMaxChars)
-	*truncated = timelineNeedsTruncation(events)
+	if truncated != nil {
+		*truncated = timelineNeedsTruncation(cloned)
+	}
 	return selected
 }
 
 func timelineNeedsTruncation(events []ReportTimelineEvent) bool {
+	events = reportPromptTimelineEvents(events)
 	if len(events) > reportPromptMaxEvents {
 		return true
 	}
@@ -1552,6 +2128,16 @@ func timelineNeedsTruncation(events []ReportTimelineEvent) bool {
 		totalChars += eventChars(event)
 	}
 	return totalChars > reportPromptMaxChars
+}
+
+func reportPromptTimelineEvents(events []ReportTimelineEvent) []ReportTimelineEvent {
+	filtered := make([]ReportTimelineEvent, 0, len(events))
+	for _, event := range events {
+		if reportConversationEventContent(event) != "" {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
 }
 
 func fitTimelineToCharacterBudget(events []ReportTimelineEvent, budget int) []ReportTimelineEvent {
@@ -1834,7 +2420,7 @@ func reportIssueWorkFacts(issue ReportIssue) []string {
 		if !event.InRange {
 			continue
 		}
-		if value := reportEventWorkDescription(event); value != "" {
+		if value := reportConversationEventContent(event); value != "" {
 			facts = appendUniqueReportText(facts, value, 8)
 		}
 	}
@@ -2194,21 +2780,37 @@ func appendReportEvidenceLine(content *strings.Builder, evidenceIDs []string) {
 
 func appendReportEvidenceDetails(content *strings.Builder, snapshot ReportSnapshot) {
 	hasEvidence := false
+	evidenceEvents := 0
+	truncated := false
 	for _, issue := range snapshot.Issues {
 		for _, event := range issue.Timeline {
 			if !event.InRange || strings.TrimSpace(event.ID) == "" {
 				continue
 			}
-			hasEvidence = true
-			description := reportEventWorkDescription(event)
+			// The evidence appendix supports the three-layer report too: keep
+			// discussion/task facts for human review, but do not reintroduce
+			// status churn or generic activity rows that Stage 0 removed from
+			// the narrative inputs.
+			description := reportConversationEventContent(event)
 			if description == "" {
-				description = "已记录工作事件。"
+				continue
 			}
+			if evidenceEvents >= reportContentMaxEvidenceEvents {
+				truncated = true
+				break
+			}
+			hasEvidence = true
+			evidenceEvents++
 			fmt.Fprintf(content, "- `%s` · %s · %s · %s：%s\n", event.ID, issue.Identifier, event.OccurredAt.Format(time.RFC3339), event.Type, description)
+		}
+		if truncated {
+			break
 		}
 	}
 	if !hasEvidence {
 		content.WriteString("- 暂无可展示的周期内证据。\n")
+	} else if truncated {
+		fmt.Fprintf(content, "- 证据条目已限制为最近可展示的 %d 条。\n", reportContentMaxEvidenceEvents)
 	}
 	content.WriteString("\n")
 }
@@ -2241,7 +2843,7 @@ func buildReportContent(modelContent string, snapshot ReportSnapshot) string {
 		// Keep the established metric labels in the markdown export. The
 		// issue-centered counters above describe this report window; these
 		// labels remain for clients that already parse the saved markdown.
-		return fmt.Sprintf(`%s
+		return capReportContent(fmt.Sprintf(`%s
 
 ## 数据指标
 
@@ -2254,9 +2856,9 @@ func buildReportContent(modelContent string, snapshot ReportSnapshot) string {
 - 进行中事项：%d
 - 阻塞/风险：%d
 - 逾期事项：%d
-- 取消事项：%d`, content, len(snapshot.Issues), counts["done"], counts["in_progress"]+counts["in_review"]+counts["todo"]+counts["backlog"], counts["blocked"], counts["cancelled"], snapshot.CompletedCount, snapshot.InProgressCount, snapshot.BlockedCount, snapshot.OverdueCount, snapshot.CancelledCount)
+- 取消事项：%d`, content, len(snapshot.Issues), counts["done"], counts["in_progress"]+counts["in_review"]+counts["todo"]+counts["backlog"], counts["blocked"], counts["cancelled"], snapshot.CompletedCount, snapshot.InProgressCount, snapshot.BlockedCount, snapshot.OverdueCount, snapshot.CancelledCount))
 	}
-	return fmt.Sprintf(`%s
+	return capReportContent(fmt.Sprintf(`%s
 
 ## 数据指标
 
@@ -2264,7 +2866,15 @@ func buildReportContent(modelContent string, snapshot ReportSnapshot) string {
 - 进行中事项：%d
 - 阻塞/风险：%d
 - 逾期事项：%d
-- 取消事项：%d`, content, snapshot.CompletedCount, snapshot.InProgressCount, snapshot.BlockedCount, snapshot.OverdueCount, snapshot.CancelledCount)
+- 取消事项：%d`, content, snapshot.CompletedCount, snapshot.InProgressCount, snapshot.BlockedCount, snapshot.OverdueCount, snapshot.CancelledCount))
+}
+
+func capReportContent(content string) string {
+	if len(content) <= reportContentMaxBytes {
+		return content
+	}
+	const marker = "\n\n> 证据附录已达到存储上限，完整讨论仍可在 issue 时间线中查看。"
+	return truncateReportText(content, reportContentMaxBytes-len(marker)) + marker
 }
 
 const reportSystemPrompt = `You are an issue-centered project reporting assistant. Return exactly one JSON object shaped {"summaries":[{"issue_id":"...","problem":"...","actions":["..."],"outcome":"...","open_items":["..."],"work_types":["bug_fix|feature|architecture|design|research|operations|discussion|risk|misc"],"work_done":["..."],"decision":"...","deliverables":["..."],"verification":["..."],"current_state":"...","dependencies":["..."],"risks":["..."],"artifacts":["..."],"impact":"...","evidence_ids":["..."],"confidence":"high|medium|low"}]}.

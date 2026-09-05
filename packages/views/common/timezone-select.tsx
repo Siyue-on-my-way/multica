@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@multica/ui/components/ui/select";
+import { resolveTimezone } from "./timezone";
 
 // Curated fallback list used when the runtime lacks `Intl.supportedValuesOf`.
 // Exported so every timezone picker draws from one source instead of
@@ -37,7 +38,9 @@ let cachedBrowserTZ: string | null = null;
 export function browserTimezone(): string {
   if (cachedBrowserTZ !== null) return cachedBrowserTZ;
   try {
-    cachedBrowserTZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    cachedBrowserTZ = resolveTimezone(
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
   } catch {
     cachedBrowserTZ = "UTC";
   }

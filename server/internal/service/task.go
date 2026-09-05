@@ -2972,6 +2972,13 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	if task.IssueID.Valid {
+		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
+			if _, markErr := s.Queries.MarkIssueAgentResult(ctx, db.MarkIssueAgentResultParams{ID: task.IssueID, WorkspaceID: issue.WorkspaceID}); markErr != nil {
+				slog.Warn("mark agent result unread failed", "issue_id", util.UUIDToString(task.IssueID), "error", markErr)
+			}
+		}
+	}
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -4017,6 +4024,13 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			failureReason = t.FailureReason.String
 		}
 		s.captureTaskFailed(ctx, t)
+		if t.IssueID.Valid {
+			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
+				if _, markErr := s.Queries.MarkIssueAgentResult(ctx, db.MarkIssueAgentResultParams{ID: t.IssueID, WorkspaceID: issue.WorkspaceID}); markErr != nil {
+					slog.Warn("mark failed agent result unread failed", "issue_id", util.UUIDToString(t.IssueID), "error", markErr)
+				}
+			}
+		}
 
 		workspaceID := ""
 		if t.IssueID.Valid {
@@ -4161,23 +4175,15 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 
 	result := make([]AgentSkillData, 0, len(skills))
 	for _, sk := range skills {
-		data := AgentSkillData{
-			ID:          util.UUIDToString(sk.ID),
-			Name:        sk.Name,
-			Description: sk.Description,
-			Content:     sk.Content,
-		}
-		files, _ := s.Queries.ListSkillFiles(ctx, sk.ID)
-		for _, f := range files {
-			data.Files = append(data.Files, AgentSkillFileData{Path: f.Path, Content: f.Content})
-		}
-		result = append(result, data)
+		result = append(result, s.agentSkillDataFromDB(ctx, sk))
 	}
 	return result
 }
 
 // LoadAgentSkillBundles returns every skill visible to an agent, including
 // built-ins, with stable bundle hashes and lightweight refs for slim claims.
+// Task-aware callers should prefer LoadTaskSkillBundles, which also carries
+// the global skills the run's trigger text invokes.
 func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID) ([]AgentSkillData, []AgentSkillRefData) {
 	skills := s.LoadAgentSkills(ctx, agentID)
 	skills = append(skills, s.BuiltinSkills()...)
@@ -4205,7 +4211,13 @@ func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentS
 
 		files := make([]skillbundle.File, 0, len(skill.Files))
 		for _, file := range skill.Files {
-			files = append(files, skillbundle.File{Path: file.Path, Content: file.Content})
+			files = append(files, skillbundle.File{
+				Path:            file.Path,
+				Content:         file.Content,
+				ContentBase64:   file.ContentBase64,
+				ContentEncoding: file.ContentEncoding,
+				Mode:            file.Mode,
+			})
 		}
 		manifest := skillbundle.BuildManifest(skillbundle.Skill{
 			ID:          skill.ID,
@@ -4232,9 +4244,11 @@ func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentS
 		refFiles := make([]AgentSkillFileRefData, 0, len(manifest.Files))
 		for _, file := range manifest.Files {
 			refFiles = append(refFiles, AgentSkillFileRefData{
-				Path:      file.Path,
-				SHA256:    file.SHA256,
-				SizeBytes: file.SizeBytes,
+				Path:            file.Path,
+				SHA256:          file.SHA256,
+				SizeBytes:       file.SizeBytes,
+				ContentEncoding: file.ContentEncoding,
+				Mode:            file.Mode,
 			})
 		}
 		refs = append(refs, AgentSkillRefData{
@@ -4265,10 +4279,13 @@ type AgentSkillData struct {
 
 // AgentSkillFileData represents a supporting file within a skill.
 type AgentSkillFileData struct {
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	SHA256    string `json:"sha256,omitempty"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Path            string `json:"path"`
+	Content         string `json:"content,omitempty"`
+	ContentBase64   string `json:"content_base64,omitempty"`
+	ContentEncoding string `json:"content_encoding,omitempty"`
+	Mode            int32  `json:"mode,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
+	SizeBytes       int64  `json:"size_bytes,omitempty"`
 }
 
 type AgentSkillRefData struct {
@@ -4283,9 +4300,11 @@ type AgentSkillRefData struct {
 }
 
 type AgentSkillFileRefData struct {
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	SizeBytes int64  `json:"size_bytes"`
+	Path            string `json:"path"`
+	SHA256          string `json:"sha256"`
+	SizeBytes       int64  `json:"size_bytes"`
+	ContentEncoding string `json:"content_encoding,omitempty"`
+	Mode            int32  `json:"mode,omitempty"`
 }
 
 // computeChatElapsedMs returns the wall-clock duration from task creation

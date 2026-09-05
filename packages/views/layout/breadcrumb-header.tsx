@@ -7,13 +7,12 @@ import { PageHeader } from "./page-header";
 import { AppLink } from "../navigation";
 
 /**
- * One ancestor crumb. Always a clickable link to the segment's container — the
- * breadcrumb expresses a containment chain, so every segment must navigate
- * somewhere. Non-navigable chrome (skeletons, "unknown" states) does NOT belong
- * here; omit the segment instead.
+ * One ancestor crumb. Navigable crumbs provide a destination; non-navigable
+ * fallback text can omit `href`.
  */
 export interface BreadcrumbSegment {
-  href: string;
+  /** Optional destination; omit it for a non-navigable fallback segment. */
+  href?: string;
   /** Plain text, or a composed node (e.g. icon + label). */
   label: ReactNode;
   /**
@@ -47,16 +46,27 @@ export function BreadcrumbHeader({ segments, leaf, actions, className }: Breadcr
       <div className="flex flex-1 items-center gap-1.5 min-w-0">
         {segments.map((segment) => (
           <Fragment key={segment.href}>
-            <AppLink
-              href={segment.href}
-              className={cn(
-                "text-muted-foreground hover:text-foreground transition-colors",
-                segment.className ?? "shrink-0",
-              )}
-            >
-              {segment.label}
-            </AppLink>
-            <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
+            {segment.href ? (
+              <AppLink
+                href={segment.href}
+                className={cn(
+                  "text-muted-foreground hover:text-foreground transition-colors",
+                  segment.className ?? "shrink-0",
+                )}
+              >
+                {segment.label}
+              </AppLink>
+            ) : (
+              <span
+                className={cn(
+                  "text-muted-foreground",
+                  segment.className ?? "shrink-0",
+                )}
+              >
+                {segment.label}
+              </span>
+            )}
+            <ChevronRight aria-hidden="true" className="h-3 w-3 text-faint-foreground shrink-0" />
           </Fragment>
         ))}
         {leaf}

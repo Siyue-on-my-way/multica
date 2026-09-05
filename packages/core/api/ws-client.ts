@@ -16,6 +16,15 @@ const UNPARSEABLE_LOG_MAX_CHARS = 200;
 const RECONNECT_BASE_DELAY_MS = 1_000;
 const RECONNECT_MAX_DELAY_MS = 30_000;
 
+// A connection must stay up this long before it counts as "stable" and resets
+// the reconnect backoff. Resetting on auth alone lets a connect→auth→drop
+// loop pin the backoff at the base delay forever — each cycle both
+// authenticates and dies within milliseconds, which is exactly the
+// reconnect-storm signature seen in production nginx logs (20 upgrades in
+// 68s). 60s means a flapping link escalates to the capped 30s delay within
+// six attempts instead of hammering the server once per second.
+const STABLE_CONNECTION_MS = 60_000;
+
 function summarizeUnparseable(data: unknown): string {
   const text = typeof data === "string" ? data : String(data);
   if (text.length <= UNPARSEABLE_LOG_MAX_CHARS) return text;
@@ -43,6 +52,12 @@ export class WSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private hasConnectedBefore = false;
+  // Timestamp of the most recent successful authentication. Used to decide
+  // whether the connection lived long enough to count as stable before it
+  // dropped (see STABLE_CONNECTION_MS).
+  private lastAuthAt: number | null = null;
+  private pageLifecycleAttached = false;
+  private suspendedForBFCache = false;
   // One-shot per connection. A non-conforming frame can repeat hundreds of
   // times per session, so we log the first drop and suppress the rest. Reset
   // on each connect() so a fresh connection logs once again.
@@ -71,6 +86,9 @@ export class WSClient {
   }
 
   connect() {
+    if (this.suspendedForBFCache) return;
+    this.attachPageLifecycleListeners();
+    this.reconnectTimer = null;
     this.badFrameLogged = false;
     const url = new URL(this.baseUrl);
     // Token is never sent as a URL query parameter — it would be logged by
@@ -161,6 +179,20 @@ export class WSClient {
    * does not yet expose a visible disconnected state or manual retry action.
    */
   private scheduleReconnect() {
+    if (this.suspendedForBFCache || this.reconnectTimer) return;
+
+    // Only treat the connection as stable — and reset the backoff — if it
+    // stayed up for STABLE_CONNECTION_MS after authentication. A connection
+    // that authenticates and then drops quickly resets nothing, so repeated
+    // flapping escalates to the capped delay instead of looping at the base
+    // delay.
+    if (
+      this.lastAuthAt !== null &&
+      Date.now() - this.lastAuthAt >= STABLE_CONNECTION_MS
+    ) {
+      this.reconnectAttempt = 0;
+    }
+
     const base = Math.min(
       RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt,
       RECONNECT_MAX_DELAY_MS,
@@ -176,12 +208,58 @@ export class WSClient {
     this.logger.warn(
       `ws: disconnected, reconnecting in ${delay}ms (attempt ${this.reconnectAttempt})`,
     );
-    this.reconnectTimer = setTimeout(() => this.connect(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private readonly handlePageHide = (event: PageTransitionEvent) => {
+    if (!event.persisted) return;
+
+    // A WebSocket cannot stay alive while the document is in BFCache. Close
+    // it before the browser suspends the page so the normal close handler does
+    // not create a reconnect timer that can never run until the page returns.
+    this.suspendedForBFCache = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempt = 0;
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
+  };
+
+  private readonly handlePageShow = (event: PageTransitionEvent) => {
+    if (!event.persisted || !this.suspendedForBFCache) return;
+
+    this.suspendedForBFCache = false;
+    this.connect();
+  };
+
+  private attachPageLifecycleListeners() {
+    if (this.pageLifecycleAttached || typeof window === "undefined") return;
+
+    window.addEventListener("pagehide", this.handlePageHide);
+    window.addEventListener("pageshow", this.handlePageShow);
+    this.pageLifecycleAttached = true;
+  }
+
+  private detachPageLifecycleListeners() {
+    if (!this.pageLifecycleAttached || typeof window === "undefined") return;
+
+    window.removeEventListener("pagehide", this.handlePageHide);
+    window.removeEventListener("pageshow", this.handlePageShow);
+    this.pageLifecycleAttached = false;
   }
 
   private onAuthenticated() {
     this.logger.info("connected");
-    this.reconnectAttempt = 0;
+    this.lastAuthAt = Date.now();
     if (this.hasConnectedBefore) {
       for (const cb of this.onReconnectCallbacks) {
         try {
@@ -195,6 +273,8 @@ export class WSClient {
   }
 
   disconnect() {
+    this.suspendedForBFCache = false;
+    this.detachPageLifecycleListeners();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -208,6 +288,7 @@ export class WSClient {
     }
     this.hasConnectedBefore = false;
     this.reconnectAttempt = 0;
+    this.lastAuthAt = null;
     this.handlers.clear();
     this.anyHandlers.clear();
     this.onReconnectCallbacks.clear();

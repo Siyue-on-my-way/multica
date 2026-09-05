@@ -613,8 +613,9 @@ func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, file
 
 // ImportSkillFile imports a skill from a local archive (.skill / .zip) by
 // POSTing it as multipart/form-data to /api/skills/import, alongside the
-// on_conflict strategy. The structured import result is decoded into out.
-func (c *APIClient) ImportSkillFile(ctx context.Context, fileData []byte, filename, onConflict string, out any) error {
+// on_conflict strategy and the global (all-workspace) flag. The structured
+// import result is decoded into out.
+func (c *APIClient) ImportSkillFile(ctx context.Context, fileData []byte, filename, onConflict string, global bool, out any) error {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -628,6 +629,11 @@ func (c *APIClient) ImportSkillFile(ctx context.Context, fileData []byte, filena
 	if onConflict != "" {
 		if err := writer.WriteField("on_conflict", onConflict); err != nil {
 			return fmt.Errorf("write on_conflict field: %w", err)
+		}
+	}
+	if global {
+		if err := writer.WriteField("global", "true"); err != nil {
+			return fmt.Errorf("write global field: %w", err)
 		}
 	}
 	if err := writer.Close(); err != nil {

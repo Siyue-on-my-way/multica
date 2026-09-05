@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ChevronRight,
   Download,
+  FileUp,
   HardDrive,
   Loader2,
   Pencil,
@@ -43,7 +44,16 @@ import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel
 import { useT } from "../../i18n";
 import { isNameConflictError } from "../lib/utils";
 
-type Method = "chooser" | "manual" | "url" | "runtime";
+type Method = "chooser" | "manual" | "url" | "archive" | "runtime";
+
+/** The conflict strategies the archive form can send with the upload. */
+const ARCHIVE_CONFLICTS = ["overwrite", "rename", "skip"] as const;
+
+/**
+ * Client-side mirror of the server's maxImportArchiveUploadSize so an
+ * oversize bundle is rejected before a long upload, not after one.
+ */
+const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 
 function seedAfterCreate(
   qc: ReturnType<typeof useQueryClient>,
@@ -64,10 +74,11 @@ function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
   const methods: {
     key: Method;
     icon: typeof Plus;
-    titleKey: "manual" | "url" | "runtime";
+    titleKey: "manual" | "url" | "archive" | "runtime";
   }[] = [
     { key: "manual", icon: Plus, titleKey: "manual" },
     { key: "url", icon: Download, titleKey: "url" },
+    { key: "archive", icon: FileUp, titleKey: "archive" },
     { key: "runtime", icon: HardDrive, titleKey: "runtime" },
   ];
   return (
@@ -278,9 +289,11 @@ function SourceCard({
 }
 
 function UrlForm({
+  isAdmin,
   onCreated,
   onCancel,
 }: {
+  isAdmin: boolean;
   onCreated: (skill: Skill) => void;
   onCancel: () => void;
 }) {
@@ -288,6 +301,7 @@ function UrlForm({
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const [url, setUrl] = useState("");
+  const [global, setGlobal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const source = detectUrlSource(url);
@@ -300,7 +314,7 @@ function UrlForm({
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkill({ url: trimmed });
+      const skill = await api.importSkill({ url: trimmed, global });
       seedAfterCreate(qc, wsId, skill);
       toast.success(t(($) => $.create.url.toast_imported));
       onCreated(skill);
@@ -369,7 +383,29 @@ function UrlForm({
               active={source === "github"}
             />
           </div>
+          <p className="mt-2 text-caption text-muted-foreground">
+            {t(($) => $.create.url.direct_zip_hint)}
+          </p>
         </div>
+
+        {isAdmin && (
+          <label className="flex items-start gap-2 rounded-md border px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={global}
+              onChange={(e) => setGlobal(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 accent-current"
+            />
+            <span className="min-w-0">
+              <span className="block text-caption font-medium">
+                {t(($) => $.create.archive.global_label)}
+              </span>
+              <span className="mt-0.5 block text-micro text-muted-foreground">
+                {t(($) => $.create.archive.global_hint)}
+              </span>
+            </span>
+          </label>
+        )}
 
         {error && (
           <div
@@ -421,13 +457,202 @@ function UrlForm({
 }
 
 // ---------------------------------------------------------------------------
+// Archive upload form (.zip / .skill)
+// ---------------------------------------------------------------------------
+
+function ArchiveForm({
+  isAdmin,
+  onCreated,
+  onCancel,
+}: {
+  isAdmin: boolean;
+  onCreated: (skill: Skill) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useT("skills");
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [conflict, setConflict] =
+    useState<(typeof ARCHIVE_CONFLICTS)[number]>("overwrite");
+  const [global, setGlobal] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const fadeStyle = useScrollFade(scrollRef);
+
+  const submit = async () => {
+    if (!file) return;
+    if (file.size > MAX_ARCHIVE_BYTES) {
+      setError(t(($) => $.create.archive.too_large));
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.importSkillArchive({
+        file,
+        onConflict: conflict,
+        global,
+      });
+      if (result.skill) {
+        seedAfterCreate(qc, wsId, result.skill);
+        toast.success(
+          result.status === "updated"
+            ? t(($) => $.create.archive.toast_updated)
+            : t(($) => $.create.archive.toast_imported),
+        );
+        onCreated(result.skill);
+        return;
+      }
+      // Structured outcomes with no skill payload: skipped / conflict / failed.
+      setError(
+        result.reason || t(($) => $.create.archive.fallback_error),
+      );
+      setLoading(false);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : t(($) => $.create.archive.fallback_error),
+      );
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        ref={scrollRef}
+        style={fadeStyle}
+        className="flex-1 min-h-0 space-y-4 overflow-y-auto px-5 py-4"
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".zip,.skill"
+          className="hidden"
+          onChange={(e) => {
+            setFile(e.target.files?.[0] ?? null);
+            setError("");
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="flex w-full flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-6 text-center transition-colors hover:border-primary/40 hover:bg-accent/40"
+        >
+          <FileUp className="h-5 w-5 text-muted-foreground" />
+          {file ? (
+            <span className="max-w-full truncate font-mono text-caption text-foreground">
+              {file.name}
+            </span>
+          ) : (
+            <span className="text-caption text-muted-foreground">
+              {t(($) => $.create.archive.pick_file)}
+            </span>
+          )}
+          <span className="text-micro text-faint-foreground">
+            {t(($) => $.create.archive.pick_hint)}
+          </span>
+        </button>
+
+        <div className="space-y-1.5">
+          <Label className="text-caption text-muted-foreground">
+            {t(($) => $.create.archive.conflict_label)}
+          </Label>
+          <div className="flex gap-1 rounded-md bg-muted p-0.5">
+            {ARCHIVE_CONFLICTS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={conflict === value}
+                onClick={() => setConflict(value)}
+                className={cn(
+                  "h-7 flex-1 rounded px-2 text-caption font-medium transition-colors",
+                  conflict === value
+                    ? "bg-surface text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(($) => $.create.archive[`conflict_${value}` as const])}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isAdmin && (
+          <label className="flex items-start gap-2 rounded-md border px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={global}
+              onChange={(e) => setGlobal(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 accent-current"
+            />
+            <span className="min-w-0">
+              <span className="block text-caption font-medium">
+                {t(($) => $.create.archive.global_label)}
+              </span>
+              <span className="mt-0.5 block text-micro text-muted-foreground">
+                {t(($) => $.create.archive.global_hint)}
+              </span>
+            </span>
+          </label>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-caption text-destructive"
+          >
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onCancel}
+          disabled={loading}
+        >
+          {t(($) => $.create.archive.cancel)}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={submit}
+          disabled={!file || loading}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t(($) => $.create.archive.importing)}
+            </>
+          ) : (
+            <>
+              <FileUp className="h-3 w-3" />
+              {t(($) => $.create.archive.import)}
+            </>
+          )}
+        </Button>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Root dialog
 // ---------------------------------------------------------------------------
 
 export function CreateSkillDialog({
+  isAdmin = false,
   onClose,
   onCreated,
 }: {
+  isAdmin?: boolean;
   onClose: () => void;
   onCreated?: (skill: Skill) => void;
 }) {
@@ -509,6 +734,14 @@ export function CreateSkillDialog({
         )}
         {method === "url" && (
           <UrlForm
+            isAdmin={isAdmin}
+            onCreated={handleCreated}
+            onCancel={() => setMethod("chooser")}
+          />
+        )}
+        {method === "archive" && (
+          <ArchiveForm
+            isAdmin={isAdmin}
             onCreated={handleCreated}
             onCancel={() => setMethod("chooser")}
           />

@@ -28,6 +28,8 @@ export function isMarkdownPath(path: string) {
 export function FileViewer({
   path,
   content,
+  contentBase64,
+  contentEncoding,
   mode,
   readOnly,
   autoFocus,
@@ -36,6 +38,8 @@ export function FileViewer({
 }: {
   path: string;
   content: string;
+  contentBase64?: string;
+  contentEncoding?: string;
   mode: FileMode;
   readOnly: boolean;
   /** Set by "Edit": put the caret in this file's editor once it renders. */
@@ -46,6 +50,7 @@ export function FileViewer({
 }) {
   const { t } = useT("skills");
   const isMd = isMarkdownPath(path);
+  const isBinary = contentEncoding === "base64";
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   const body = useMemo(
@@ -70,6 +75,17 @@ export function FileViewer({
   }, [autoFocus, onFocusHandled]);
 
   // Non-markdown files have nothing to preview; they are always raw.
+  if (isBinary) {
+    const byteLength = contentBase64
+      ? Math.floor((contentBase64.length * 3) / 4)
+      : 0;
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center text-caption text-muted-foreground">
+        {t(($) => $.file_viewer.binary_resource, { bytes: byteLength })}
+      </div>
+    );
+  }
+
   if (isMd && mode === "preview") {
     return (
       <div className="h-full overflow-y-auto">

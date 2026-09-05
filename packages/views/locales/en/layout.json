@@ -30,6 +30,7 @@
   "help": {
     "trigger": "Help",
     "docs": "Docs",
+    "context_courseware": "Context courseware",
     "changelog": "Change log",
     "discord": "Discord",
     "feedback": "Feedback",

@@ -21,6 +21,12 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
+vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({
+    contextCourseware: () => "/acme/context-courseware",
+  }),
+}));
+
 // Follows the app-sidebar.test.tsx convention of flattening the Base UI
 // dropdown primitives to plain children so the menu content is always in
 // the DOM, instead of exercising the real portal/open-state interaction.
@@ -69,6 +75,11 @@ describe("HelpLauncher", () => {
     configStore.getState().setServerVersion("1.2.3");
     render(<HelpLauncher />);
     expect(screen.getByText("Server version 1.2.3")).toBeInTheDocument();
+  });
+
+  it("offers the context courseware entry", () => {
+    render(<HelpLauncher />);
+    expect(screen.getByText(/Context courseware/)).toBeInTheDocument();
   });
 
   // MUL-4819: the version row's DropdownMenuLabel must sit inside a

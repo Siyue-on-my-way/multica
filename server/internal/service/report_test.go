@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 )
 
 type stubReportLLM struct {
+	mu       sync.Mutex
 	prompt   string
 	response string
 	err      error
@@ -24,6 +27,8 @@ type stubReportLLM struct {
 func (s *stubReportLLM) Enabled() bool { return true }
 
 func (s *stubReportLLM) GenerateJSON(_ context.Context, _, _, userPrompt string, _ float64, _ int64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.prompt = userPrompt
 	if s.err != nil {
 		return "", s.err
@@ -43,6 +48,120 @@ func TestBuildReportContentUsesDatabaseMetrics(t *testing.T) {
 	}
 }
 
+func TestMarshalReportSnapshotCompactsEvidenceAndBoundsStorage(t *testing.T) {
+	events := make([]ReportTimelineEvent, 0, 260)
+	for index := 0; index < 260; index++ {
+		events = append(events, ReportTimelineEvent{
+			ID:         fmt.Sprintf("comment-%d", index),
+			Type:       "comment",
+			OccurredAt: time.Date(2026, 8, 24, 0, index, 0, 0, time.UTC),
+			InRange:    true,
+			Content:    strings.Repeat("这是一段讨论内容。", 500),
+		})
+	}
+	events = append(events,
+		ReportTimelineEvent{
+			ID:      "status",
+			Type:    "issue_status_history",
+			InRange: true,
+			Details: json.RawMessage(`{"from_status":"todo","to_status":"done"}`),
+		},
+		ReportTimelineEvent{
+			ID:      "activity",
+			Type:    "activity_log",
+			InRange: true,
+			Action:  "issue_updated",
+		},
+		ReportTimelineEvent{
+			ID:      "task",
+			Type:    "agent_task_queue",
+			InRange: true,
+			Details: json.RawMessage(`{"status":"completed","result":{"summary":"任务已完成"}}`),
+		},
+	)
+
+	data, truncated, err := marshalReportSnapshot(ReportSnapshot{
+		PeriodType: "weekly",
+		Issues: []ReportIssue{{
+			IssueID:    "issue-1",
+			Identifier: "RPT-1",
+			Title:      "大讨论",
+			Status:     "done",
+			Timeline:   events,
+		}},
+		Completed:  []ReportIssue{},
+		InProgress: []ReportIssue{},
+		Blocked:    []ReportIssue{},
+		Overdue:    []ReportIssue{},
+		Cancelled:  []ReportIssue{},
+	})
+	if err != nil {
+		t.Fatalf("marshal report snapshot: %v", err)
+	}
+	if !truncated {
+		t.Fatal("expected oversized evidence to be marked truncated")
+	}
+	if len(data) > reportSnapshotMaxBytes {
+		t.Fatalf("snapshot size = %d, want <= %d", len(data), reportSnapshotMaxBytes)
+	}
+
+	var stored ReportSnapshot
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("decode compact snapshot: %v", err)
+	}
+	if !stored.StorageTruncated {
+		t.Fatal("stored snapshot did not expose truncation")
+	}
+	for _, event := range stored.Issues[0].Timeline {
+		if event.Type == "issue_status_history" || event.Type == "activity_log" {
+			t.Fatalf("bookkeeping event leaked into stored evidence: %+v", event)
+		}
+		if event.Type == "agent_task_queue" && len(event.Details) != 0 {
+			t.Fatalf("raw task details leaked into stored evidence: %+v", event)
+		}
+		if len(event.Content) > reportSnapshotMaxEventContent {
+			t.Fatalf("event content was not bounded: %d", len(event.Content))
+		}
+	}
+}
+
+func TestMarshalReportSnapshotCapsHistoricalReferences(t *testing.T) {
+	references := make([]ReportIssue, 0, reportSnapshotMaxReferences+25)
+	for index := 0; index < reportSnapshotMaxReferences+25; index++ {
+		references = append(references, ReportIssue{
+			IssueID:     fmt.Sprintf("issue-%d", index),
+			Identifier:  fmt.Sprintf("RPT-%d", index),
+			Title:       strings.Repeat("历史事项", 200),
+			Description: strings.Repeat("不应在状态索引中重复保存的描述。", 200),
+		})
+	}
+
+	data, truncated, err := marshalReportSnapshot(ReportSnapshot{
+		Completed:      references,
+		CompletedCount: len(references),
+	})
+	if err != nil {
+		t.Fatalf("marshal report snapshot: %v", err)
+	}
+	if !truncated {
+		t.Fatal("expected reference cap to mark snapshot as truncated")
+	}
+	if len(data) > reportSnapshotMaxBytes {
+		t.Fatalf("snapshot size = %d, want <= %d", len(data), reportSnapshotMaxBytes)
+	}
+
+	var stored ReportSnapshot
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("decode compact snapshot: %v", err)
+	}
+	if len(stored.Completed) != reportSnapshotMaxReferences {
+		t.Fatalf("stored references = %d, want %d", len(stored.Completed), reportSnapshotMaxReferences)
+	}
+	if stored.CompletedCount != len(references) {
+		t.Fatalf("stored count = %d, want %d", stored.CompletedCount, len(references))
+	}
+}
+
 func TestGenerateContentAcceptsFencedJSON(t *testing.T) {
 	const payload = `{"content":"## 完成事项\n\n- RPT-1 测试完成"}`
 	for _, test := range []struct {
@@ -54,7 +173,7 @@ func TestGenerateContentAcceptsFencedJSON(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			generator := ReportGenerator{LLM: &stubReportLLM{response: test.raw}}
-			content, err := generator.generateContent(context.Background(), ReportSnapshot{CompletedCount: 1})
+			content, err := generator.generateContent(context.Background(), ReportSnapshot{CompletedCount: 1}, "")
 			if err != nil {
 				t.Fatalf("generateContent: %v", err)
 			}
@@ -82,7 +201,7 @@ func TestGenerateContentFallsBackToDeterministicReport(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			generator := ReportGenerator{LLM: test.llm}
-			content, err := generator.generateContent(context.Background(), snapshot)
+			content, err := generator.generateContent(context.Background(), snapshot, "")
 			if err != nil {
 				t.Fatalf("generateContent: %v", err)
 			}
@@ -306,13 +425,17 @@ func TestReportGeneratorAggregatesProjectWindow(t *testing.T) {
 	llm := &stubReportLLM{}
 	generator := ReportGenerator{Queries: db.New(pool), LLM: llm}
 	project := db.Project{ID: pgtype.UUID{Bytes: projectID, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true}}
-	report, err := generator.Generate(ctx, project, "daily", rangeStart, rangeEnd, "UTC", "member", pgtype.UUID{Bytes: userID, Valid: true})
+	report, err := generator.Generate(ctx, project, pgtype.UUID{}, "daily", rangeStart, rangeEnd, "UTC", "member", pgtype.UUID{Bytes: userID, Valid: true})
 	if err != nil {
 		t.Fatalf("generate report: %v", err)
 	}
 
+	resolved, err := ResolveReportSnapshot(ctx, generator.Queries, report.ID, report.DataSnapshot)
+	if err != nil {
+		t.Fatalf("resolve snapshot: %v", err)
+	}
 	var snapshot ReportSnapshot
-	if err := json.Unmarshal(report.DataSnapshot, &snapshot); err != nil {
+	if err := json.Unmarshal(resolved, &snapshot); err != nil {
 		t.Fatalf("unmarshal snapshot: %v", err)
 	}
 	if snapshot.CompletedCount != 1 || len(snapshot.Completed) != 1 || snapshot.Completed[0].Identifier == "" {
@@ -330,12 +453,16 @@ func TestReportGeneratorAggregatesProjectWindow(t *testing.T) {
 		}
 	}
 
-	nextReport, err := generator.Generate(ctx, project, "daily", rangeEnd, rangeEnd.Add(24*time.Hour), "UTC", "member", pgtype.UUID{Bytes: userID, Valid: true})
+	nextReport, err := generator.Generate(ctx, project, pgtype.UUID{}, "daily", rangeEnd, rangeEnd.Add(24*time.Hour), "UTC", "member", pgtype.UUID{Bytes: userID, Valid: true})
 	if err != nil {
 		t.Fatalf("generate next report: %v", err)
 	}
+	nextResolved, err := ResolveReportSnapshot(ctx, generator.Queries, nextReport.ID, nextReport.DataSnapshot)
+	if err != nil {
+		t.Fatalf("resolve next snapshot: %v", err)
+	}
 	var nextSnapshot ReportSnapshot
-	if err := json.Unmarshal(nextReport.DataSnapshot, &nextSnapshot); err != nil {
+	if err := json.Unmarshal(nextResolved, &nextSnapshot); err != nil {
 		t.Fatalf("unmarshal next snapshot: %v", err)
 	}
 	if nextSnapshot.CompletedCount != 1 || nextSnapshot.Completed[0].Title != "Boundary completed" {

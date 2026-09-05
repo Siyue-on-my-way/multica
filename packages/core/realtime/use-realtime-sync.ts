@@ -1540,20 +1540,33 @@ export function useRealtimeSync(
     };
   }, [ws, qc, authStore, onToast]);
 
-  // Reconnect -> refetch all data to recover missed events
+  // Reconnect -> refetch all data to recover missed events. Debounced: while
+  // the socket is flapping, each reconnect would otherwise invalidate every
+  // workspace-scoped query family, multiplying a reconnect storm into an API
+  // request storm. Coalesces bursts into one refetch per quiet period.
   useEffect(() => {
     if (!ws) return;
 
+    const REFETCH_DEBOUNCE_MS = 30_000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const unsub = ws.onReconnect(async () => {
       logger.info("reconnected, refetching all data");
-      try {
-        invalidateWorkspaceScopedQueries(qc);
-      } catch (e) {
-        logger.error("reconnect refetch failed", e);
-      }
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        try {
+          invalidateWorkspaceScopedQueries(qc);
+        } catch (e) {
+          logger.error("reconnect refetch failed", e);
+        }
+      }, REFETCH_DEBOUNCE_MS);
     });
 
-    return unsub;
+    return () => {
+      unsub();
+      if (timer) clearTimeout(timer);
+    };
   }, [ws, qc]);
 
   // New WSClient instance (workspace switch) -> invalidate workspace-scoped

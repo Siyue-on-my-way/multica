@@ -14,12 +14,15 @@ import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
 import { DISCORD_URL, DiscordIcon } from "./discord";
 import { useT } from "../i18n";
+import { AppLink } from "../navigation";
+import { useWorkspacePaths } from "@multica/core/paths";
 
 const DOCS_URL = "https://multica.ai/docs";
 const CHANGELOG_URL = "https://multica.ai/changelog";
 
 export function HelpLauncher() {
   const { t } = useT("layout");
+  const workspacePaths = useWorkspacePaths();
   const serverVersion = useConfigStore((state) => state.serverVersion);
   return (
     <DropdownMenu>
@@ -66,6 +69,10 @@ export function HelpLauncher() {
           <DiscordIcon className="h-3.5 w-3.5" />
           {t(($) => $.help.discord)}
           <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
+        </DropdownMenuItem>
+        <DropdownMenuItem render={<AppLink href={workspacePaths.contextCourseware()} />}>
+          <BookOpen className="h-3.5 w-3.5" />
+          {t(($) => $.help.context_courseware)}
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => useModalStore.getState().open("feedback")}

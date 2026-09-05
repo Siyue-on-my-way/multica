@@ -37,6 +37,7 @@ import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import type { IssueFilters } from "../utils/filter";
 import type { ChildProgress } from "../components/list-row";
 import { IssueTableExportIntegrityError } from "../components/table-view-model";
+import { useNavigation } from "../../navigation";
 import type { IssueSurfaceMode } from "./types";
 import type { IssueSurfaceActions } from "./actions-context";
 import {
@@ -113,6 +114,8 @@ export interface IssueSurfaceController {
     childProgressMap: Map<string, ChildProgress>;
   }>;
   tableSearch: string;
+  globalSearch: string;
+  setGlobalSearch: (query: string) => void;
   /** Canonical server-owned Table membership. */
   tableQuerySpec: IssueTableQuerySpec;
   /** Exact disjunctive counts for the active server-backed filter submenu. */
@@ -233,7 +236,23 @@ export function useIssueSurfaceController({
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
   const tableColumns = useViewStore((s) => s.tableColumns);
   const listCollapsedStatuses = useViewStore((s) => s.listCollapsedStatuses);
-  const [tableSearch, setTableSearch] = useState("");
+  const navigation = useNavigation();
+  const [globalSearch, setGlobalSearch] = useState(
+    () => navigation.searchParams.get("q") ?? search,
+  );
+  const [tableSearch, setTableSearch] = useState(globalSearch);
+  const updateGlobalSearch = useCallback(
+    (value: string) => {
+      setGlobalSearch(value);
+      const params = new URLSearchParams(navigation.searchParams);
+      const trimmed = value.trim();
+      if (trimmed) params.set("q", trimmed);
+      else params.delete("q");
+      const query = params.toString();
+      navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
+    },
+    [navigation],
+  );
 
   const allowedModes = useMemo(() => new Set<IssueSurfaceMode>(modes), [modes]);
   const fallbackMode = modes[0] ?? "list";
@@ -320,7 +339,7 @@ export function useIssueSurfaceController({
     effectiveViewMode === "board" && effectiveGrouping === "assignee";
   const usesGantt = effectiveViewMode === "gantt" && !!projectId;
   const usesTable = effectiveViewMode === "table";
-  const activeSearch = usesTable ? tableSearch : search;
+  const activeSearch = globalSearch;
   const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
   const usesServerStatusSurface =
     effectiveViewMode === "list" ||
@@ -803,6 +822,8 @@ export function useIssueSurfaceController({
     actions,
     selection,
     tableSearch,
+    globalSearch,
+    setGlobalSearch: updateGlobalSearch,
     tableQuerySpec,
     tableFacetCounts:
       usesServerStatusSurface ||

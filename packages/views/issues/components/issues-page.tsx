@@ -21,6 +21,8 @@ function IssuesSurfaceHeader({
   facetCountsExact,
   tableFacetCounts,
   onTableFacetChange,
+  search,
+  onSearchChange,
 }: {
   issues: Issue[];
   workingAgents: WorkingAgentSummary[] | undefined;
@@ -28,6 +30,8 @@ function IssuesSurfaceHeader({
   facetCountsExact: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
   onTableFacetChange: (facet: IssueTableFacetSpec | null) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
 }) {
   const dateFilter = useViewStore((s) => s.dateFilter);
   const setDateFilter = useViewStore((s) => s.setDateFilter);
@@ -42,6 +46,8 @@ function IssuesSurfaceHeader({
       facetCountsExact={facetCountsExact}
       tableFacetCounts={tableFacetCounts}
       onTableFacetChange={onTableFacetChange}
+      search={search}
+      onSearchChange={onSearchChange}
     />
   );
 }
@@ -69,6 +75,8 @@ export function IssuesPage() {
             facetCountsExact={controller.facetCountsExact}
             tableFacetCounts={controller.tableFacetCounts}
             onTableFacetChange={controller.setActiveTableFacet}
+            search={controller.globalSearch}
+            onSearchChange={controller.setGlobalSearch}
           />
         )}
         renderEmpty={() => (

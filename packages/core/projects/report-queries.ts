@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import type { CreateProjectReportRequest, ProjectReport } from "../types";
+import type { CreateProjectReportRequest, ProjectReport, ProjectReportPeriod } from "../types";
 import { projectKeys } from "./queries";
 
 export const projectReportKeys = {
@@ -10,7 +10,16 @@ export const projectReportKeys = {
     [...projectReportKeys.all(wsId, projectId), "history"] as const,
   detail: (wsId: string, projectId: string, reportId: string) =>
     [...projectReportKeys.all(wsId, projectId), "detail", reportId] as const,
+  templates: (wsId: string) => ["report-templates", wsId] as const,
 };
+
+export function projectReportTemplateOptions(wsId: string, periodType?: ProjectReportPeriod) {
+  return queryOptions({
+    queryKey: [...projectReportKeys.templates(wsId), periodType ?? "all"],
+    queryFn: () => api.listProjectReportTemplates(periodType),
+    enabled: Boolean(wsId),
+  });
+}
 
 export function projectReportHistoryOptions(wsId: string, projectId: string) {
   return queryOptions({

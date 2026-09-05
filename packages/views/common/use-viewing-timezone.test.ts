@@ -58,6 +58,12 @@ describe("useViewingTimezone", () => {
     expect(result.current).toBe("America/Chicago");
   });
 
+  it("falls back to the browser tz when a legacy timezone is invalid", () => {
+    userRef.current = { timezone: "Local" };
+    const { result } = renderHook(() => useViewingTimezone());
+    expect(result.current).toBe("America/Chicago");
+  });
+
   // Auth store still initialising: user is undefined, not null.
   it("falls back to the browser tz when the user is undefined", () => {
     userRef.current = undefined as never;

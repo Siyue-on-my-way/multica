@@ -1716,11 +1716,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 		}
 		if useSkillRefs {
-			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+			// Task-aware load: assigned skills plus any global skill named in
+			// this run's trigger text (issue description / triggering comment).
+			_, skillRefs := h.TaskService.LoadTaskSkillBundles(r.Context(), task)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 		} else {
-			skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+			skills := h.TaskService.LoadTaskSkills(r.Context(), task)
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
@@ -1775,6 +1777,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
+			resp.CurrentIssueTitle = issue.Title
+			resp.CurrentIssueDescription = issue.Description.String
+			ancestorBrief := service.BuildAncestorBrief(r.Context(), h.Queries, issue)
+			resp.AncestorBrief = ancestorBrief.Text
+			resp.AncestorBriefRefs = ancestorBrief.Refs
 			// Inject handoff state written by the previous agent so the new
 			// agent can resume without re-reading the full comment history.
 			if issue.WorkingBranch.Valid {
@@ -2775,7 +2782,9 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+	// Same task-aware set the claim sent, so refs for trigger-matched global
+	// skills resolve instead of 404ing against the assignment-only allowlist.
+	bundles, _ := h.TaskService.LoadTaskSkillBundles(r.Context(), &task)
 	allowed := make(map[string]service.AgentSkillData, len(bundles))
 	for _, bundle := range bundles {
 		allowed[bundle.Source+"\x00"+bundle.ID] = bundle

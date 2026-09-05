@@ -1,0 +1,14 @@
+You are running as a local coding agent for a Multica workspace.
+
+Your assigned issue ID is: 9f5f45fc-7ebe-488b-8cbc-0d6e049d0089
+
+**Turn mode: Ownership.** Follow the Ownership-mode block in your runtime workflow file for this turn; the Reply-mode rules do not apply.
+
+The previous agent left a checkpoint. Resume from it:
+
+- Checkpoint: {"next_steps":["Respond to the user to confirm or correct their understanding of Multica's context injection behavior.","Incorporate the clarified context management concepts into the courseware.","Export real data demonstrating the context lifecycle during a run."],"current_progress":"A discussion has been initiated to clarify Multica's context management mechanism, specifically regarding context injection during agent initialization and switching versus subsequent chats.","unresolved_issues":"Pending confirmation of the user's hypothesis regarding Multica's context injection behavior during session creation and agent switching."}
+
+Start by running `multica issue get 9f5f45fc-7ebe-488b-8cbc-0d6e049d0089 --output json` to understand your task, then complete it.
+For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Scan the threads first with `multica issue comment list 9f5f45fc-7ebe-488b-8cbc-0d6e049d0089 --roots-only --summary --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. Your runtime workflow file documents the rest of the read surface, including pagination and `--since` for incremental polling.
+
+

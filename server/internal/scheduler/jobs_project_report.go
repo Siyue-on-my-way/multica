@@ -20,6 +20,12 @@ const (
 	ScopeKindProjectReport       = "project_report"
 	maxPendingReportScopes       = 20
 	ReportJobMaxAttempts         = 3
+	// The narrative pipeline can process six batches of five Stage-1 calls
+	// (30 issues × 45s) and then one Stage-2 call (45s). Keep enough room for
+	// aggregation and the final report-history write; the old two-minute
+	// deadline expired while saving otherwise.
+	projectReportRunTimeout   = 8 * time.Minute
+	projectReportStaleTimeout = 10 * time.Minute
 )
 
 type ProjectReportGenerator interface {
@@ -27,6 +33,7 @@ type ProjectReportGenerator interface {
 		ctx context.Context,
 		project db.Project,
 		reportID pgtype.UUID,
+		templateID pgtype.UUID,
 		periodType string,
 		rangeStart time.Time,
 		rangeEnd time.Time,
@@ -38,8 +45,8 @@ func ProjectReportGenerationJob(pool *pgxpool.Pool, queries *db.Queries, llm ser
 	generator := &service.ReportGenerator{Queries: queries, LLM: llm}
 	return JobSpec{
 		Name:              JobNameProjectReportGenerate,
-		RunTimeout:        2 * time.Minute,
-		StaleTimeout:      5 * time.Minute,
+		RunTimeout:        projectReportRunTimeout,
+		StaleTimeout:      projectReportStaleTimeout,
 		HeartbeatInterval: 30 * time.Second,
 		AllowStaleReentry: true,
 		MaxAttempts:       ReportJobMaxAttempts,
@@ -147,6 +154,7 @@ func projectReportHandler(queries *db.Queries, generator ProjectReportGenerator)
 			ctx,
 			project,
 			reportID,
+			report.TemplateID,
 			report.PeriodType,
 			report.RangeStart.Time,
 			report.RangeEnd.Time,

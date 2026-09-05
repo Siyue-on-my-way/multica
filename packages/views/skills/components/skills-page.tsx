@@ -240,6 +240,20 @@ function NameCell({ row }: { row: SkillRow }) {
       <span className="min-w-0 truncate text-body font-medium">
         {skill.name}
       </span>
+      {skill.is_global && (
+        // Shared across every workspace; badge it so admins can tell the
+        // deployment-wide skills apart from the workspace's own.
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="shrink-0 rounded bg-muted px-1 py-px font-mono text-micro text-muted-foreground">
+                {t(($) => $.table.global_badge)}
+              </span>
+            }
+          />
+          <TooltipContent>{t(($) => $.table.global_tooltip)}</TooltipContent>
+        </Tooltip>
+      )}
       {!canEdit && (
         <Tooltip>
           <TooltipTrigger
@@ -928,6 +942,7 @@ export default function SkillsPage() {
 
       {createOpen && (
         <CreateSkillDialog
+          isAdmin={isAdmin}
           onClose={() => setCreateOpen(false)}
           onCreated={handleCreated}
         />

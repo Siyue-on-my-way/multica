@@ -651,6 +651,24 @@ func (h *Hub) evictSlow(slow []*Client) {
 		M.ActiveConnections.Add(int64(-evicted))
 		M.DisconnectsTotal.Add(int64(evicted))
 	}
+	// evictSlow is otherwise silent (no close frame reaches the client's
+	// handler and no write error is logged), so without this line a burst of
+	// slow-client evictions — the reconnect-storm signature — leaves no trace
+	// in the default logs. Cap the identity list to keep the line bounded.
+	if evicted > 0 {
+		ids := make([]string, 0, len(slow))
+		for _, c := range slow {
+			if len(ids) == 10 {
+				ids = append(ids, "…")
+				break
+			}
+			ids = append(ids, c.userID+"@"+c.workspaceID)
+		}
+		slog.Warn("realtime: evicted slow clients (send buffer full)",
+			"count", evicted,
+			"clients", ids,
+		)
+	}
 	for _, r := range drainedRooms {
 		M.DecRoom(r.Type)
 	}
@@ -910,7 +928,11 @@ func (c *Client) readPump() {
 					"workspace_id", c.workspaceID,
 				)
 			case websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure):
-				slog.Debug("websocket read error", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+				// Info rather than Debug: a read error is the only server-side
+				// trace of an abnormal client disconnect, and correlating these
+				// with client reconnect attempts requires the lines to survive
+				// default log filtering.
+				slog.Info("websocket read error", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
 			}
 			break
 		}

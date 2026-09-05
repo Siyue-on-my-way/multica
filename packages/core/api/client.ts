@@ -1,5 +1,6 @@
 import type {
   Issue,
+  MoveIssueWorkspaceRequest,
   IssuePriority,
   CreateIssueRequest,
   MoveIssueRequest,
@@ -62,6 +63,7 @@ import type {
   User,
   Skill,
   SkillSummary,
+  SkillImportResult,
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
@@ -108,6 +110,8 @@ import type {
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
   ProjectReport,
+  ProjectReportPeriod,
+  ProjectReportTemplate,
   ListProjectReportsResponse,
   CreateProjectReportRequest,
   ProjectReportJob,
@@ -235,6 +239,10 @@ import {
   EMPTY_SEARCH_ISSUES_RESPONSE,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
   EMPTY_PROJECT,
+  EMPTY_PROJECT_REPORT,
+  EMPTY_PROJECT_REPORT_JOB,
+  EMPTY_PROJECT_REPORT_TEMPLATE_LIST,
+  EMPTY_LIST_PROJECT_REPORTS_RESPONSE,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
@@ -264,6 +272,11 @@ import {
   SearchIssuesResponseSchema,
   SearchProjectsResponseSchema,
   ProjectResponseSchema,
+  ProjectReportJobSchema,
+  ProjectReportSchema,
+  ProjectReportTemplateListSchema,
+  ListProjectReportsResponseSchema,
+  IssueSchema,
   SquadSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
@@ -720,6 +733,7 @@ export class ApiClient {
     if (params.limit) search.set("limit", String(params.limit));
     if (params.offset) search.set("offset", String(params.offset));
     if (params.workspace_id) search.set("workspace_id", params.workspace_id);
+    if (params.q?.trim()) search.set("q", params.q.trim());
     if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
     if (params.priorities?.length) search.set("priorities", params.priorities.join(","));
     if (params.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
@@ -826,6 +840,27 @@ export class ApiClient {
 
   async getIssue(id: string): Promise<Issue> {
     return this.fetch(`/api/issues/${id}`);
+  }
+
+  async markIssueAgentResultRead(id: string): Promise<void> {
+    await this.fetch(`/api/issues/${id}/agent-result-read`, { method: "POST" });
+  }
+
+  async restoreIssueAutoOrder(id: string): Promise<Issue> {
+    return this.fetch(`/api/issues/${id}/restore-auto-order`, { method: "POST" });
+  }
+  async moveIssueToWorkspace(id: string, data: MoveIssueWorkspaceRequest): Promise<Issue> {
+    const raw = await this.fetch<unknown>(`/api/issues/${id}/move-workspace`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
+      endpoint: "POST /api/issues/{id}/move-workspace",
+    });
+    if (!issue) {
+      throw new Error();
+    }
+    return issue;
   }
 
   async createIssue(data: CreateIssueRequest): Promise<Issue> {
@@ -2233,11 +2268,37 @@ export class ApiClient {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
-  async importSkill(data: { url: string }): Promise<Skill> {
+  async importSkill(data: { url: string; global?: boolean }): Promise<Skill> {
     return this.fetch("/api/skills/import", {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  /**
+   * Upload a .skill/.zip archive. Sends a conflict strategy, so the server
+   * answers with the structured import result rather than a bare skill.
+   */
+  async importSkillArchive(data: {
+    file: File;
+    onConflict: string;
+    global?: boolean;
+  }): Promise<SkillImportResult> {
+    const body = new FormData();
+    body.append("file", data.file);
+    body.append("on_conflict", data.onConflict);
+    if (data.global) body.append("global", "true");
+    // Send via fetchRaw, not fetch(): the shared helper stamps
+    // Content-Type: application/json on every request, which both hides the
+    // multipart boundary from the server and routes the upload into the
+    // import endpoint's JSON branch (400 "invalid request body"). With no
+    // Content-Type set, the browser generates the multipart header itself —
+    // the same contract as uploadFile below.
+    const res = await this.fetchRaw("/api/skills/import", {
+      method: "POST",
+      body,
+    });
+    return res.json() as Promise<SkillImportResult>;
   }
 
   async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
@@ -2623,9 +2684,10 @@ export class ApiClient {
   }
 
   // Projects
-  async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
+  async listProjects(params?: { status?: string; workspace_id?: string }): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
+    if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     return this.fetch(`/api/projects?${search}`);
   }
 
@@ -2633,8 +2695,9 @@ export class ApiClient {
     return this.fetch(`/api/projects/${id}`);
   }
 
-  async createProject(data: CreateProjectRequest): Promise<Project> {
-    return this.fetch("/api/projects", {
+  async createProject(data: CreateProjectRequest, workspaceId?: string): Promise<Project> {
+    const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+    return this.fetch(`/api/projects${query}`, {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -2661,31 +2724,56 @@ export class ApiClient {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
+  async listProjectReportTemplates(
+    periodType?: ProjectReportPeriod,
+  ): Promise<ProjectReportTemplate[]> {
+    const query = periodType ? `?period_type=${encodeURIComponent(periodType)}` : "";
+    const raw = await this.fetch<unknown>(`/api/report-templates${query}`);
+    return parseWithFallback(raw, ProjectReportTemplateListSchema, EMPTY_PROJECT_REPORT_TEMPLATE_LIST, {
+      endpoint: "GET /api/report-templates",
+    });
+  }
+
   async createProjectReport(
     projectId: string,
     data: CreateProjectReportRequest,
   ): Promise<ProjectReportJob> {
-    return this.fetch(`/api/projects/${projectId}/reports`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/reports`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ProjectReportJobSchema, EMPTY_PROJECT_REPORT_JOB, {
+      endpoint: "POST /api/projects/{id}/reports",
     });
   }
 
   async getProjectReportJob(projectId: string, jobId: string): Promise<ProjectReportJob> {
-    return this.fetch(`/api/projects/${projectId}/reports/jobs/${jobId}`);
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/reports/jobs/${jobId}`);
+    return parseWithFallback(raw, ProjectReportJobSchema, EMPTY_PROJECT_REPORT_JOB, {
+      endpoint: "GET /api/projects/{id}/reports/jobs/{jobId}",
+    });
   }
 
   async listProjectReports(projectId: string): Promise<ListProjectReportsResponse> {
-    return this.fetch(`/api/projects/${projectId}/reports`);
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/reports`);
+    return parseWithFallback(raw, ListProjectReportsResponseSchema, EMPTY_LIST_PROJECT_REPORTS_RESPONSE, {
+      endpoint: "GET /api/projects/{id}/reports",
+    });
   }
 
   async getProjectReport(projectId: string, reportId: string): Promise<ProjectReport> {
-    return this.fetch(`/api/projects/${projectId}/reports/${reportId}`);
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/reports/${reportId}`);
+    return parseWithFallback(raw, ProjectReportSchema, EMPTY_PROJECT_REPORT, {
+      endpoint: "GET /api/projects/{id}/reports/{reportId}",
+    });
   }
 
   async saveProjectReport(projectId: string, reportId: string): Promise<ProjectReport> {
-    return this.fetch(`/api/projects/${projectId}/reports/${reportId}/save`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/reports/${reportId}/save`, {
       method: "POST",
+    });
+    return parseWithFallback(raw, ProjectReportSchema, EMPTY_PROJECT_REPORT, {
+      endpoint: "POST /api/projects/{id}/reports/{reportId}/save",
     });
   }
 

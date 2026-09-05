@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -147,13 +148,14 @@ func TestParseSkillArchive_RejectsUnsafeSkillMdPath(t *testing.T) {
 
 func TestParseSkillArchive_DropsTraversalAndJunk(t *testing.T) {
 	data := buildTestZip(t, map[string]string{
-		"s/SKILL.md":     testSkillMd,
-		"s/../evil.sh":   "pwn",       // zip-slip out of the skill root
-		"s/.git/config":  "secret",    // dotfile dir
-		"s/.DS_Store":    "junk",      // dotfile
-		"__MACOSX/s/._x": "applemeta", // mac noise (outside root anyway)
-		"s/LICENSE":      "MIT",       // license excluded
-		"s/keep.md":      "real",      // legitimate asset
+		"s/SKILL.md":              testSkillMd,
+		"s/../evil.sh":            "pwn",       // zip-slip out of the skill root
+		"s/.git/config":           "secret",    // dotfile dir
+		"s/.DS_Store":             "junk",      // dotfile
+		"__MACOSX/s/._x":          "applemeta", // mac noise (outside root anyway)
+		"s/LICENSE":               "MIT",       // license excluded
+		"s/node_modules/pkg/i.js": "dep",       // dependency folder
+		"s/keep.md":               "real",      // legitimate asset
 	})
 	imported, err := parseSkillArchive(data, "s.skill")
 	if err != nil {
@@ -165,7 +167,10 @@ func TestParseSkillArchive_DropsTraversalAndJunk(t *testing.T) {
 	}
 }
 
-func TestParseSkillArchive_SkipsBinaryAssets(t *testing.T) {
+func TestParseSkillArchive_KeepsBinaryAssets(t *testing.T) {
+	// Binary assets ride along: since the skill_file_assets table (migration
+	// 261) they are preserved via the base64 transport representation instead
+	// of being dropped as un-storable in a TEXT column.
 	data := buildTestZip(t, map[string]string{
 		"s/SKILL.md": testSkillMd,
 		"s/logo.png": "\x89PNG\x00binary",
@@ -175,8 +180,9 @@ func TestParseSkillArchive_SkipsBinaryAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseSkillArchive: %v", err)
 	}
-	if got := filePaths(imported); len(got) != 1 || got[0] != "note.txt" {
-		t.Errorf("files = %v, want [note.txt] (binary png dropped)", got)
+	got := filePaths(imported)
+	if len(got) != 2 || got[0] != "logo.png" || got[1] != "note.txt" {
+		t.Errorf("files = %v, want [logo.png note.txt] (binary png kept)", got)
 	}
 }
 
@@ -308,5 +314,22 @@ func TestImportSkill_ArchiveUploadRejectsNonZip(t *testing.T) {
 	testHandler.ImportSkill(w, newSkillArchiveImportRequest(testUserID, []byte("not a zip at all"), "bad.skill", "fail"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMultipartImportErrorMessage(t *testing.T) {
+	// A body past MaxBytesReader must read as an actionable size message, not
+	// the old catch-all that sent oversize uploads to a dead end.
+	tooLarge := &http.MaxBytesError{Limit: maxImportArchiveUploadSize}
+	if msg := multipartImportErrorMessage(tooLarge); !strings.Contains(msg, "100 MB") || !strings.Contains(msg, "upload limit") {
+		t.Fatalf("message %q should state the upload limit", msg)
+	}
+
+	// Anything else is a malformed body: keep the underlying detail visible so
+	// a client or proxy fault is diagnosable from the response alone.
+	malformed := errors.New("http: multipart: NextPart: EOF")
+	msg := multipartImportErrorMessage(malformed)
+	if !strings.Contains(msg, "invalid multipart upload") || !strings.Contains(msg, "NextPart") {
+		t.Fatalf("message %q should keep the malformed-body detail", msg)
 	}
 }

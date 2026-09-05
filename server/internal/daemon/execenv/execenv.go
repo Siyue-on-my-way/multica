@@ -146,7 +146,7 @@ type TaskContextForEnv struct {
 	WorkingBranch  string          // git branch the previous agent was working on
 	AgentStatus    string          // machine-readable progress stage (e.g. "coding")
 	HandoffSummary json.RawMessage // structured JSON checkpoint
-	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
+	IsSquadLeader  bool            // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
 	// non-empty so every agent in the workspace sees the same shared context,
@@ -186,8 +186,11 @@ type SkillContextForEnv struct {
 
 // SkillFileContextForEnv represents a supporting file within a skill.
 type SkillFileContextForEnv struct {
-	Path    string
-	Content string
+	Path            string
+	Content         string
+	ContentBase64   string
+	ContentEncoding string
+	Mode            int32
 }
 
 // Environment represents a prepared, isolated execution environment.

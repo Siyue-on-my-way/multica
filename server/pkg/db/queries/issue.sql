@@ -8,7 +8,8 @@
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.working_branch, i.agent_status, i.handoff_summary
+       i.working_branch, i.agent_status, i.handoff_summary,
+       i.manual_position_locked, i.agent_result_at
 FROM issue i
 WHERE i.workspace_id = $1
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
@@ -109,6 +110,14 @@ WITH actor_config AS (
             COALESCE(sqlc.narg('changed_by_id')::uuid::text, ''),
             true
         )
+), current_issue AS (
+    SELECT * FROM issue WHERE id = $1 FOR UPDATE
+), top_position AS (
+    SELECT COALESCE(MIN(i.position) - 1, 0)::double precision AS position
+    FROM issue i, current_issue c
+    WHERE i.workspace_id = c.workspace_id
+      AND i.status = sqlc.narg('status')
+      AND i.id <> c.id
 )
 UPDATE issue SET
     title = COALESCE(sqlc.narg('title'), title),
@@ -117,7 +126,15 @@ UPDATE issue SET
     priority = COALESCE(sqlc.narg('priority'), priority),
     assignee_type = sqlc.narg('assignee_type'),
     assignee_id = sqlc.narg('assignee_id'),
-    position = COALESCE(sqlc.narg('position'), position),
+    position = CASE
+        WHEN sqlc.narg('position')::double precision IS NOT NULL THEN sqlc.narg('position')::double precision
+        WHEN sqlc.narg('status') IS NOT NULL
+             AND status IS DISTINCT FROM sqlc.narg('status')
+             AND NOT manual_position_locked
+          THEN (SELECT position FROM top_position)
+        ELSE position
+    END,
+    manual_position_locked = manual_position_locked OR sqlc.narg('position') IS NOT NULL,
     start_date = sqlc.narg('start_date'),
     due_date = sqlc.narg('due_date'),
     parent_issue_id = sqlc.narg('parent_issue_id'),
@@ -127,7 +144,7 @@ UPDATE issue SET
     agent_status = sqlc.narg('agent_status'),
     handoff_summary = sqlc.narg('handoff_summary'),
     updated_at = now()
-WHERE id = $1 AND (SELECT true FROM actor_config)
+WHERE issue.id = $1 AND (SELECT true FROM actor_config)
 RETURNING *;
 
 -- name: UpdateIssueStatus :one
@@ -144,11 +161,71 @@ WITH actor_config AS (
             COALESCE(sqlc.narg('changed_by_id')::uuid::text, ''),
             true
         )
+), current_issue AS (
+    SELECT * FROM issue WHERE id = $1 AND workspace_id = $3 FOR UPDATE
+), top_position AS (
+    SELECT COALESCE(MIN(i.position) - 1, 0)::double precision AS position
+    FROM issue i, current_issue c
+    WHERE i.workspace_id = c.workspace_id
+      AND i.status = $2
+      AND i.id <> c.id
 )
 UPDATE issue SET
     status = $2,
+    position = CASE
+        WHEN status IS DISTINCT FROM $2 AND NOT manual_position_locked
+          THEN (SELECT position FROM top_position)
+        ELSE position
+    END,
     updated_at = now()
-WHERE id = $1 AND workspace_id = $3 AND (SELECT true FROM actor_config)
+WHERE issue.id = $1 AND issue.workspace_id = $3 AND (SELECT true FROM actor_config)
+RETURNING *;
+
+-- name: ListUnreadAgentResultIssueIDs :many
+SELECT i.id
+FROM issue i
+LEFT JOIN issue_agent_result_read r ON r.issue_id = i.id AND r.user_id = $2
+WHERE i.workspace_id = $1
+  AND i.id = ANY($3::uuid[])
+  AND i.agent_result_at IS NOT NULL
+  AND (r.last_seen_agent_result_at IS NULL OR i.agent_result_at > r.last_seen_agent_result_at);
+-- name: MarkIssueAgentResult :one
+WITH current_issue AS (
+    SELECT * FROM issue WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+), top_position AS (
+    SELECT COALESCE(MIN(i.position) - 1, 0)::double precision AS position
+    FROM issue i, current_issue c
+    WHERE i.workspace_id = c.workspace_id
+      AND i.status = c.status
+      AND i.id <> c.id
+)
+UPDATE issue
+SET agent_result_at = now(),
+    position = CASE
+        WHEN NOT manual_position_locked THEN (SELECT position FROM top_position)
+        ELSE position
+    END,
+    updated_at = now()
+WHERE issue.id = $1 AND issue.workspace_id = $2
+RETURNING *;
+
+-- name: MarkIssueAgentResultRead :exec
+INSERT INTO issue_agent_result_read (issue_id, user_id, last_seen_agent_result_at, updated_at)
+SELECT $1, $2, agent_result_at, now()
+FROM issue
+WHERE id = $1
+ON CONFLICT (issue_id, user_id) DO UPDATE
+SET last_seen_agent_result_at = CASE
+        WHEN issue_agent_result_read.last_seen_agent_result_at IS NULL
+          OR issue_agent_result_read.last_seen_agent_result_at < EXCLUDED.last_seen_agent_result_at
+        THEN EXCLUDED.last_seen_agent_result_at
+        ELSE issue_agent_result_read.last_seen_agent_result_at
+    END,
+    updated_at = now();
+
+-- name: ClearIssueManualPositionLock :one
+UPDATE issue SET manual_position_locked = false
+WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one
@@ -229,7 +306,8 @@ DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.working_branch, i.agent_status, i.handoff_summary
+       i.working_branch, i.agent_status, i.handoff_summary,
+       i.manual_position_locked, i.agent_result_at
 FROM issue i
 WHERE i.workspace_id = $1
   AND i.status NOT IN ('done', 'cancelled')

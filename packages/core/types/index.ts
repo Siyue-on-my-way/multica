@@ -1,4 +1,4 @@
-export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
+export type { Issue, MoveIssueWorkspaceRequest, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
 export type {
   Agent,
   AgentStatus,
@@ -42,6 +42,7 @@ export type {
   UpdateAgentEnvRequest,
   Skill,
   SkillSummary,
+  SkillImportResult,
   AgentSkillSummary,
   DisabledRuntimeSkill,
   SetAgentRuntimeSkillEnabledRequest,
@@ -156,9 +157,11 @@ export type {
   ProjectReportAnalysisNote,
   ProjectReportChange,
   ProjectReportProjectAnalysis,
+  ProjectReportNarrative,
   ProjectReportSnapshot,
   ProjectReport,
   ProjectReportPeriod,
+  ProjectReportTemplate,
   ProjectReportHistoryItem,
   ListProjectReportsResponse,
   CreateProjectReportRequest,

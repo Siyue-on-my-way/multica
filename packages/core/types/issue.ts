@@ -33,6 +33,18 @@ export interface IssueReaction {
 export type IssueMetadataValue = string | number | boolean;
 export type IssueMetadata = Record<string, IssueMetadataValue>;
 
+export interface MoveIssueWorkspaceRequest {
+  target_workspace_id: string;
+  target_project_id?: string;
+  new_project?: {
+    title: string;
+    description?: string;
+    icon?: string;
+    status?: "planned" | "in_progress" | "paused" | "completed" | "cancelled";
+    priority?: IssuePriority;
+  };
+}
+
 export interface Issue {
   id: string;
   workspace_id: string;
@@ -49,6 +61,9 @@ export interface Issue {
   parent_issue_id: string | null;
   project_id: string | null;
   position: number;
+  manual_position_locked?: boolean;
+  agent_result_at?: string | null;
+  has_unread_agent_result?: boolean;
   // Ordered barrier group among sibling sub-issues (null = unstaged). The
   // parent assignee is notified/woken only when every sub-issue in a stage
   // finishes; see server/internal/handler/issue_child_done.go.

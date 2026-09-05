@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -50,6 +53,11 @@ type SkillResponse struct {
 	CreatedBy   *string `json:"created_by"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
+	// IsGlobal marks a skill in the cross-workspace shared namespace: every
+	// workspace can read it, only the owning workspace's admins (or the
+	// creator) can manage it, and a run attaches it only when its trigger
+	// text names the skill.
+	IsGlobal bool `json:"is_global"`
 }
 
 // SkillSummaryResponse is the list-endpoint shape: everything SkillResponse
@@ -66,6 +74,8 @@ type SkillSummaryResponse struct {
 	CreatedBy   *string `json:"created_by"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
+	// See SkillResponse.IsGlobal.
+	IsGlobal bool `json:"is_global"`
 	// Enabled is only populated for agent-scoped skill responses. Workspace
 	// skill lists describe the skill itself, so they omit assignment state.
 	Enabled *bool `json:"enabled,omitempty"`
@@ -84,12 +94,15 @@ type AgentSkillSummary struct {
 }
 
 type SkillFileResponse struct {
-	ID        string `json:"id"`
-	SkillID   string `json:"skill_id"`
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID              string `json:"id"`
+	SkillID         string `json:"skill_id"`
+	Path            string `json:"path"`
+	Content         string `json:"content,omitempty"`
+	ContentBase64   string `json:"content_base64,omitempty"`
+	ContentEncoding string `json:"content_encoding"`
+	Mode            int32  `json:"mode"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 type SkillSearchCandidateResponse struct {
@@ -139,6 +152,7 @@ func skillToResponse(s db.Skill) SkillResponse {
 		CreatedBy:   uuidToPtr(s.CreatedBy),
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),
+		IsGlobal:    s.IsGlobal,
 	}
 }
 
@@ -187,6 +201,7 @@ func skillSummaryToResponse(
 	config []byte,
 	createdBy pgtype.UUID,
 	createdAt, updatedAt pgtype.Timestamptz,
+	isGlobal bool,
 ) SkillSummaryResponse {
 	return SkillSummaryResponse{
 		ID:          uuidToString(id),
@@ -197,18 +212,30 @@ func skillSummaryToResponse(
 		CreatedBy:   uuidToPtr(createdBy),
 		CreatedAt:   timestampToString(createdAt),
 		UpdatedAt:   timestampToString(updatedAt),
+		IsGlobal:    isGlobal,
 	}
 }
 
 func skillFileToResponse(f db.SkillFile) SkillFileResponse {
-	return SkillFileResponse{
-		ID:        uuidToString(f.ID),
-		SkillID:   uuidToString(f.SkillID),
-		Path:      f.Path,
-		Content:   f.Content,
-		CreatedAt: timestampToString(f.CreatedAt),
-		UpdatedAt: timestampToString(f.UpdatedAt),
+	encoding := f.ContentEncoding
+	if encoding == "" {
+		encoding = skillbundle.EncodingUTF8
 	}
+	response := SkillFileResponse{
+		ID:              uuidToString(f.ID),
+		SkillID:         uuidToString(f.SkillID),
+		Path:            f.Path,
+		ContentEncoding: encoding,
+		Mode:            skillbundle.NormalizeFileMode(f.FileMode),
+		CreatedAt:       timestampToString(f.CreatedAt),
+		UpdatedAt:       timestampToString(f.UpdatedAt),
+	}
+	if encoding == skillbundle.EncodingBase64 {
+		response.ContentBase64 = f.Content
+	} else {
+		response.Content = f.Content
+	}
+	return response
 }
 
 // --- Request structs ---
@@ -219,11 +246,17 @@ type CreateSkillRequest struct {
 	Content     string                   `json:"content"`
 	Config      any                      `json:"config"`
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
+	// IsGlobal publishes the skill into the cross-workspace shared namespace.
+	// Admin-only: see skillCreateInput.IsGlobal.
+	IsGlobal bool `json:"is_global,omitempty"`
 }
 
 type CreateSkillFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path            string `json:"path"`
+	Content         string `json:"content,omitempty"`
+	ContentBase64   string `json:"content_base64,omitempty"`
+	ContentEncoding string `json:"content_encoding,omitempty"`
+	Mode            *int32 `json:"mode,omitempty"`
 }
 
 type UpdateSkillRequest struct {
@@ -246,17 +279,67 @@ type AddAgentSkillsRequest struct {
 
 // validateFilePath checks that a file path is safe (no traversal, no absolute paths).
 func validateFilePath(p string) bool {
-	if p == "" {
+	if p == "" || strings.ContainsAny(p, "\\\x00") {
 		return false
 	}
-	if filepath.IsAbs(p) {
+	if filepath.IsAbs(p) || path.IsAbs(p) {
 		return false
 	}
-	cleaned := filepath.Clean(p)
-	if strings.HasPrefix(cleaned, "..") {
+	cleaned := path.Clean(p)
+	if cleaned == "." || cleaned != p || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
 		return false
 	}
 	return true
+}
+
+// normalizeSkillFileRequest converts the additive API representation into
+// the storage representation. Existing clients continue sending UTF-8 in
+// `content`; binary callers send base64 in `content_base64`. The database
+// still stores a TEXT value, but the encoding marker means arbitrary bytes
+// are never coerced through an invalid UTF-8 string.
+func normalizeSkillFileRequest(req CreateSkillFileRequest) (db.UpsertSkillFileParams, error) {
+	encoding := strings.TrimSpace(strings.ToLower(req.ContentEncoding))
+	if encoding == "" && req.ContentBase64 != "" {
+		encoding = skillbundle.EncodingBase64
+	}
+	if encoding == "" {
+		encoding = skillbundle.EncodingUTF8
+	}
+
+	mode := skillbundle.DefaultFileMode
+	if req.Mode != nil {
+		mode = *req.Mode
+	}
+	file := skillbundle.File{
+		Path:            req.Path,
+		Content:         req.Content,
+		ContentBase64:   req.ContentBase64,
+		ContentEncoding: encoding,
+		Mode:            mode,
+	}
+	content, err := skillbundle.FileBytes(file)
+	if err != nil {
+		return db.UpsertSkillFileParams{}, err
+	}
+	canonical := skillbundle.FileFromBytes(req.Path, content, mode)
+	storedContent := canonical.Content
+	if canonical.ContentEncoding == skillbundle.EncodingBase64 {
+		storedContent = canonical.ContentBase64
+	}
+	return db.UpsertSkillFileParams{
+		Path:            sanitizeNullBytes(req.Path),
+		Content:         storedContent,
+		ContentEncoding: canonical.ContentEncoding,
+		FileMode:        canonical.Mode,
+	}, nil
+}
+
+func int32PtrIfNonDefault(mode int32) *int32 {
+	normalized := skillbundle.NormalizeFileMode(mode)
+	if normalized == skillbundle.DefaultFileMode {
+		return nil
+	}
+	return &normalized
 }
 
 func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id string) (db.Skill, bool) {
@@ -271,7 +354,10 @@ func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id st
 		return db.Skill{}, false
 	}
 
-	skill, err := h.Queries.GetSkillInWorkspace(r.Context(), db.GetSkillInWorkspaceParams{
+	// Global skills resolve from any workspace: they are readable everywhere
+	// even though their row is owned by one workspace. Manage operations still
+	// re-check the owning workspace's roles (canManageSkill).
+	skill, err := h.Queries.GetSkillVisibleInWorkspace(r.Context(), db.GetSkillVisibleInWorkspaceParams{
 		ID:          skillUUID,
 		WorkspaceID: parseUUID(workspaceID),
 	})
@@ -287,7 +373,9 @@ func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id st
 func (h *Handler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
-	skills, err := h.Queries.ListSkillSummariesByWorkspace(r.Context(), parseUUID(workspaceID))
+	// The skills page lists the workspace's own skills plus every global skill;
+	// is_global lets the UI badge the shared ones as read-everywhere.
+	skills, err := h.Queries.ListVisibleSkillSummariesForWorkspace(r.Context(), parseUUID(workspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list skills")
 		return
@@ -297,7 +385,7 @@ func (h *Handler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	for i, s := range skills {
 		resp[i] = skillSummaryToResponse(
 			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
-			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
+			s.CreatedBy, s.CreatedAt, s.UpdatedAt, s.IsGlobal,
 		)
 	}
 
@@ -378,6 +466,14 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A global skill is visible to every workspace in the deployment, so only
+	// the acting workspace's admins may publish one.
+	if req.IsGlobal {
+		if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+			return
+		}
+	}
+
 	resp, err := h.createSkillWithFiles(r.Context(), skillCreateInput{
 		WorkspaceID: workspaceUUID,
 		CreatorID:   creatorUUID,
@@ -386,6 +482,7 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		Content:     req.Content,
 		Config:      req.Config,
 		Files:       req.Files,
+		IsGlobal:    req.IsGlobal,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -424,6 +521,35 @@ func (h *Handler) canManageSkill(w http.ResponseWriter, r *http.Request, skill d
 // edit it in-app instead. See MUL-2701 / MUL-2800.
 func canOverwriteSkillByLocalImport(userID string, skill db.Skill) bool {
 	return skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == userID
+}
+
+// lookupGlobalSkillByName resolves a skill in the cross-workspace global
+// namespace. found=false with a nil error means the name is free there.
+func (h *Handler) lookupGlobalSkillByName(ctx context.Context, name string) (db.Skill, bool, error) {
+	skill, err := h.Queries.GetGlobalSkillByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.Skill{}, false, nil
+		}
+		return db.Skill{}, false, err
+	}
+	return skill, true, nil
+}
+
+// canManageGlobalSkillRecord reports whether the requester may republish a
+// GLOBAL skill they did not create: an admin/owner of the workspace that owns
+// the row. Global skills are readable everywhere, so management is decided
+// against the owning workspace, never the workspace the request arrived in.
+func (h *Handler) canManageGlobalSkillRecord(r *http.Request, existing db.Skill) bool {
+	userID := requestUserID(r)
+	if userID == "" {
+		return false
+	}
+	member, err := h.getWorkspaceMember(r.Context(), userID, uuidToString(existing.WorkspaceID))
+	if err != nil {
+		return false
+	}
+	return roleAllowed(member.Role, "owner", "admin")
 }
 
 func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
@@ -498,11 +624,13 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			if skillpkg.IsReservedContentPath(f.Path) {
 				continue
 			}
-			sf, err := qtx.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
-				SkillID: skill.ID,
-				Path:    sanitizeNullBytes(f.Path),
-				Content: sanitizeNullBytes(f.Content),
-			})
+			params, err := normalizeSkillFileRequest(f)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid skill file "+f.Path+": "+err.Error())
+				return
+			}
+			params.SkillID = skill.ID
+			sf, err := qtx.UpsertSkillFile(r.Context(), params)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())
 				return
@@ -574,6 +702,10 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 type ImportSkillRequest struct {
 	URL        string `json:"url"`
 	OnConflict string `json:"on_conflict,omitempty"`
+	// Global imports the skill into the cross-workspace shared namespace
+	// instead of the requesting workspace. Admin-only; the archive-upload
+	// form carries the same flag as its `global` field.
+	Global bool `json:"global,omitempty"`
 }
 
 const (
@@ -593,15 +725,50 @@ func validImportOnConflict(strategy string) bool {
 	return false
 }
 
-// Per-import bundle limits. These mirror the local-runtime importer so that
-// URL imports cannot smuggle in payloads that the rest of the stack would
-// reject. fetchRawFile enforces the per-file cap; importedSkill.addFile
-// enforces the bundle-wide caps.
+// Per-import bundle limits. These bound what a skill bundle may contain once
+// decompressed — the stored rows (base64 in Postgres) and every later task
+// payload that carries the skill — while still accepting real-world bundles
+// with binary resources. The compressed upload/download cap is separate
+// (maxImportArchiveUploadSize); fetchRawFile enforces the per-file cap and
+// importedSkill.addFile the bundle-wide caps.
 const (
-	maxImportFileSize  = 1 << 20 // 1 MiB per file
-	maxImportTotalSize = 8 << 20 // 8 MiB per import bundle (sum of supporting files)
-	maxImportFileCount = 256     // max number of supporting files
+	maxImportFileSize  = 16 << 20 // 16 MiB per file
+	maxImportTotalSize = 64 << 20 // 64 MiB per import bundle (sum of supporting files)
 )
+
+// maxImportFileCount bounds how many supporting files a single import may
+// carry. The byte caps above are the real guard against skill bloat (files
+// land as base64 rows in Postgres and ride every task payload that uses the
+// skill), so the file count stays generous without opening an abuse vector.
+// Overridable via MULTICA_SKILL_IMPORT_MAX_FILES so a workspace importing a
+// very large bundle can raise the ceiling without a code change or rebuild.
+var maxImportFileCount = envImportPositiveInt("MULTICA_SKILL_IMPORT_MAX_FILES", 4096)
+
+// envImportPositiveInt reads a positive integer from the named env var,
+// falling back to def when unset, blank, non-numeric, or non-positive so a
+// misconfigured override can never silently zero or shrink the cap.
+func envImportPositiveInt(key string, def int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+		slog.Warn("skill import: ignoring invalid env override", "key", key, "value", v)
+	}
+	return def
+}
+
+// hasDependencyDir reports whether a slash-delimited bundle path carries a
+// dependency folder (node_modules). Dependencies are an install-time concern
+// for the runtime sandbox, never bundle content: a zip or repo tree that
+// swept one in would otherwise burn the file-count cap on junk.
+func hasDependencyDir(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if strings.EqualFold(seg, "node_modules") {
+			return true
+		}
+	}
+	return false
+}
 
 // importedSkill holds the data extracted from an external source.
 type importedSkill struct {
@@ -614,8 +781,11 @@ type importedSkill struct {
 }
 
 type importedFile struct {
-	path    string
-	content string
+	path            string
+	content         string
+	contentBase64   string
+	contentEncoding string
+	mode            int32
 }
 
 // errImportCapExceeded marks an error caused by a per-file or per-bundle cap.
@@ -637,16 +807,14 @@ func isCapError(err error) bool {
 // addFile appends a supporting file while enforcing the per-bundle caps. It
 // returns an error when either the file count or aggregate byte budget would
 // be exceeded so the caller fails the import instead of silently truncating.
-//
-// Binary files (images, fonts, archives) are silently skipped: their bytes
-// can't survive a PG TEXT column (SQLSTATE 22021), and they're reference
-// assets the agent never reads as text anyway. Logging the skip leaves a
-// breadcrumb if a user expected one of these to import.
 func (s *importedSkill) addFile(path, content string) error {
-	if isLikelyBinaryFilePath(path) {
-		slog.Info("skill import: skipping binary file", "path", path, "size", len(content))
-		return nil
-	}
+	return s.addFileBytes(path, []byte(content), skillFileModeForPath(path))
+}
+
+// addFileBytes keeps raw bytes through import. UTF-8 files retain the original
+// JSON shape; arbitrary bytes become base64 only at the API/storage boundary,
+// so resources arrive on the runtime byte-for-byte intact.
+func (s *importedSkill) addFileBytes(path string, content []byte, mode int32) error {
 	if len(s.files) >= maxImportFileCount {
 		return fmt.Errorf("%w: import bundle exceeds %d file limit", errImportCapExceeded, maxImportFileCount)
 	}
@@ -654,36 +822,32 @@ func (s *importedSkill) addFile(path, content string) error {
 		return fmt.Errorf("%w: import bundle exceeds %d byte limit", errImportCapExceeded, maxImportTotalSize)
 	}
 	s.bundleSize += len(content)
-	s.files = append(s.files, importedFile{path: path, content: content})
+	file := skillbundle.FileFromBytes(path, content, mode)
+	s.files = append(s.files, importedFile{
+		path:            path,
+		content:         file.Content,
+		contentBase64:   file.ContentBase64,
+		contentEncoding: file.ContentEncoding,
+		mode:            file.Mode,
+	})
 	return nil
 }
 
-// isLikelyBinaryFilePath reports whether the file's extension indicates a
-// non-text payload. Conservative blacklist — extensions not on the list
-// are assumed text and pass through. `sanitizeNullBytes` (called at PG
-// insert time) is the second-line defence against any text file that
-// turns out to have stray invalid-UTF-8 bytes.
-func isLikelyBinaryFilePath(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case
-		// images
-		".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".ico", ".heic",
-		// fonts
-		".ttf", ".otf", ".woff", ".woff2", ".eot",
-		// archives
-		".zip", ".gz", ".tar", ".bz2", ".7z", ".rar",
-		// documents (binary office)
-		".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
-		// media
-		".mp3", ".mp4", ".wav", ".avi", ".mov", ".webm", ".m4a", ".flac",
-		// compiled / executable
-		".exe", ".dll", ".so", ".dylib", ".class", ".jar", ".wasm",
-		// db / cache
-		".db", ".sqlite", ".sqlite3", ".pyc":
-		return true
+// skillFileModeForPath gives imported scripts the same one-click runtime
+// behaviour as local scripts. GitHub/ClawHub metadata does not consistently
+// carry POSIX modes, so conventional script locations and extensions opt into
+// executability; all other resources stay 0644.
+func skillFileModeForPath(path string) int32 {
+	lower := strings.ToLower(filepath.ToSlash(path))
+	if strings.HasPrefix(lower, "scripts/") || strings.HasPrefix(lower, "bin/") {
+		return 0o755
 	}
-	return false
+	switch filepath.Ext(lower) {
+	case ".sh", ".bash", ".zsh", ".fish", ".py", ".rb", ".pl", ".js", ".mjs", ".cjs", ".ts":
+		return 0o755
+	default:
+		return skillbundle.DefaultFileMode
+	}
 }
 
 // --- ClawHub types ---
@@ -794,6 +958,7 @@ const (
 	sourceClawHub importSource = iota
 	sourceSkillsSh
 	sourceGitHub
+	sourceArchive
 )
 
 // detectImportSource determines the source from a URL.
@@ -814,7 +979,15 @@ func detectImportSource(raw string) (importSource, string, error) {
 		return 0, "", fmt.Errorf("invalid URL: %w", err)
 	}
 
+	// A direct archive link wins over the host table: github.com/.../archive/...zip
+	// and release-asset URLs end in .zip but must download as a bundle, not go
+	// through the GitHub repo-tree fetcher. codeload links have no archive
+	// extension, so the host itself marks them.
 	host := strings.ToLower(parsed.Hostname())
+	if isArchivePath(parsed.Path) || host == "codeload.github.com" {
+		return sourceArchive, normalized, nil
+	}
+
 	switch {
 	case host == "skills.sh" || host == "www.skills.sh":
 		return sourceSkillsSh, normalized, nil
@@ -827,8 +1000,18 @@ func detectImportSource(raw string) (importSource, string, error) {
 		if !strings.Contains(raw, "/") || !strings.Contains(raw, ".") {
 			return sourceClawHub, raw, nil
 		}
-		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, github.com)", host)
+		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, github.com, or a direct .zip/.skill download URL)", host)
 	}
+}
+
+// isArchivePath reports whether a URL path points at a downloadable archive.
+// The query string is ignored: "....zip?token=x" is still an archive link.
+func isArchivePath(path string) bool {
+	clean := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(path), "/"))
+	if idx := strings.IndexByte(clean, '?'); idx >= 0 {
+		clean = clean[:idx]
+	}
+	return strings.HasSuffix(clean, ".zip") || strings.HasSuffix(clean, ".skill")
 }
 
 // --- ClawHub import ---
@@ -1342,10 +1525,9 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 	}
 
 	// Select the eligible supporting-file blobs under skillDir, mirroring the
-	// filters the download loop / addFile would otherwise apply: skip the
-	// skill's own SKILL.md, LICENSE files, and binary assets (which addFile
-	// drops anyway). Keeping the filter here makes the arithmetic cap check
-	// below match what actually gets imported.
+	// filters the download loop / addFile applies: skip the skill's own SKILL.md
+	// and LICENSE files. Binary assets are retained and transported as base64,
+	// so they participate in the same cap arithmetic as text resources.
 	type treeFile struct {
 		repoPath string
 		relPath  string
@@ -1363,11 +1545,11 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		if relPath == "" {
 			continue
 		}
-		lowerBase := strings.ToLower(filepath.Base(relPath))
-		if lowerBase == "skill.md" || lowerBase == "license" || lowerBase == "license.txt" || lowerBase == "license.md" {
+		if hasDependencyDir(relPath) {
 			continue
 		}
-		if isLikelyBinaryFilePath(relPath) {
+		lowerBase := strings.ToLower(filepath.Base(relPath))
+		if lowerBase == "skill.md" || lowerBase == "license" || lowerBase == "license.txt" || lowerBase == "license.md" {
 			continue
 		}
 		eligible = append(eligible, treeFile{repoPath: entry.Path, relPath: relPath, size: entry.size()})
@@ -1393,7 +1575,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 	}
 
 	// Download concurrently, then append in the pre-sorted order.
-	contents := make([]string, len(eligible))
+	contents := make([][]byte, len(eligible))
 	fetched := make([]bool, len(eligible))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(treeDownloadConcurrency)
@@ -1420,7 +1602,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 				slog.Warn("github import: file download failed", "path", f.repoPath, "error", err)
 				return nil
 			}
-			contents[i] = string(body)
+			contents[i] = body
 			fetched[i] = true
 			return nil
 		})
@@ -1433,7 +1615,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		if !fetched[i] {
 			continue
 		}
-		if err := result.addFile(f.relPath, contents[i]); err != nil {
+		if err := result.addFileBytes(f.relPath, contents[i], skillFileModeForPath(f.relPath)); err != nil {
 			return err
 		}
 	}
@@ -2051,7 +2233,7 @@ func skillImportConflictReason() string {
 	return "a skill with this name already exists; use --on-conflict overwrite to replace it or --on-conflict rename to import a copy"
 }
 
-func (h *Handler) createImportedSkillWithName(ctx context.Context, workspaceID, creatorID pgtype.UUID, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
+func (h *Handler) createImportedSkillWithName(ctx context.Context, workspaceID, creatorID pgtype.UUID, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest, asGlobal bool) (SkillWithFilesResponse, error) {
 	return h.createSkillWithFiles(ctx, skillCreateInput{
 		WorkspaceID: workspaceID,
 		CreatorID:   creatorID,
@@ -2060,13 +2242,14 @@ func (h *Handler) createImportedSkillWithName(ctx context.Context, workspaceID, 
 		Content:     imported.content,
 		Config:      config,
 		Files:       files,
+		IsGlobal:    asGlobal,
 	})
 }
 
-func (h *Handler) createRenamedImportedSkill(ctx context.Context, workspaceID, creatorID pgtype.UUID, baseName string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
+func (h *Handler) createRenamedImportedSkill(ctx context.Context, workspaceID, creatorID pgtype.UUID, baseName string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest, asGlobal bool) (SkillWithFilesResponse, error) {
 	for suffix := 2; suffix < maxImportRenameAttempts+2; suffix++ {
 		candidate := fmt.Sprintf("%s-%d", baseName, suffix)
-		resp, err := h.createImportedSkillWithName(ctx, workspaceID, creatorID, candidate, imported, config, files)
+		resp, err := h.createImportedSkillWithName(ctx, workspaceID, creatorID, candidate, imported, config, files, asGlobal)
 		if err == nil {
 			return resp, nil
 		}
@@ -2090,7 +2273,7 @@ func skillImportOverwriteFailure(err error) (int, string) {
 	}
 }
 
-func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Request, strategy string, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID string, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest, existing db.Skill) {
+func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Request, strategy string, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID string, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest, existing db.Skill, asGlobal bool) {
 	existingInfo := existingSkillIdentity(existing, creatorID)
 	switch strategy {
 	case importOnConflictSkip:
@@ -2100,7 +2283,19 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 			ExistingSkill: &existingInfo,
 		})
 	case importOnConflictOverwrite:
-		if !canOverwriteSkillByLocalImport(creatorID, existing) {
+		// Workspace skills keep the creator-only re-import rule (MUL-2701).
+		// Global skills are shared infrastructure: the creator or an admin of
+		// the owning workspace may republish the bundle.
+		if asGlobal && !canOverwriteSkillByLocalImport(creatorID, existing) {
+			if !h.canManageGlobalSkillRecord(r, existing) {
+				writeJSON(w, http.StatusForbidden, SkillImportResult{
+					Status:        "failed",
+					Reason:        "only the skill creator or an admin of the owning workspace can overwrite a global skill",
+					ExistingSkill: &existingInfo,
+				})
+				return
+			}
+		} else if !asGlobal && !canOverwriteSkillByLocalImport(creatorID, existing) {
 			writeJSON(w, http.StatusForbidden, SkillImportResult{
 				Status:        "failed",
 				Reason:        "only the skill creator can overwrite this skill",
@@ -2109,7 +2304,10 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		resp, err := h.overwriteSkillWithFiles(r.Context(), skillOverwriteInput{
-			WorkspaceID:   workspaceUUID,
+			// A global row may be owned by a workspace other than the one the
+			// requester is acting in, so the overwrite is keyed on the target's
+			// own workspace (identical for the workspace-scoped path).
+			WorkspaceID:   existing.WorkspaceID,
 			TargetSkillID: existing.ID,
 			UserID:        creatorID,
 			ExpectedName:  name,
@@ -2117,6 +2315,8 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 			Content:       imported.content,
 			Config:        config,
 			Files:         files,
+			// Ownership (creator or owning-workspace admin) is verified above.
+			BypassOwnershipCheck: asGlobal,
 		})
 		if err != nil {
 			status, reason := skillImportOverwriteFailure(err)
@@ -2131,7 +2331,7 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 		h.publish(protocol.EventSkillUpdated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 		writeJSON(w, http.StatusOK, SkillImportResult{Status: "updated", Skill: &resp})
 	case importOnConflictRename:
-		resp, err := h.createRenamedImportedSkill(r.Context(), workspaceUUID, creatorUUID, name, imported, config, files)
+		resp, err := h.createRenamedImportedSkill(r.Context(), workspaceUUID, creatorUUID, name, imported, config, files, asGlobal)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, SkillImportResult{
 				Status:        "failed",
@@ -2185,6 +2385,11 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if req.Global {
+		if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+			return
+		}
+	}
 	if !validImportOnConflict(req.OnConflict) {
 		writeError(w, http.StatusBadRequest, "on_conflict must be one of: fail, overwrite, rename, skip")
 		return
@@ -2219,6 +2424,8 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		imported, err = fetchFromSkillsSh(ctx, httpClient, normalized)
 	case sourceGitHub:
 		imported, err = fetchFromGitHub(ctx, httpClient, normalized)
+	case sourceArchive:
+		imported, err = fetchFromArchiveURL(ctx, archiveHTTPClient, normalized)
 	}
 	if err != nil {
 		status, msg := importFetchErrorResponse(ctx, err)
@@ -2226,7 +2433,7 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.finishSkillImport(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID, strategy, structuredResult, imported)
+	h.finishSkillImport(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID, strategy, structuredResult, imported, req.Global)
 }
 
 // importFetchTimeout bounds the total time spent fetching a skill's files from
@@ -2256,16 +2463,22 @@ func importFetchErrorResponse(ctx context.Context, err error) (int, string) {
 // bundle came from a hosted URL or an uploaded archive (.skill / .zip). It maps
 // the extracted files onto CreateSkillFileRequest, records provenance into
 // config.origin, and creates the skill, routing same-name collisions through
-// the on_conflict strategy.
-func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID, strategy string, structuredResult bool, imported *importedSkill) {
+// the on_conflict strategy. asGlobal targets the cross-workspace namespace:
+// name lookups and the rename ladder then consider only global skills, and
+// same-name collisions overwrite (decision on SIY-95 — an admin-managed
+// shared skill updates in place rather than forking per workspace).
+func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID, strategy string, structuredResult bool, imported *importedSkill, asGlobal bool) {
 	files := make([]CreateSkillFileRequest, 0, len(imported.files))
 	for _, f := range imported.files {
 		if !validateFilePath(f.path) {
 			continue
 		}
 		files = append(files, CreateSkillFileRequest{
-			Path:    f.path,
-			Content: f.content,
+			Path:            f.path,
+			Content:         f.content,
+			ContentBase64:   f.contentBase64,
+			ContentEncoding: f.contentEncoding,
+			Mode:            int32PtrIfNonDefault(f.mode),
 		})
 	}
 
@@ -2277,25 +2490,32 @@ func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, work
 	}
 	name := sanitizeNullBytes(imported.name)
 
-	if structuredResult {
-		if existing, found, lerr := h.lookupSkillByName(r.Context(), workspaceUUID, name); lerr != nil {
+	lookupExisting := func() (db.Skill, bool, error) {
+		if asGlobal {
+			return h.lookupGlobalSkillByName(r.Context(), name)
+		}
+		return h.lookupSkillByName(r.Context(), workspaceUUID, name)
+	}
+
+	if structuredResult || asGlobal {
+		if existing, found, lerr := lookupExisting(); lerr != nil {
 			writeJSON(w, http.StatusInternalServerError, SkillImportResult{
 				Status: "failed",
 				Reason: "failed to check for existing skill: " + lerr.Error(),
 			})
 			return
 		} else if found {
-			h.resolveImportSkillConflict(w, r, strategy, workspaceID, workspaceUUID, creatorUUID, creatorID, name, imported, config, files, existing)
+			h.resolveImportSkillConflict(w, r, strategy, workspaceID, workspaceUUID, creatorUUID, creatorID, name, imported, config, files, existing, asGlobal)
 			return
 		}
 	}
 
-	resp, err := h.createImportedSkillWithName(r.Context(), workspaceUUID, creatorUUID, name, imported, config, files)
+	resp, err := h.createImportedSkillWithName(r.Context(), workspaceUUID, creatorUUID, name, imported, config, files, asGlobal)
 	if err != nil {
 		if isUniqueViolation(err) {
-			if structuredResult {
-				if existing, found, lerr := h.lookupSkillByName(r.Context(), workspaceUUID, name); lerr == nil && found {
-					h.resolveImportSkillConflict(w, r, strategy, workspaceID, workspaceUUID, creatorUUID, creatorID, name, imported, config, files, existing)
+			if structuredResult || asGlobal {
+				if existing, found, lerr := lookupExisting(); lerr == nil && found {
+					h.resolveImportSkillConflict(w, r, strategy, workspaceID, workspaceUUID, creatorUUID, creatorID, name, imported, config, files, existing, asGlobal)
 					return
 				}
 			}
@@ -2365,11 +2585,13 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sf, err := h.Queries.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
-		SkillID: skill.ID,
-		Path:    sanitizeNullBytes(req.Path),
-		Content: sanitizeNullBytes(req.Content),
-	})
+	params, err := normalizeSkillFileRequest(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid skill file: "+err.Error())
+		return
+	}
+	params.SkillID = skill.ID
+	sf, err := h.Queries.UpsertSkillFile(r.Context(), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())
 		return
@@ -2426,7 +2648,7 @@ func (h *Handler) ListAgentSkills(w http.ResponseWriter, r *http.Request) {
 	for i, s := range skills {
 		resp[i] = skillSummaryToResponse(
 			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
-			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
+			s.CreatedBy, s.CreatedAt, s.UpdatedAt, s.IsGlobal,
 		)
 		resp[i].Enabled = &s.Enabled
 	}
@@ -2628,7 +2850,7 @@ func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request
 	for i, s := range skills {
 		resp[i] = skillSummaryToResponse(
 			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
-			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
+			s.CreatedBy, s.CreatedAt, s.UpdatedAt, s.IsGlobal,
 		)
 		resp[i].Enabled = &s.Enabled
 	}

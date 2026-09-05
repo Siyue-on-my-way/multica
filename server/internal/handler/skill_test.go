@@ -361,22 +361,19 @@ func TestFetchFromSkillsSh_ResolvesRootLevelSkillMd(t *testing.T) {
 	if !strings.HasPrefix(result.content, "---\nname: huashu-design") {
 		t.Fatalf("SKILL.md content not populated, got %q", result.content)
 	}
-	// assets/logo.png is intentionally dropped by the binary-extension guard —
-	// PG TEXT columns can't store image bytes, and agents never read them as
-	// text. With tree-based enumeration the .png is filtered out from the tree
-	// metadata, so it is never even downloaded.
+	// assets/logo.png is intentionally KEPT: since the skill_file_assets table
+	// (migration 261) binary assets are stored through the base64 transport
+	// representation instead of being dropped as un-storable in a TEXT column.
 	gotPaths := importedFilePaths(result.files)
-	wantPaths := []string{"README.md"}
+	wantPaths := []string{"README.md", "assets/logo.png"}
 	if !equalStrings(gotPaths, wantPaths) {
 		t.Fatalf("files = %v, want %v", gotPaths, wantPaths)
 	}
 	if !containsString(*requests, "api.github.com /repos/alchaincyf/huashu-design/git/trees/master?recursive=1") {
 		t.Fatalf("expected recursive tree fetch, got %v", *requests)
 	}
-	for _, request := range *requests {
-		if request == "raw.githubusercontent.com /alchaincyf/huashu-design/master/assets/logo.png" {
-			t.Fatalf("binary asset must not be downloaded, got %v", *requests)
-		}
+	if !containsString(*requests, "raw.githubusercontent.com /alchaincyf/huashu-design/master/assets/logo.png") {
+		t.Fatalf("binary asset must be downloaded and kept, got %v", *requests)
 	}
 }
 
@@ -559,7 +556,7 @@ func TestFetchFromSkillsSh_TreeTotalByteCapFailsFast(t *testing.T) {
 	}
 }
 
-// A skill under the raised 256-file cap imports its full supporting-file set
+// A skill under the file-count cap imports its full supporting-file set
 // from the tree via concurrent downloads, in a stable path order regardless of
 // completion timing.
 func TestFetchFromSkillsSh_TreeEnumerationImportsManyFiles(t *testing.T) {

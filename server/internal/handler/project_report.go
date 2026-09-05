@@ -12,11 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/scheduler"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type CreateProjectReportRequest struct {
+	TemplateID string    `json:"template_id"`
 	PeriodType string    `json:"period_type"`
 	RangeStart time.Time `json:"range_start"`
 	RangeEnd   time.Time `json:"range_end"`
@@ -27,6 +29,7 @@ type ProjectReportResponse struct {
 	ID              string          `json:"id"`
 	WorkspaceID     string          `json:"workspace_id"`
 	ProjectID       string          `json:"project_id"`
+	TemplateID      *string         `json:"template_id,omitempty"`
 	PeriodType      string          `json:"period_type"`
 	RangeStart      string          `json:"range_start"`
 	RangeEnd        string          `json:"range_end"`
@@ -44,6 +47,7 @@ func reportHistoryToResponse(report db.ReportHistory) ProjectReportResponse {
 		ID:              uuidToString(report.ID),
 		WorkspaceID:     uuidToString(report.WorkspaceID),
 		ProjectID:       uuidToString(report.ProjectID),
+		TemplateID:      uuidToPtr(report.TemplateID),
 		PeriodType:      report.PeriodType,
 		RangeStart:      timestampToString(report.RangeStart),
 		RangeEnd:        timestampToString(report.RangeEnd),
@@ -69,17 +73,18 @@ type ProjectReportJobResponse struct {
 }
 
 type ProjectReportSummaryResponse struct {
-	ID              string `json:"id"`
-	WorkspaceID     string `json:"workspace_id"`
-	ProjectID       string `json:"project_id"`
-	PeriodType      string `json:"period_type"`
-	RangeStart      string `json:"range_start"`
-	RangeEnd        string `json:"range_end"`
-	Timezone        string `json:"timezone"`
-	GeneratedByType string `json:"generated_by_type"`
-	GeneratedByID   string `json:"generated_by_id"`
-	CreatedAt       string `json:"created_at"`
-	SavedAt         string `json:"saved_at"`
+	ID              string  `json:"id"`
+	WorkspaceID     string  `json:"workspace_id"`
+	ProjectID       string  `json:"project_id"`
+	TemplateID      *string `json:"template_id,omitempty"`
+	PeriodType      string  `json:"period_type"`
+	RangeStart      string  `json:"range_start"`
+	RangeEnd        string  `json:"range_end"`
+	Timezone        string  `json:"timezone"`
+	GeneratedByType string  `json:"generated_by_type"`
+	GeneratedByID   string  `json:"generated_by_id"`
+	CreatedAt       string  `json:"created_at"`
+	SavedAt         string  `json:"saved_at"`
 }
 
 type ListProjectReportsResponse struct {
@@ -92,6 +97,7 @@ func reportHistoryToSummaryResponse(report db.ListProjectReportsRow) ProjectRepo
 		ID:              uuidToString(report.ID),
 		WorkspaceID:     uuidToString(report.WorkspaceID),
 		ProjectID:       uuidToString(report.ProjectID),
+		TemplateID:      uuidToPtr(report.TemplateID),
 		PeriodType:      report.PeriodType,
 		RangeStart:      timestampToString(report.RangeStart),
 		RangeEnd:        timestampToString(report.RangeEnd),
@@ -144,9 +150,11 @@ func (h *Handler) CreateProjectReport(w http.ResponseWriter, r *http.Request) {
 	if req.Timezone == "" {
 		req.Timezone = "UTC"
 	}
-	if _, err := time.LoadLocation(req.Timezone); err != nil {
+	if timezone, ok := normalizeIANATimezone(req.Timezone); !ok {
 		writeError(w, http.StatusBadRequest, "invalid timezone")
 		return
+	} else {
+		req.Timezone = timezone
 	}
 	if req.RangeStart.IsZero() || req.RangeEnd.IsZero() || !req.RangeStart.Before(req.RangeEnd) {
 		writeError(w, http.StatusBadRequest, "range_start and range_end are required, and range_start must be earlier than range_end")
@@ -164,9 +172,20 @@ func (h *Handler) CreateProjectReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var templateUUID pgtype.UUID
+	if req.TemplateID != "" {
+		if parsed, err := util.ParseUUID(req.TemplateID); err == nil {
+			templateUUID = parsed
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid template_id")
+			return
+		}
+	}
+
 	report, err := h.Queries.CreateReportHistory(r.Context(), db.CreateReportHistoryParams{
 		WorkspaceID:     project.WorkspaceID,
 		ProjectID:       project.ID,
+		TemplateID:      templateUUID,
 		PeriodType:      req.PeriodType,
 		RangeStart:      pgtype.Timestamptz{Time: req.RangeStart, Valid: true},
 		RangeEnd:        pgtype.Timestamptz{Time: req.RangeEnd, Valid: true},
@@ -249,7 +268,19 @@ func (h *Handler) GetProjectReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get project report")
 		return
 	}
-	writeJSON(w, http.StatusOK, reportHistoryToResponse(report))
+	// SIY-83: the heavy raw-evidence snapshot is stored gzip-compressed in the
+	// report_snapshot table; report_history.data_snapshot holds only a tiny
+	// manifest. Inflate the compressed payload on demand so the detail
+	// response keeps the same shape, and surface a manifest (expired=true)
+	// when the TTL has reclaimed the evidence while the summary stays readable.
+	resolved, err := service.ResolveReportSnapshot(r.Context(), h.Queries, report.ID, report.DataSnapshot)
+	if err != nil {
+		slog.Error("resolve report snapshot failed", append(logger.RequestAttrs(r), "error", err)...)
+		resolved = report.DataSnapshot
+	}
+	response := reportHistoryToResponse(report)
+	response.DataSnapshot = json.RawMessage(resolved)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) SaveProjectReport(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +376,58 @@ func (h *Handler) GetProjectReportJob(w http.ResponseWriter, r *http.Request) {
 		response.Report = &reportResponse
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+type ReportTemplateResponse struct {
+	ID           string  `json:"id"`
+	WorkspaceID  *string `json:"workspace_id,omitempty"`
+	Name         string  `json:"name"`
+	PeriodType   string  `json:"period_type"`
+	SystemPrompt string  `json:"system_prompt"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+}
+
+func reportTemplateToResponse(t db.ReportTemplate) ReportTemplateResponse {
+	return ReportTemplateResponse{
+		ID:           uuidToString(t.ID),
+		WorkspaceID:  uuidToPtr(t.WorkspaceID),
+		Name:         t.Name,
+		PeriodType:   t.PeriodType,
+		SystemPrompt: t.SystemPrompt,
+		CreatedAt:    timestampToString(t.CreatedAt),
+		UpdatedAt:    timestampToString(t.UpdatedAt),
+	}
+}
+
+func (h *Handler) ListReportTemplates(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	_, ok = h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	periodType := r.URL.Query().Get("period_type")
+
+	templates, err := h.Queries.ListReportTemplates(r.Context(), db.ListReportTemplatesParams{
+		WorkspaceID: workspaceUUID,
+		PeriodType:  periodType,
+	})
+	if err != nil {
+		slog.Error("list report templates failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to list report templates")
+		return
+	}
+
+	responses := make([]ReportTemplateResponse, 0, len(templates))
+	for _, t := range templates {
+		responses = append(responses, reportTemplateToResponse(t))
+	}
+	writeJSON(w, http.StatusOK, responses)
 }
 
 func reportJobStatus(content, executionStatus string) string {

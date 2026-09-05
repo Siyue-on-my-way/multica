@@ -205,6 +205,8 @@ function IssueSurfaceContent({
             }
             tableFacetCounts={controller.tableFacetCounts}
             onTableFacetChange={controller.setActiveTableFacet}
+            search={controller.globalSearch}
+            onSearchChange={controller.setGlobalSearch}
           />
         )}
         {controller.isLoading ? (

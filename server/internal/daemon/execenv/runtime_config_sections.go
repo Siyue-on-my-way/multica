@@ -271,6 +271,10 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("- `multica issue metadata list <issue-id> [--output json]` — list KV metadata.\n")
 	b.WriteString("- `multica issue metadata set <issue-id> --key <k> --value <v> [--type string|number|bool]` — pin or overwrite a key.\n")
 	b.WriteString("- `multica issue metadata delete <issue-id> --key <k>` — remove a key.\n")
+	b.WriteString("- `multica report generate --project <id> --since <RFC3339> --until <RFC3339> [--type weekly] [--template <id>]` — generate a project report.\n")
+	b.WriteString("- `multica report job <job-id> --project <id>` — get the status of a report generation job.\n")
+	b.WriteString("- `multica report get <report-id> --project <id>` — get a generated project report.\n")
+	b.WriteString("- `multica skill run <name> --skill-dir <directory> --tool <name> [--arg key=value ...]` — execute a skill bundle tool in a sandbox.\n")
 	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — repository checkout on a dedicated branch.\n\n")
 	// Squad maintenance is squad-leader surface: an agent that leads no squad
 	// has no squad to change roles in, so this shipped to every run as dead

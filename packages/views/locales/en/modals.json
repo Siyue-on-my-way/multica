@@ -63,6 +63,8 @@
     "details_load_failed": "Couldn't generate the details. Return to the outline and try again.",
     "constraints_label": "Manual splitting instructions (optional)",
     "constraints_placeholder": "For example: keep these two tasks together; use at most 2 issues; preserve context…",
+    "ancestor_context_label": "Include ancestor Issue context",
+    "ancestor_context_hint": "On by default: includes only ancestor titles and descriptions, not discussion history.",
     "outline_edit_hint": "Select items to merge, or edit their titles and goals directly.",
     "plan_item_count": "{{count}} items",
     "summary_test_badge": "Integration test",

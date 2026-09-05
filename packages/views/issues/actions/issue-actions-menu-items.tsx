@@ -89,6 +89,7 @@ interface IssueActionsMenuItemsProps {
    *  Decoupled this way so the same item can drive both the dropdown
    *  (3-dot button) and the context menu (right-click) wrappers. */
   onOpenAssignee: () => void;
+  onOpenMove: () => void;
   /** If set, leave the page after the issue is deleted (used by the detail
    *  page, which renders the issue being deleted). The delete modal goes back
    *  to the list the user came from and only falls back to this path when
@@ -101,6 +102,7 @@ export function IssueActionsMenuItems({
   actions,
   primitives: P,
   onOpenAssignee,
+  onOpenMove,
   onDeletedFallbackPath,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
@@ -267,6 +269,10 @@ export function IssueActionsMenuItems({
       <P.Item onClick={openInNewTab}>
         <ExternalLink className="h-3.5 w-3.5" />
         {t(($) => $.actions.open_in_new_tab)}
+      </P.Item>
+      <P.Item onClick={onOpenMove}>
+        <FolderOpen className="h-3.5 w-3.5" />
+        {t(($) => $.actions.move_to_workspace)}
       </P.Item>
       <P.Item onClick={togglePin}>
         {isPinned ? (

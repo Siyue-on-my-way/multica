@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,6 +20,11 @@ type skillCreateInput struct {
 	Content     string
 	Config      any
 	Files       []CreateSkillFileRequest
+	// IsGlobal publishes the skill into the cross-workspace namespace: every
+	// workspace can read it, only the owning workspace's admins (or the
+	// creator) can manage it, and it is never auto-attached to a task — a run
+	// picks it up only when its trigger text names the skill.
+	IsGlobal bool
 }
 
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
@@ -42,6 +48,7 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		Content:     sanitizeNullBytes(input.Content),
 		Config:      config,
 		CreatedBy:   input.CreatorID,
+		IsGlobal:    input.IsGlobal,
 	})
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -54,11 +61,12 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		if skillpkg.IsReservedContentPath(f.Path) {
 			continue
 		}
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
-		})
+		params, err := normalizeSkillFileRequest(f)
+		if err != nil {
+			return SkillWithFilesResponse{}, fmt.Errorf("invalid skill file %q: %w", f.Path, err)
+		}
+		params.SkillID = skill.ID
+		sf, err := qtx.UpsertSkillFile(ctx, params)
 		if err != nil {
 			return SkillWithFilesResponse{}, err
 		}
@@ -116,6 +124,12 @@ type skillOverwriteInput struct {
 	Content      string
 	Config       any
 	Files        []CreateSkillFileRequest
+	// BypassOwnershipCheck skips the creator-only overwrite re-check. Two
+	// callers need it: the host-side skill inbox (no user behind the write —
+	// dropping a file on the server's upload volume is itself an administrator
+	// action) and global-skill imports, where the caller has already verified
+	// the requester is the creator or an admin of the owning workspace.
+	BypassOwnershipCheck bool
 }
 
 // overwriteSkillWithFiles re-imports a bundle onto an existing skill in a single
@@ -157,7 +171,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		}
 		return SkillWithFilesResponse{}, err
 	}
-	if !canOverwriteSkillByLocalImport(input.UserID, existing) {
+	if !input.BypassOwnershipCheck && !canOverwriteSkillByLocalImport(input.UserID, existing) {
 		return SkillWithFilesResponse{}, errSkillOverwriteForbidden
 	}
 	// The overwrite is keyed on target_skill_id, but the conflict the user
@@ -194,11 +208,15 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	}
 	fileResps := make([]SkillFileResponse, 0, len(input.Files))
 	for _, f := range input.Files {
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
-		})
+		if skillpkg.IsReservedContentPath(f.Path) {
+			continue
+		}
+		params, err := normalizeSkillFileRequest(f)
+		if err != nil {
+			return SkillWithFilesResponse{}, fmt.Errorf("invalid skill file %q: %w", f.Path, err)
+		}
+		params.SkillID = skill.ID
+		sf, err := qtx.UpsertSkillFile(ctx, params)
 		if err != nil {
 			return SkillWithFilesResponse{}, err
 		}

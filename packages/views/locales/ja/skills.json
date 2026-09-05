@@ -62,7 +62,9 @@
     "source_runtime_unknown": "ランタイムから",
     "source_clawhub": "ClawHub から",
     "source_skills_sh": "Skills.sh から",
-    "source_github": "GitHub から"
+    "source_github": "GitHub から",
+    "global_badge": "グローバル",
+    "global_tooltip": "全ワークスペースで共有されるスキル"
   },
   "actions": {
     "row_menu": "操作",
@@ -214,20 +216,26 @@
       },
       "url": {
         "title": "URL からインポート",
-        "desc": "公開済みのスキルを URL で取得します。ファイルはサーバー側で取得されます。"
+        "desc": "URLからスキルを取得 — ClawHub、Skills.sh、GitHub、および .zip/.skill の直リンクに対応。ファイルはサーバー側で取得します。"
       },
       "runtime": {
         "title": "ランタイムからコピー",
         "desc": "ローカルランタイムをスキャンし、ディスク上のスキルの 1 つをこのワークスペースに昇格します。"
+      },
+      "archive": {
+        "title": "zip をアップロード",
+        "desc": "ローカルの .skill/.zip を取り込みます。同名スキルには選択した戦略を適用します。"
       }
     },
     "method_card": {
       "manual_title": "手動で作成",
       "manual_desc": "空の SKILL.md から始めて、独自の指示を記述します。",
       "url_title": "URL からインポート",
-      "url_desc": "ClawHub または Skills.sh の公開スキルを取得します。",
+      "url_desc": "ClawHub、Skills.sh、GitHub、または .zip/.skill リンクからスキルを取得します。",
       "runtime_title": "ランタイムからコピー",
-      "runtime_desc": "ローカルランタイムにすでにインストールされているスキルを昇格します。"
+      "runtime_desc": "ローカルランタイムにすでにインストールされているスキルを昇格します。",
+      "archive_title": "zip をアップロード",
+      "archive_desc": "スクリプトやデータを含む .skill/.zip を取り込みます。"
     },
     "manual": {
       "name_label": "名前",
@@ -253,7 +261,25 @@
       "name_conflict_hint": " インポートしたスキル名はすでに存在します。再試行する前に既存のものを削除してください。",
       "fallback_error": "インポートに失敗しました",
       "cancel": "キャンセル",
-      "toast_imported": "スキルをインポートしました"
+      "toast_imported": "スキルをインポートしました",
+      "direct_zip_hint": ".zip/.skill の直リンクにも対応しています（GitHub のリリースアセットやリポジトリの zipball など）。サーバーが自動でダウンロードして展開します。"
+    },
+    "archive": {
+      "pick_file": ".zip または .skill ファイルを選択",
+      "pick_hint": "スクリプト・データ・バイナリを含められます（最大 100 MB）",
+      "conflict_label": "同名スキルが存在する場合",
+      "conflict_overwrite": "上書き",
+      "conflict_rename": "リネーム",
+      "conflict_skip": "スキップ",
+      "global_label": "すべてのワークスペースで共有（グローバル）",
+      "global_hint": "全ワークスペースから読み取り可、編集は管理者のみ。実行テキストにスキル名があると有効化されます",
+      "import": "インポート",
+      "importing": "インポート中…",
+      "cancel": "キャンセル",
+      "toast_imported": "スキルをインポートしました",
+      "toast_updated": "スキルを更新しました",
+      "fallback_error": "インポートに失敗しました",
+      "too_large": "アーカイブが 100 MB の上限を超えています。容量を減らして再試行してください。"
     }
   },
   "runtime_import": {
@@ -325,6 +351,7 @@
     "no_content": "*まだ内容がありません*",
     "markdown_placeholder": "Markdown の内容を記述...",
     "raw_placeholder": "ファイルの内容...",
-    "raw_aria": "{{path}} のプレーンテキスト"
+    "raw_aria": "{{path}} のプレーンテキスト",
+    "binary_resource": "バイナリリソース（{{bytes}} バイト）— プレビューできませんが、エージェントは利用できます"
   }
 }

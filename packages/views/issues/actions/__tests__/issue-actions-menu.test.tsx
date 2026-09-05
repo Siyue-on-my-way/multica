@@ -37,6 +37,10 @@ vi.mock("@multica/core/auth", () => ({
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
+  workspaceListOptions: () => ({
+    queryKey: ["workspaces"],
+    queryFn: () => Promise.resolve([]),
+  }),
   memberListOptions: () => ({
     queryKey: ["workspaces", "ws-1", "members"],
     queryFn: () =>
@@ -69,6 +73,11 @@ vi.mock("@multica/core/pins", () => ({
   }),
   useCreatePin: () => ({ mutate: vi.fn() }),
   useDeletePin: () => ({ mutate: vi.fn() }),
+}));
+
+vi.mock("@multica/core/projects", () => ({
+  useMoveIssueToWorkspace: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreateProjectInWorkspace: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@multica/core/issues/mutations", () => ({
@@ -179,6 +188,7 @@ describe("IssueActionsDropdown", () => {
     expect(screen.getByText("Assignee")).toBeInTheDocument();
     expect(screen.getByText("Due date")).toBeInTheDocument();
     expect(screen.getByText("Open in new tab")).toBeInTheDocument();
+    expect(screen.getByText("Move to another workspace")).toBeInTheDocument();
     expect(screen.getByText("Copy link")).toBeInTheDocument();
     expect(screen.getByText("Relations")).toBeInTheDocument();
     expect(screen.getByText("Delete issue")).toBeInTheDocument();
@@ -263,6 +273,25 @@ describe("IssueActionsDropdown", () => {
     expect(await screen.findByText("Set parent issue...")).toBeInTheDocument();
     expect(screen.queryByText("Remove parent issue")).not.toBeInTheDocument();
   });
+
+  it("clicking Move to another workspace opens the move dialog", async () => {
+    render(
+      wrap(
+        <IssueActionsDropdown
+          issue={mockIssue}
+          trigger={<button data-testid="trigger">Menu</button>}
+        />,
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("trigger"));
+    fireEvent.click(await screen.findByText("Move to another workspace"));
+
+    expect(
+      await screen.findByText("Move issue to another workspace"),
+    ).toBeInTheDocument();
+  });
+
 
   it("clicking Delete issue opens the delete-confirm modal", async () => {
     render(

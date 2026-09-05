@@ -1,5 +1,6 @@
 export { projectKeys, projectListOptions, projectDetailOptions } from "./queries";
-export { useCreateProject, useUpdateProject, useDeleteProject, useMigrateProject } from "./mutations";
+export { useCreateProject, useCreateProjectInWorkspace, useUpdateProject, useDeleteProject, useMigrateProject } from "./mutations";
+export { useMoveIssueToWorkspace } from "./move-issue";
 export { useProjectDraftStore } from "./draft-store";
 export {
   useProjectViewStore,
@@ -23,6 +24,7 @@ export {
   projectReportKeys,
   projectReportHistoryOptions,
   projectReportDetailOptions,
+  projectReportTemplateOptions,
   useCreateProjectReport,
   useSaveProjectReport,
 } from "./report-queries";

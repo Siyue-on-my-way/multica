@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Input } from "@multica/ui/components/ui/input";
 import {
   ArrowDown,
   ArrowUp,
@@ -803,6 +804,8 @@ export function IssuesHeader({
   facetCountsExact = true,
   tableFacetCounts,
   onTableFacetChange,
+  search = "",
+  onSearchChange,
 }: {
   scopedIssues: Issue[];
   /** See IssueSurfaceController.workingAgents — the surface-scoped projection
@@ -816,6 +819,8 @@ export function IssuesHeader({
   facetCountsExact?: boolean;
   tableFacetCounts?: IssueTableFacetsResponse;
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
+  search?: string;
+  onSearchChange?: (value: string) => void;
 }) {
   const { t } = useT("issues");
   const scope = useIssuesScopeStore((s) => s.scope);
@@ -894,6 +899,27 @@ export function IssuesHeader({
         </DropdownMenu>
 
         <div className="flex shrink-0 items-center gap-1">
+          <div className="relative hidden w-48 md:block">
+            <Input
+              value={search}
+              onChange={(event) => onSearchChange?.(event.target.value)}
+              placeholder="Search issues..."
+              className="h-7 pr-7"
+              aria-label="Search issues"
+            />
+            {search && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-0 top-0 size-7"
+                onClick={() => onSearchChange?.("")}
+                aria-label="Clear search"
+              >
+                <X className="size-3.5" />
+              </Button>
+            )}
+          </div>
           {agentRunningFilter && (
             <span className="mr-1 hidden text-caption text-muted-foreground md:inline">
               {t(($) => $.agent_activity.filter_active_label)}

@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WSClient } from "./ws-client";
 import type { WSMessage } from "../types/events";
@@ -72,6 +73,28 @@ describe("WSClient", () => {
     expect(url.searchParams.get("client_platform")).toBe("cli");
     expect(url.searchParams.has("client_version")).toBe(false);
     expect(url.searchParams.has("client_os")).toBe(false);
+  });
+
+  it("pauses reconnects while the document is in BFCache and reconnects on restore", () => {
+    const ws = new WSClient("ws://example.test/ws");
+    ws.connect();
+    const firstInstance = FakeWebSocket.lastInstance!;
+
+    firstInstance.onclose?.();
+    expect(FakeWebSocket.lastInstance).toBe(firstInstance);
+
+    window.dispatchEvent(Object.assign(new Event("pagehide"), { persisted: true }));
+    expect(firstInstance.onclose).toBeNull();
+
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(30_000);
+    expect(FakeWebSocket.lastInstance).toBe(firstInstance);
+
+    window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }));
+    expect(FakeWebSocket.lastInstance).not.toBe(firstInstance);
+
+    ws.disconnect();
+    vi.useRealTimers();
   });
 
   it("truncates the logged payload when an unparseable frame is large", () => {
@@ -355,7 +378,7 @@ describe("WSClient", () => {
       expect(delay2).toBe(1200);
     });
 
-    it("resets the attempt counter on successful authentication", () => {
+    it("keeps backoff escalating when the connection drops before it is stable", () => {
       vi.stubGlobal(
         "Math",
         new Proxy(Math, {
@@ -379,10 +402,44 @@ describe("WSClient", () => {
       expect(lastTimerDelay()).toBe(2000);
       vi.advanceTimersByTime(2000);
 
-      // Successful connection resets the counter.
+      // The connection authenticates but drops again immediately (well
+      // inside the 60s stability window). The attempt counter must NOT
+      // reset, so the next failure keeps escalating instead of looping at
+      // the base delay — this is the reconnect-storm signature.
       simulateAuthAck();
+      simulateDisconnect();
+      expect(lastTimerDelay()).toBe(4000);
+    });
 
-      // Next failure should be back to the base delay.
+    it("resets the attempt counter only after a stable connection", () => {
+      vi.stubGlobal(
+        "Math",
+        new Proxy(Math, {
+          get(target, prop) {
+            if (prop === "random") return () => 0.5;
+            return (target as any)[prop];
+          },
+        }),
+      );
+
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+
+      // Two failures: delays 1000, 2000
+      simulateDisconnect();
+      expect(lastTimerDelay()).toBe(1000);
+      vi.advanceTimersByTime(1000);
+
+      simulateDisconnect();
+      expect(lastTimerDelay()).toBe(2000);
+      vi.advanceTimersByTime(2000);
+
+      // Authenticate and hold the connection past the stability window.
+      simulateAuthAck();
+      vi.advanceTimersByTime(60_000);
+
+      // A drop now counts as a fresh start: back to the base delay.
       simulateDisconnect();
       expect(lastTimerDelay()).toBe(1000);
     });

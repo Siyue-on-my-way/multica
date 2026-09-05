@@ -25,6 +25,7 @@ import {
 import { api } from "@multica/core/api";
 import { browserTimezone, timezoneOptions } from "../../common/timezone-select";
 import { useT } from "../../i18n";
+import { isValidTimezone } from "../../common/timezone";
 import {
   SettingsCard,
   SettingsRow,
@@ -231,15 +232,18 @@ function TimezoneRow() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const stored = user?.timezone ?? null;
+  // Older installations could persist the non-IANA sentinel "Local". Treat
+  // it as no pinned preference so the settings picker can recover cleanly.
+  const validStored = isValidTimezone(stored) ? stored.trim() : null;
   const browser = browserTimezone();
-  const value = stored ?? BROWSER_TZ_VALUE;
+  const value = validStored ?? BROWSER_TZ_VALUE;
 
   // Full IANA list (from timezoneOptions in common/timezone-select) so a
   // user needing a non-curated zone isn't stuck with ~18 common ones.
   // Memoized — timezoneOptions enumerates ~600 IANA zones per call.
   const options = useMemo(
-    () => timezoneOptions(stored ?? browser),
-    [stored, browser],
+    () => timezoneOptions(validStored ?? browser),
+    [validStored, browser],
   );
 
   const handleChange = async (next: string) => {

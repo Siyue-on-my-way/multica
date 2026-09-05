@@ -82,7 +82,7 @@ func TestProjectReportGenerationJobCompletesOneTimeJob(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT content FROM report_history WHERE id = $1`, reportID).Scan(&content); err != nil {
 		t.Fatalf("load generated report: %v", err)
 	}
-	if !strings.Contains(content, "后台生成成功") || !strings.Contains(content, "## 数据指标") {
+	if !strings.Contains(content, "## 今日摘要") || !strings.Contains(content, "## 数据指标") {
 		t.Fatalf("unexpected generated report: %q", content)
 	}
 
@@ -104,7 +104,7 @@ func TestProjectReportGenerationJobCompletesOneTimeJob(t *testing.T) {
 	}
 
 	manager.processPlan(ctx, &job, jobScope, createdAt.UTC(), time.Now().UTC())
-	if llm.calls != 1 {
-		t.Fatalf("report generated %d times, want 1", llm.calls)
+	if llm.calls != 0 {
+		t.Fatalf("empty report window invoked LLM %d times, want 0", llm.calls)
 	}
 }

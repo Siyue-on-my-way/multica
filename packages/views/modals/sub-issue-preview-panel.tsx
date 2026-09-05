@@ -110,6 +110,8 @@ export function SubIssuePreviewModal({
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [humanConstraints, setHumanConstraints] = useState("");
+  const [carryAncestorContext, setCarryAncestorContext] = useState(true);
+  const [ancestorContextRefs, setAncestorContextRefs] = useState<{ id: string; updated_at: string }[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [planError, setPlanError] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -127,8 +129,10 @@ export function SubIssuePreviewModal({
         const response = await api.suggestSubissuePlans(issueId, {
           comment_id: commentId,
           human_constraints: constraints.trim() || undefined,
+          carry_ancestor_context: carryAncestorContext,
         });
       setPlans(response.plans);
+      setAncestorContextRefs(response.ancestor_brief_refs ?? []);
       setSelectedPlanId(response.plans[0]?.id ?? "");
       setMergeSelection([]);
       setDetailError(false);
@@ -139,7 +143,7 @@ export function SubIssuePreviewModal({
         setLoadingPlans(false);
       }
     },
-    [commentId, issueId],
+    [carryAncestorContext, commentId, issueId],
   );
 
   useEffect(() => {
@@ -237,6 +241,7 @@ export function SubIssuePreviewModal({
       const response = await api.expandSubissuePlan(issueId, {
         comment_id: commentId,
         human_constraints: humanConstraints.trim() || undefined,
+        carry_ancestor_context: carryAncestorContext,
         plan: selectedPlan,
       });
       setDrafts(response.subissues.map(draftFromSuggestion));
@@ -266,6 +271,7 @@ export function SubIssuePreviewModal({
             project_id: sourceIssue?.project_id ?? undefined,
             parent_issue_id: draft.parentIssueId ?? undefined,
             stage: draft.stage,
+            ancestor_context_refs: carryAncestorContext ? ancestorContextRefs : undefined,
           }),
         ),
       );
@@ -314,6 +320,14 @@ export function SubIssuePreviewModal({
                   className="min-h-16"
                   disabled={loadingPlans}
                 />
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border border-border/60 p-2.5">
+                <div>
+                  <div className="text-body font-medium">{t(($) => $.suggest_subissues.ancestor_context_label)}</div>
+                  <div className="text-caption text-muted-foreground">{t(($) => $.suggest_subissues.ancestor_context_hint)}</div>
+                </div>
+                <Checkbox checked={carryAncestorContext} onCheckedChange={(value) => setCarryAncestorContext(value === true)} />
               </div>
 
               {loadingPlans && (

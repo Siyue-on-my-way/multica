@@ -394,7 +394,13 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 			if !validateFilePath(f.path) {
 				continue
 			}
-			files = append(files, CreateSkillFileRequest{Path: f.path, Content: f.content})
+			files = append(files, CreateSkillFileRequest{
+				Path:            f.path,
+				Content:         f.content,
+				ContentBase64:   f.contentBase64,
+				ContentEncoding: f.contentEncoding,
+				Mode:            int32PtrIfNonDefault(f.mode),
+			})
 		}
 
 		// Record provenance: which template seeded this skill, plus the

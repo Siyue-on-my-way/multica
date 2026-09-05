@@ -100,6 +100,7 @@ const LONG_DESCRIPTION =
 const baseSkill: Skill = {
   id: "skill-1",
   workspace_id: "ws-1",
+  is_global: false,
   name: "aiforui-animations",
   description: LONG_DESCRIPTION,
   config: {},

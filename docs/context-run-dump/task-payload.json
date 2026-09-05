@@ -1,0 +1,148 @@
+{
+  "_capture": {
+    "source": [
+      "multica issue runs --full-id --output json",
+      "multica daemon logs",
+      "Codex app-server event_msg.user_message",
+      "execution workdir files"
+    ],
+    "task_id": "0f3ea789-bab1-4d74-92f2-6c56384b4bcf",
+    "attempt": 1,
+    "status_at_capture": "running",
+    "created_at": "2026-09-05T04:26:44Z",
+    "started_at": "2026-09-05T04:26:44Z",
+    "provider": "codex",
+    "daemon_observation": {
+      "prompt_bytes": 1564,
+      "resume_session": false,
+      "reuse_workdir": false,
+      "trigger_comment_id": "",
+      "inline_system_prompt": false,
+      "mcp_config": false,
+      "repos": 0,
+      "workdir_reused": false
+    },
+    "provider_transcript": {
+      "message_kind": "event_msg.user_message",
+      "prompt_file": "prompt.txt",
+      "session_id": "<session-id>",
+      "exact_message_bytes_from_capture": 1564
+    },
+    "generated_files": [
+      "AGENTS.md",
+      ".agent_context/issue_context.md",
+      ".multica/daemon_task_context.json",
+      ".multica/project/resources.json"
+    ],
+    "redactions": [
+      "agent_id -> <agent-id>",
+      "runtime_id -> <runtime-id>",
+      "workspace_id -> <workspace-id>",
+      "repository path -> <repo>",
+      "workdir path -> <workdir>",
+      "auth token, email and private provider configuration -> [REDACTED]"
+    ],
+    "marker_examples": {
+      "comment_prompt": "[NEW COMMENT] A user just left a new comment. Focus on THIS comment — do not confuse it with previous ones:",
+      "ancestor_prompt": "[Background source: Issue X]"
+    },
+    "observation_note": "The marker_examples are source-level comparison examples. They were not asserted to be present in this assignment capture."
+  },
+  "id": "0f3ea789-bab1-4d74-92f2-6c56384b4bcf",
+  "agent_id": "<agent-id>",
+  "runtime_id": "<runtime-id>",
+  "issue_id": "9f5f45fc-7ebe-488b-8cbc-0d6e049d0089",
+  "workspace_id": "<workspace-id>",
+  "thread_name": "【一次 run 的生命周期】整理 Multica 上下文管理机制完整课件与真实数据导出",
+  "current_issue_title": "【一次 run 的生命周期】整理 Multica 上下文管理机制完整课件与真实数据导出",
+  "current_issue_description": "### 背景\n为了将 Multica 的上下文管理机制作为教学案例，需要基于现有代码实现（`<repo>`）整理一份完整的技术课件，并提取一次真实运行（run）的上下文数据作为配套示例。\n\n### 工作范围\n1. **梳理核心机制文档**：\n   - **上下文分层**：按变化频率隔离的四层架构（运行时 brief、任务 prompt、祖先上下文、历史与状态），并附带对应源码路径（如 `runtime_config*.go`, `prompt.go`, `ancestor_brief.go`）。\n   - **触发与感知链路**：记录从事件触发到 `Task` 载荷构建的全过程，说明问题嵌入、直接上下文、模式标记及“带预算的读取协议”机制。\n   - **祖先上下文传递**：说明快照语义、8192 token 预算截断机制及优先级冲突规则。\n   - **会话连续性与 Agent 切换**：对比 Provider 原生会话续接与基于平台检查点（`handoff_summary`）的 Agent 切换机制，重点说明“诚实声明上下文丢失”的防御逻辑。\n   - **多 Provider 适配**：整理 `execenv` 层的统一抽象，包括文件投递（`AGENTS.md`）、环境准备及按任务类型裁剪 brief 的逻辑。\n2. **真实数据导出（课件素材）**：\n   - 在本地或测试环境触发一次真实的 Multica 任务运行。\n   - 拦截并导出该次运行的完整 `Task` 载荷（JSON 格式）。\n   - 导出最终生成的完整 Prompt 原文。\n   - 导出生成的 Brief（如 `AGENTS.md`）全文。\n\n### 验收标准\n1. 产出一份结构清晰的 Markdown 教学文档，涵盖上述 5 个核心机制，且所有代码引用均与 Multica 实际代码库路径一致。\n2. 附带一份真实 Run 的 Dump 数据包（包含 Task Payload、Prompt、Brief），数据需脱敏但保留完整的结构和标记（如 `[NEW COMMENT]`, `[Background source: Issue X]` 等）。\n3. 文档中需包含“适合展开的论点”总结（如上下文预算、读历史协议、持久化表示等）。",
+  "ancestor_brief": "ANCESTOR_BRIEF (background reference only; current task instructions take precedence)\n\n[Background source: Issue 79f4d8ef-62a7-4cdc-837b-ecbd6c08fa73]\nTitle: multica业务优化\nDescription:\n代码地址在：<repo>  \n启动脚本是： [<repo>/restart.sh](<repo>/restart.sh)    \n每次任务完成后都可以执行restart.sh脚本， 重启项目，然后做测试  \n  \n注意测试通过后记得执行git commit -m ‘‘ ， 提交代码，防止代码消失\n\n这是一个用于管理我的业务agent的项目，协助我管理项目, 并同时使用不同的电脑连接到了这个multica服务作为runtime, 可以通过issue控制远程电脑写代码（远程电脑可能是mac/linux/win)",
+  "ancestor_brief_refs": [
+    {
+      "id": "79f4d8ef-62a7-4cdc-837b-ecbd6c08fa73",
+      "updated_at": "2026-09-05T04:18:04Z"
+    }
+  ],
+  "agent": {
+    "id": "<agent-id>",
+    "name": "8.148-codex",
+    "instructions": "",
+    "skills": [
+      {
+        "id": "70f9507d-7798-48db-904e-4204c39db065",
+        "source": "assigned",
+        "name": "next-ai-drawio",
+        "description": "Generate or edit a draw.io architecture/flowchart/sequence diagram from a text description, and get back a link to view the rendered result. Use this whenever you want to visually show the user the architecture, request flow, or data flow of a system or feature you're describing, building, or reviewing — instead of only describing it in text.",
+        "content": "[REDACTED: skill bundle content]"
+      }
+    ],
+    "skill_refs": [],
+    "custom_env": {},
+    "custom_args": [],
+    "mcp_config": null,
+    "model": "",
+    "thinking_level": "",
+    "service_tier": "",
+    "disabled_runtime_skills": [],
+    "runtime_config": {}
+  },
+  "connected_apps": [],
+  "repos": [],
+  "project_id": "e4a83175-1edb-47c6-9189-28b78826b824",
+  "project_title": "multica优化",
+  "project_description": "代码地址在：<repo>  \n启动脚本是： <repo>/restart.sh  \n  \n这是一个用于管理我的业务agent的项目，协助我管理项目",
+  "project_resources": [],
+  "is_leader_task": false,
+  "prior_session_id": "",
+  "prior_work_dir": "",
+  "prior_session_resume_unavailable": false,
+  "trigger_comment_id": "",
+  "coalesced_comment_ids": [],
+  "coalesced_comments": [],
+  "trigger_thread_id": "",
+  "trigger_comment_content": "",
+  "trigger_author_type": "",
+  "trigger_author_name": "",
+  "new_comment_count": 0,
+  "new_comments_since": "",
+  "chat_session_id": "",
+  "chat_channel_type": "",
+  "chat_in_thread": false,
+  "chat_message": "",
+  "chat_message_attachments": [],
+  "chat_intro": false,
+  "autopilot_run_id": "",
+  "autopilot_id": "",
+  "autopilot_title": "",
+  "autopilot_description": "",
+  "autopilot_source": "",
+  "autopilot_trigger_payload": null,
+  "quick_create_prompt": "",
+  "quick_create_priority": "",
+  "quick_create_due_date": "",
+  "quick_create_attachment_ids": [],
+  "handoff_note": "",
+  "working_branch": "",
+  "agent_status": "",
+  "handoff_summary": {
+    "current_progress": "A discussion has been initiated to clarify Multica's context management mechanism, specifically regarding context injection during agent initialization and switching versus subsequent chats.",
+    "next_steps": [
+      "Respond to the user to confirm or correct their understanding of Multica's context injection behavior.",
+      "Incorporate the clarified context management concepts into the courseware.",
+      "Export real data demonstrating the context lifecycle during a run."
+    ],
+    "unresolved_issues": "Pending confirmation of the user's hypothesis regarding Multica's context injection behavior during session creation and agent switching."
+  },
+  "squad_id": "",
+  "squad_name": "",
+  "parent_issue_id": "",
+  "parent_issue_identifier": "",
+  "requesting_user_name": "<requesting-user>",
+  "requesting_user_profile_description": "",
+  "initiator_type": "",
+  "initiator_id": "",
+  "initiator_name": "",
+  "initiator_email": "",
+  "auth_token": "[REDACTED]"
+}
+

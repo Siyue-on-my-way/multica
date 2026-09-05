@@ -46,6 +46,15 @@ required_secrets: []
 tools:
   - name: my_tool
     description: A tool provided by this skill
+    parameters:
+      - name: input
+        type: string
+        description: The input to process
+        required: true
+      - name: verbose
+        type: boolean
+        description: Enable verbose logging
+        required: false
 `
 	if err := os.WriteFile(manifestPath, []byte(manifestContent), 0644); err != nil {
 		return fmt.Errorf("write manifest.yaml: %w", err)

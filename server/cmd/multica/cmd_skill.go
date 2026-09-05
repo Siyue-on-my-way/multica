@@ -142,6 +142,7 @@ func init() {
 	// skill import
 	skillImportCmd.Flags().String("url", "", "URL to import from (clawhub.ai, skills.sh, or github.com). Mutually exclusive with --file.")
 	skillImportCmd.Flags().String("file", "", "Path to a local skill archive (.skill or .zip) to import. Mutually exclusive with --url.")
+	skillImportCmd.Flags().Bool("global", false, "Publish as a global skill shared with all workspaces (admin only).")
 	skillImportCmd.Flags().String("on-conflict", "fail", "Conflict strategy when a skill with the same name exists: fail, overwrite, rename, or skip")
 	skillImportCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -429,6 +430,7 @@ func runSkillImport(cmd *cobra.Command, _ []string) error {
 	if !validSkillImportConflictStrategy(onConflict) {
 		return fmt.Errorf("--on-conflict must be one of: fail, overwrite, rename, skip")
 	}
+	importGlobal, _ := cmd.Flags().GetBool("global")
 
 	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
 	defer cancel()
@@ -439,7 +441,7 @@ func runSkillImport(cmd *cobra.Command, _ []string) error {
 		if readErr != nil {
 			return fmt.Errorf("read skill archive: %w", readErr)
 		}
-		if err := client.ImportSkillFile(ctx, fileData, filepath.Base(importFile), onConflict, &result); err != nil {
+		if err := client.ImportSkillFile(ctx, fileData, filepath.Base(importFile), onConflict, importGlobal, &result); err != nil {
 			if handledErr := handleSkillImportError(cmd, err); handledErr != nil {
 				return handledErr
 			}
@@ -451,6 +453,7 @@ func runSkillImport(cmd *cobra.Command, _ []string) error {
 	body := map[string]any{
 		"url":         importURL,
 		"on_conflict": onConflict,
+		"global":      importGlobal,
 	}
 	if err := client.PostJSON(ctx, "/api/skills/import", body, &result); err != nil {
 		if handledErr := handleSkillImportError(cmd, err); handledErr != nil {

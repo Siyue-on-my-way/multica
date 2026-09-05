@@ -456,6 +456,12 @@ func main() {
 		go h.ChannelMediaReconciler.Run(sweepCtx)
 	}
 
+	// Skill inbox (SIY-95): watches {LOCAL_UPLOAD_DIR}/skills/ for dropped
+	// .zip/.skill bundles and registers each as a global skill, keeping the
+	// extracted tree for inspection and deleting the archive. Disabled only
+	// when its directory cannot be created; see StartSkillInboxWatcher.
+	handler.StartSkillInboxWatcher(sweepCtx, h, handler.SkillInboxConfigFromEnv())
+
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
 	// `sys_cron_executions` table into the distributed lease + audit
 	// log for internal periodic jobs. The first job is
@@ -485,6 +491,12 @@ func main() {
 	}
 	if err := schedulerMgr.Register(scheduler.ProjectReportGenerationJob(pool, queries, h.LLM)); err != nil {
 		slog.Warn("scheduler: failed to register project_report_generate job", "error", err)
+	}
+	// SIY-83: reclaim gzip-compressed report evidence whose retention window has
+	// elapsed. Only report_snapshot rows are touched; report_history (the
+	// Markdown summary) is never deleted, so report lists keep working.
+	if err := schedulerMgr.Register(scheduler.ReportSnapshotRetentionJob(pool)); err != nil {
+		slog.Warn("scheduler: failed to register report_snapshot_retention job", "error", err)
 	}
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)

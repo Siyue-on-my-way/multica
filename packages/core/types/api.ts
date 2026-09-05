@@ -20,6 +20,8 @@ export interface CreateIssueRequest {
   /** Issue-scoped label IDs to attach in the same transaction as the create.
    *  Unknown or non-issue ids are rejected by the server with 400. */
   label_ids?: string[];
+  /** Ancestor IDs and update timestamps captured when a sub-issue was generated. */
+  ancestor_context_refs?: { id: string; updated_at: string }[];
 }
 
 export interface UpdateIssueRequest {
@@ -74,6 +76,7 @@ export interface SuggestSubIssuesRequest {
 	comment_id?: string;
 	text?: string;
 	human_constraints?: string;
+	carry_ancestor_context?: boolean;
 }
 
 /** Lightweight outline returned before the user approves a decomposition. */
@@ -93,6 +96,7 @@ export interface SubIssuePlan {
 
 export interface SuggestSubissuePlansResponse {
 	plans: SubIssuePlan[];
+	ancestor_brief_refs?: { id: string; updated_at: string }[];
 }
 
 export interface ExpandSubissuePlanRequest extends SuggestSubIssuesRequest {
@@ -235,6 +239,8 @@ export interface ListGroupedIssuesParams {
   limit?: number;
   offset?: number;
   workspace_id?: string;
+  /** Shared server-side keyword search. */
+  q?: string;
   statuses?: IssueStatus[];
   priorities?: IssuePriority[];
   assignee_types?: IssueAssigneeType[];

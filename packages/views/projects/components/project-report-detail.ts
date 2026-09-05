@@ -1,12 +1,14 @@
 import type {
   ProjectReportBusinessDomain,
   ProjectReportIssue,
+  ProjectReportNarrative,
   ProjectReportProjectAnalysis,
   ProjectReportSnapshot,
   ProjectReportTimelineEvent,
   ProjectReportTimelineEventType,
   ProjectReportWorkItem,
 } from "@multica/core/types";
+import { resolveTimezone } from "../../common/timezone";
 
 export interface ProjectReportDetailItem {
   issue: ProjectReportIssue;
@@ -16,6 +18,11 @@ export interface ProjectReportDetailItem {
 export interface ProjectReportDetailDay {
   dateKey: string;
   items: ProjectReportDetailItem[];
+}
+
+export interface ProjectReportNarrativeGroup {
+  businessDomain: string;
+  narratives: ProjectReportNarrative[];
 }
 
 export interface ProjectReportDetailMarkdownLabels {
@@ -32,7 +39,7 @@ function dateKeyInTimezone(value: string, timezone: string): string {
   if (Number.isNaN(date.getTime())) return value.slice(0, 10);
 
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
+    timeZone: resolveTimezone(timezone),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -48,7 +55,7 @@ export function groupProjectReportDetails(
 ): ProjectReportDetailDay[] {
   const items = snapshot.issues.flatMap((issue) =>
     (issue.timeline ?? [])
-      .filter((event) => event.in_range)
+      .filter((event) => event.in_range && isProjectReportDiscussionEvent(event))
       .map((event) => ({ issue, event })),
   );
 
@@ -75,6 +82,51 @@ export function groupProjectReportDetails(
     dateKey,
     items: groupedItems,
   }));
+}
+
+export function isProjectReportDiscussionEvent(event: ProjectReportTimelineEvent): boolean {
+  return event.type === "comment" || event.type === "agent_task_queue";
+}
+
+function fallbackProjectReportNarrative(issue: ProjectReportIssue): ProjectReportNarrative {
+  const done = issue.summary.work_done?.find(Boolean)
+    || issue.summary.actions?.find(Boolean)
+    || "";
+  const evidence = issue.summary.evidence_ids?.filter(Boolean)
+    || (issue.timeline ?? [])
+      .filter((event) => event.in_range && isProjectReportDiscussionEvent(event))
+      .map((event) => event.id);
+  return {
+    issue_id: issue.issue_id || issue.identifier,
+    identifier: issue.identifier,
+    title: issue.title,
+    business_domain: issue.business_domain || "项目级能力建设",
+    status_to: issue.status,
+    done,
+    outcome: issue.summary.outcome || "",
+    evidence: [...new Set(evidence)],
+    risks: issue.summary.risks?.filter(Boolean),
+    noteworthy: Boolean(done || issue.summary.outcome),
+    source: "deterministic",
+  };
+}
+
+export function getProjectReportNarratives(snapshot: ProjectReportSnapshot): ProjectReportNarrative[] {
+  if (snapshot.narratives?.length) return snapshot.narratives;
+  return snapshot.issues.map(fallbackProjectReportNarrative);
+}
+
+export function groupProjectReportNarratives(
+  snapshot: ProjectReportSnapshot,
+): ProjectReportNarrativeGroup[] {
+  const groups = new Map<string, ProjectReportNarrative[]>();
+  for (const narrative of getProjectReportNarratives(snapshot).filter((item) => item.noteworthy)) {
+    const businessDomain = narrative.business_domain || "项目级能力建设";
+    const group = groups.get(businessDomain);
+    if (group) group.push(narrative);
+    else groups.set(businessDomain, [narrative]);
+  }
+  return [...groups].map(([businessDomain, narratives]) => ({ businessDomain, narratives }));
 }
 
 function reportDetailsRecord(event: ProjectReportTimelineEvent): Record<string, unknown> {
@@ -213,7 +265,7 @@ function inferReportCategory(issue: ProjectReportIssue): string {
 
 function fallbackWorkDescription(issue: ProjectReportIssue): string[] {
   const descriptions = (issue.timeline ?? [])
-    .filter((event) => event.in_range)
+    .filter((event) => event.in_range && isProjectReportDiscussionEvent(event))
     .map(projectReportEventContent)
     .filter(Boolean)
     .slice(0, 8);
@@ -249,7 +301,9 @@ export function getProjectReportWorkItems(snapshot: ProjectReportSnapshot): Proj
     const category = normalizedCategories[0] ?? "misc";
     const workDone = issue.summary.work_done?.filter(Boolean) ?? fallbackWorkDescription(issue);
     const evidenceIds = issue.summary.evidence_ids?.filter(Boolean)
-      ?? (issue.timeline ?? []).filter((event) => event.in_range).map((event) => event.id);
+      ?? (issue.timeline ?? [])
+        .filter((event) => event.in_range && isProjectReportDiscussionEvent(event))
+        .map((event) => event.id);
     return {
       id: issue.issue_id || issue.identifier,
       issue_id: issue.issue_id || issue.identifier,

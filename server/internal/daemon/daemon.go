@@ -4771,7 +4771,13 @@ func skillRefKey(source, id string) string {
 func skillRefFromBundle(bundle SkillData) SkillRefData {
 	files := make([]skillbundle.File, 0, len(bundle.Files))
 	for _, file := range bundle.Files {
-		files = append(files, skillbundle.File{Path: file.Path, Content: file.Content})
+		files = append(files, skillbundle.File{
+			Path:            file.Path,
+			Content:         file.Content,
+			ContentBase64:   file.ContentBase64,
+			ContentEncoding: file.ContentEncoding,
+			Mode:            file.Mode,
+		})
 	}
 	manifest := skillbundle.BuildManifest(skillbundle.Skill{
 		ID:          bundle.ID,
@@ -4783,7 +4789,13 @@ func skillRefFromBundle(bundle SkillData) SkillRefData {
 	})
 	fileRefs := make([]SkillFileRefData, 0, len(manifest.Files))
 	for _, file := range manifest.Files {
-		fileRefs = append(fileRefs, SkillFileRefData{Path: file.Path, SHA256: file.SHA256, SizeBytes: file.SizeBytes})
+		fileRefs = append(fileRefs, SkillFileRefData{
+			Path:            file.Path,
+			SHA256:          file.SHA256,
+			SizeBytes:       file.SizeBytes,
+			ContentEncoding: file.ContentEncoding,
+			Mode:            file.Mode,
+		})
 	}
 	return SkillRefData{
 		ID:        bundle.ID,
@@ -6575,8 +6587,11 @@ func convertSkillsForEnv(skills []SkillData) []execenv.SkillContextForEnv {
 		}
 		for _, f := range s.Files {
 			result[i].Files = append(result[i].Files, execenv.SkillFileContextForEnv{
-				Path:    f.Path,
-				Content: f.Content,
+				Path:            f.Path,
+				Content:         f.Content,
+				ContentBase64:   f.ContentBase64,
+				ContentEncoding: f.ContentEncoding,
+				Mode:            f.Mode,
 			})
 		}
 	}

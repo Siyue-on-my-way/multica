@@ -25,6 +25,7 @@ export interface Project {
 
 export interface CreateProjectRequest {
   title: string;
+  workspace_id?: string;
   description?: string;
   icon?: string;
   status?: ProjectStatus;
@@ -230,6 +231,21 @@ export interface ProjectReportProjectAnalysis {
   source?: "ai" | "deterministic" | string;
 }
 
+export interface ProjectReportNarrative {
+  issue_id: string;
+  identifier: string;
+  title: string;
+  business_domain?: string;
+  status_from?: string;
+  status_to?: string;
+  done: string;
+  outcome?: string;
+  evidence?: string[];
+  risks?: string[];
+  noteworthy: boolean;
+  source: "ai" | "deterministic" | string;
+}
+
 export interface ProjectReportMilestone {
   id: string;
   business_domain: string;
@@ -269,6 +285,9 @@ export interface ProjectReportSnapshot {
   work_items?: ProjectReportWorkItem[];
   project_analysis?: ProjectReportProjectAnalysis;
   analysis_warnings?: string[];
+  narrative_version?: number;
+  narratives?: ProjectReportNarrative[];
+  executive_summary?: string;
   completed?: ProjectReportIssue[];
   in_progress?: ProjectReportIssue[];
   blocked?: ProjectReportIssue[];
@@ -299,6 +318,16 @@ export interface ProjectReport {
 
 export type ProjectReportPeriod = "daily" | "weekly" | "monthly";
 
+export interface ProjectReportTemplate {
+  id: string;
+  workspace_id?: string | null;
+  name: string;
+  period_type: ProjectReportPeriod;
+  system_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectReportHistoryItem {
   id: string;
   workspace_id: string;
@@ -319,6 +348,7 @@ export interface ListProjectReportsResponse {
 }
 
 export interface CreateProjectReportRequest {
+  template_id?: string;
   period_type: ProjectReportPeriod;
   range_start: string;
   range_end: string;

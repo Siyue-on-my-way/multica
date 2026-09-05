@@ -87,7 +87,7 @@ func (h *Handler) userToResponse(u db.User) UserResponse {
 		Email:                   u.Email,
 		AvatarURL:               h.resolveAvatarURLPtr(textToPtr(u.AvatarUrl)),
 		Language:                textToPtr(u.Language),
-		Timezone:                textToPtr(u.Timezone),
+		Timezone:                userTimezoneToPtr(u.Timezone),
 		OnboardedAt:             timestampToPtr(u.OnboardedAt),
 		OnboardingQuestionnaire: json.RawMessage(q),
 		StarterContentState:     textToPtr(u.StarterContentState),
@@ -95,6 +95,22 @@ func (h *Handler) userToResponse(u db.User) UserResponse {
 		CreatedAt:               timestampToString(u.CreatedAt),
 		UpdatedAt:               timestampToString(u.UpdatedAt),
 	}
+}
+
+// userTimezoneToPtr prevents legacy or manually corrupted values from being
+// sent to clients. The viewing-timezone column is intended to contain IANA
+// names; older rows may still contain the former "Local" sentinel. Returning
+// nil lets the frontend use the browser-detected timezone and also makes the
+// next profile update able to clear the stale value.
+func userTimezoneToPtr(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	timezone, ok := normalizeIANATimezone(value.String)
+	if !ok {
+		return nil
+	}
+	return &timezone
 }
 
 type LoginResponse struct {
@@ -708,7 +724,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		// in the UpdateUser SQL CASE.
 		tz := strings.TrimSpace(*req.Timezone)
 		if tz != "" {
-			if loc, err := time.LoadLocation(tz); err != nil || loc == nil {
+			if _, ok := normalizeIANATimezone(tz); !ok {
 				writeError(w, http.StatusBadRequest, "invalid timezone")
 				return
 			}

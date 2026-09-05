@@ -22,6 +22,7 @@ import {
   contextPrimitives,
 } from "./issue-actions-menu-items";
 import { AssigneePicker } from "../components/pickers";
+import { MoveIssueWorkspaceDialog } from "../components/move-issue-workspace-dialog";
 
 /**
  * One shared context menu per surface instead of one Base UI ContextMenu
@@ -108,6 +109,7 @@ function IssueContextMenuSingleton({
 }) {
   const actions = useIssueActions(issue);
   const [assigneeOpen, setAssigneeOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
 
   // Point-sized virtual anchor at the right-click position — replaces the
   // cursor anchor Base UI's own trigger would have registered.
@@ -133,9 +135,13 @@ function IssueContextMenuSingleton({
             actions={actions}
             primitives={contextPrimitives}
             onOpenAssignee={() => setAssigneeOpen(true)}
+            onOpenMove={() => setMoveOpen(true)}
           />
         </ContextMenuContent>
       </ContextMenu>
+      {moveOpen && (
+        <MoveIssueWorkspaceDialog issue={issue} open={moveOpen} onOpenChange={setMoveOpen} />
+      )}
       {/* Mount the picker only once the user actually opens it, anchored at
           the right-click position so it opens where the context menu just
           was instead of jumping to the row's top-left corner. */}

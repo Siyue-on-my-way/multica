@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func newTimezoneTestUser(t *testing.T, email string) string {
@@ -22,6 +24,20 @@ func newTimezoneTestUser(t *testing.T, email string) string {
 		testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return userID
+}
+
+func TestUserTimezoneToPtrHidesLegacyInvalidValue(t *testing.T) {
+	if got := userTimezoneToPtr(pgtype.Text{String: "Local", Valid: true}); got != nil {
+		t.Fatalf("expected invalid legacy timezone to be hidden, got %q", *got)
+	}
+	if _, ok := normalizeIANATimezone("Local"); ok {
+		t.Fatal("expected Local to be rejected as a non-IANA timezone")
+	}
+
+	got := userTimezoneToPtr(pgtype.Text{String: "Asia/Shanghai", Valid: true})
+	if got == nil || *got != "Asia/Shanghai" {
+		t.Fatalf("expected valid timezone to be preserved, got %v", got)
+	}
 }
 
 func TestUpdateMeAcceptsTimezone(t *testing.T) {

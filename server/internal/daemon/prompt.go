@@ -95,6 +95,20 @@ func buildPromptBody(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	if task.AncestorBrief != "" {
+		b.WriteString(task.AncestorBrief)
+		b.WriteString("\n\n")
+	}
+	if task.CurrentIssueTitle != "" || task.CurrentIssueDescription != "" {
+		b.WriteString("CURRENT_ISSUE (direct task context)\n")
+		if task.CurrentIssueTitle != "" {
+			fmt.Fprintf(&b, "Title: %s\n", task.CurrentIssueTitle)
+		}
+		if task.CurrentIssueDescription != "" {
+			fmt.Fprintf(&b, "Description:\n%s\n", task.CurrentIssueDescription)
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString(turnModeOwnership)
 	// Assignment handoff (MUL-3375): a free-text instruction the person who
 	// assigned/promoted this issue left for you. Frame it as a handoff, not a
@@ -238,6 +252,21 @@ func buildCommentPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	b.WriteString("When this discussion requests a new sub-issue and you create it directly, `parent_issue_id` is mandatory: use the current discussion issue ID above as the parent. Do not create that requested child as a root issue or infer another parent.\n\n")
+	if task.AncestorBrief != "" {
+		b.WriteString(task.AncestorBrief)
+		b.WriteString("\n\n")
+	}
+	if task.CurrentIssueTitle != "" || task.CurrentIssueDescription != "" {
+		b.WriteString("CURRENT_ISSUE (direct task context)\n")
+		if task.CurrentIssueTitle != "" {
+			fmt.Fprintf(&b, "Title: %s\n", task.CurrentIssueTitle)
+		}
+		if task.CurrentIssueDescription != "" {
+			fmt.Fprintf(&b, "Description:\n%s\n", task.CurrentIssueDescription)
+		}
+		b.WriteString("\n")
+	}
 	// Mode marker for the brief's router. Emitted unconditionally from the same
 	// branch that selects this code path, so the brief and the prompt can never
 	// disagree about which mode this turn is in. It must NOT be gated on

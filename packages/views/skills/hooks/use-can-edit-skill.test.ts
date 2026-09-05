@@ -7,6 +7,7 @@ function makeSkill(createdBy: string | null): Skill {
     id: "skl_x",
     workspace_id: "ws_1",
     name: "x",
+    is_global: false,
     description: "",
     content: "",
     config: {},

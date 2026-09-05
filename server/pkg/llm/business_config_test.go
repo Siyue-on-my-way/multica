@@ -226,6 +226,18 @@ func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
 			t.Fatalf("checked-in config missing stage %q", stage)
 		}
 	}
+	outline := parsed.Stages[BusinessStageOutline]
+	if !strings.Contains(outline.Prompt.System, "business") || !strings.Contains(outline.Prompt.System, "整体流程") {
+		t.Fatal("outline prompt must explicitly require a concrete business and reserve overall-flow fallback")
+	}
+	for _, variable := range []string{"{{issue_description}}", "{{ancestor_brief}}", "{{business_context}}"} {
+		if !strings.Contains(outline.Prompt.UserTemplate, variable) {
+			t.Fatalf("outline prompt missing business context variable %q", variable)
+		}
+	}
+	if err := validateBusinessJSON(`{"plans":[{"name":"方案","items":[{"title":"任务","goal":"目标"}]}]}`, outline.Output.JSONSchema); err == nil {
+		t.Fatal("outline schema must require business")
+	}
 }
 
 func TestBusinessRegistryIsolatesInvalidFilesAndKeepsStaleSnapshot(t *testing.T) {

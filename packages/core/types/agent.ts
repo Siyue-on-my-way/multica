@@ -807,6 +807,12 @@ export interface SkillSummary {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * True for a skill in the cross-workspace shared namespace: readable from
+   * every workspace, manageable only by the owning workspace's admins, and
+   * attached to a run only when the run's trigger text names the skill.
+   */
+  is_global: boolean;
 	/** Present only when returned from an agent-scoped assignment endpoint. */
 	enabled?: boolean;
 }
@@ -820,7 +826,13 @@ export interface SkillFile {
   id: string;
   skill_id: string;
   path: string;
-  content: string;
+  /** UTF-8 content, kept for compatibility with existing skill clients. */
+  content?: string;
+  /** Base64 representation for binary resources. */
+  content_base64?: string;
+  content_encoding?: "utf8" | "base64" | string;
+  /** Normalized POSIX mode; executable bits are preserved by the daemon. */
+  mode?: number;
   created_at: string;
   updated_at: string;
 }
@@ -830,7 +842,22 @@ export interface CreateSkillRequest {
   description?: string;
   content?: string;
   config?: Record<string, unknown>;
-  files?: { path: string; content: string }[];
+  files?: SkillFileInput[];
+  /** Admin-only: publish into the cross-workspace shared namespace. */
+  is_global?: boolean;
+}
+
+/** Structured result of POST /api/skills/import when a conflict strategy is sent. */
+export interface SkillImportResult {
+  status: "created" | "updated" | "skipped" | "conflict" | "failed" | string;
+  reason?: string;
+  skill?: Skill;
+  existing_skill?: {
+    id: string;
+    name: string;
+    created_by?: string;
+    can_overwrite?: boolean;
+  };
 }
 
 export interface UpdateSkillRequest {
@@ -838,7 +865,15 @@ export interface UpdateSkillRequest {
   description?: string;
   content?: string;
   config?: Record<string, unknown>;
-  files?: { path: string; content: string }[];
+  files?: SkillFileInput[];
+}
+
+export interface SkillFileInput {
+  path: string;
+  content?: string;
+  content_base64?: string;
+  content_encoding?: "utf8" | "base64" | string;
+  mode?: number;
 }
 
 export interface SetAgentSkillsRequest {

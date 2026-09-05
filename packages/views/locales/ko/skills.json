@@ -62,7 +62,9 @@
     "source_runtime_unknown": "런타임에서 가져옴",
     "source_clawhub": "ClawHub에서 가져옴",
     "source_skills_sh": "Skills.sh에서 가져옴",
-    "source_github": "GitHub에서 가져옴"
+    "source_github": "GitHub에서 가져옴",
+    "global_badge": "전역",
+    "global_tooltip": "모든 워크스페이스에서 공유되는 스킬"
   },
   "actions": {
     "row_menu": "작업",
@@ -214,20 +216,26 @@
       },
       "url": {
         "title": "URL에서 가져오기",
-        "desc": "공개된 스킬을 URL로 가져옵니다. 파일은 서버에서 가져옵니다."
+        "desc": "URL로 스킬 가져오기 — ClawHub, Skills.sh, GitHub 및 .zip/.skill 직접 링크 지원. 파일은 서버 측에서 가져옵니다."
       },
       "runtime": {
         "title": "런타임에서 복사",
         "desc": "로컬 런타임을 스캔해 디스크에 있는 스킬을 이 워크스페이스로 승격합니다."
+      },
+      "archive": {
+        "title": "zip 업로드",
+        "desc": "로컬 .skill/.zip 번들을 가져옵니다. 이름 충돌 시 선택한 전략을 따릅니다."
       }
     },
     "method_card": {
       "manual_title": "직접 만들기",
       "manual_desc": "빈 SKILL.md에서 시작해 직접 지침을 작성합니다.",
       "url_title": "URL에서 가져오기",
-      "url_desc": "ClawHub 또는 Skills.sh의 공개 스킬을 가져옵니다.",
+      "url_desc": "ClawHub, Skills.sh, GitHub 또는 .zip/.skill 링크에서 스킬을 가져옵니다.",
       "runtime_title": "런타임에서 복사",
-      "runtime_desc": "로컬 런타임에 이미 설치된 스킬을 워크스페이스로 가져옵니다."
+      "runtime_desc": "로컬 런타임에 이미 설치된 스킬을 워크스페이스로 가져옵니다.",
+      "archive_title": "zip 업로드",
+      "archive_desc": "스크립트와 데이터를 포함한 .skill/.zip을 가져옵니다."
     },
     "manual": {
       "name_label": "이름",
@@ -253,7 +261,25 @@
       "name_conflict_hint": " 가져온 스킬 이름이 이미 있습니다. 다시 시도하기 전에 기존 스킬을 삭제하세요.",
       "fallback_error": "가져오기 실패",
       "cancel": "취소",
-      "toast_imported": "스킬을 가져왔습니다"
+      "toast_imported": "스킬을 가져왔습니다",
+      "direct_zip_hint": ".zip/.skill 다운로드 직접 링크도 지원합니다(예: GitHub 릴리스 자산, 저장소 zipball). 서버가 자동으로 다운로드하여 설치합니다."
+    },
+    "archive": {
+      "pick_file": ".zip 또는 .skill 파일 선택",
+      "pick_hint": "스크립트, 데이터, 바이너리 리소스를 포함할 수 있습니다 (최대 100 MB)",
+      "conflict_label": "같은 이름의 스킬이 있을 때",
+      "conflict_overwrite": "덮어쓰기",
+      "conflict_rename": "이름 변경",
+      "conflict_skip": "건너뛰기",
+      "global_label": "모든 워크스페이스와 공유(전역)",
+      "global_hint": "모든 워크스페이스에서 읽기 가능, 관리자만 수정 가능. 실행 텍스트에 스킬 이름이 있으면 활성화됩니다",
+      "import": "가져오기",
+      "importing": "가져오는 중…",
+      "cancel": "취소",
+      "toast_imported": "스킬을 가져왔습니다",
+      "toast_updated": "스킬을 업데이트했습니다",
+      "fallback_error": "가져오기 실패",
+      "too_large": "압축 파일이 100 MB 업로드 제한을 초과했습니다 — 줄인 후 다시 시도하세요."
     }
   },
   "runtime_import": {
@@ -325,6 +351,7 @@
     "no_content": "*아직 내용이 없습니다*",
     "markdown_placeholder": "Markdown 내용 작성...",
     "raw_placeholder": "파일 내용...",
-    "raw_aria": "{{path}}의 일반 텍스트 내용"
+    "raw_aria": "{{path}}의 일반 텍스트 내용",
+    "binary_resource": "바이너리 리소스({{bytes}}바이트) — 미리보기는 불가하지만 에이전트는 사용할 수 있습니다"
   }
 }

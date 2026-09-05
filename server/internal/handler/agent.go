@@ -291,30 +291,34 @@ type AgentTaskResponse struct {
 	// as `## Workspace Context` so every agent running in this workspace —
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
-	WorkspaceContext   string                `json:"workspace_context,omitempty"`
-	ThreadName         string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status             string                `json:"status"`
-	Priority           int32                 `json:"priority"`
-	DispatchedAt       *string               `json:"dispatched_at"`
-	StartedAt          *string               `json:"started_at"`
-	CompletedAt        *string               `json:"completed_at"`
-	Result             any                   `json:"result"`
-	Error              *string               `json:"error"`
-	FailureReason      string                `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
-	Attempt            int32                 `json:"attempt"`
-	MaxAttempts        int32                 `json:"max_attempts"`
-	ParentTaskID       *string               `json:"parent_task_id,omitempty"`
-	IsLeaderTask       bool                  `json:"is_leader_task,omitempty"`
-	Agent              *TaskAgentData        `json:"agent,omitempty"`
-	ConnectedApps      []ConnectedAppData    `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
-	Repos              []RepoData            `json:"repos,omitempty"`
-	ProjectID          string                `json:"project_id,omitempty"`          // issue's project, when present
-	ProjectTitle       string                `json:"project_title,omitempty"`       // for surfacing in agent context
-	ProjectDescription string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources   []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
-	CreatedAt          string                `json:"created_at"`
-	PriorSessionID     string                `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir       string                `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	WorkspaceContext        string                     `json:"workspace_context,omitempty"`
+	ThreadName              string                     `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	CurrentIssueTitle       string                     `json:"current_issue_title,omitempty"`
+	CurrentIssueDescription string                     `json:"current_issue_description,omitempty"`
+	AncestorBrief           string                     `json:"ancestor_brief,omitempty"`
+	AncestorBriefRefs       []service.AncestorBriefRef `json:"ancestor_brief_refs,omitempty"`
+	Status                  string                     `json:"status"`
+	Priority                int32                      `json:"priority"`
+	DispatchedAt            *string                    `json:"dispatched_at"`
+	StartedAt               *string                    `json:"started_at"`
+	CompletedAt             *string                    `json:"completed_at"`
+	Result                  any                        `json:"result"`
+	Error                   *string                    `json:"error"`
+	FailureReason           string                     `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	Attempt                 int32                      `json:"attempt"`
+	MaxAttempts             int32                      `json:"max_attempts"`
+	ParentTaskID            *string                    `json:"parent_task_id,omitempty"`
+	IsLeaderTask            bool                       `json:"is_leader_task,omitempty"`
+	Agent                   *TaskAgentData             `json:"agent,omitempty"`
+	ConnectedApps           []ConnectedAppData         `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
+	Repos                   []RepoData                 `json:"repos,omitempty"`
+	ProjectID               string                     `json:"project_id,omitempty"`          // issue's project, when present
+	ProjectTitle            string                     `json:"project_title,omitempty"`       // for surfacing in agent context
+	ProjectDescription      string                     `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectResources        []ProjectResourceData      `json:"project_resources,omitempty"`   // resources attached to the project
+	CreatedAt               string                     `json:"created_at"`
+	PriorSessionID          string                     `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir            string                     `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
 	// PriorSessionResumeUnavailable is set when a more recent Codex session was
 	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
 	// any) is then an older fallback. The daemon surfaces the continuity gap in
@@ -365,13 +369,13 @@ type AgentTaskResponse struct {
 	// Populated at claim time from the issue row so the new agent can resume
 	// without re-reading the full comment history. omitempty so old daemons
 	// and non-handoff runs produce no extra wire bytes.
-	WorkingBranch  string          `json:"working_branch,omitempty"`   // git branch the previous agent was on
-	AgentStatus    string          `json:"agent_status,omitempty"`     // machine-readable progress stage (e.g. "coding")
-	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`  // structured JSON checkpoint
-	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string                 `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	WorkingBranch         string          `json:"working_branch,omitempty"`          // git branch the previous agent was on
+	AgentStatus           string          `json:"agent_status,omitempty"`            // machine-readable progress stage (e.g. "coding")
+	HandoffSummary        json.RawMessage `json:"handoff_summary,omitempty"`         // structured JSON checkpoint
+	SquadID               string          `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName             string          `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID         string          `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier string          `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and

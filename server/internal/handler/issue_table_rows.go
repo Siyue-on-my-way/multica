@@ -458,6 +458,11 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		issueIDs[index] = row.issue.ID
 	}
 	labelsByIssue := baseHandler.labelsByIssue(r.Context(), compiled.workspaceID, issueIDs)
+	userUUID := pgtype.UUID{}
+	if rawUserID := requestUserID(r); rawUserID != "" {
+		userUUID, _ = util.ParseUUID(rawUserID)
+	}
+	unreadByIssue := baseHandler.unreadAgentResultIssueIDs(r.Context(), compiled.workspaceID, userUUID, issueIDs)
 	responseRows := make([]issueTableRowResponse, len(scanned))
 	for index, row := range scanned {
 		issue := issueListRowToResponse(row.issue, prefix)
@@ -466,6 +471,7 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 			labels = []LabelResponse{}
 		}
 		issue.Labels = &labels
+		issue.HasUnreadAgentResult = unreadByIssue[issue.ID]
 		responseRows[index] = issueTableRowResponse{
 			Issue:            issue,
 			DirectChildCount: row.childCount,

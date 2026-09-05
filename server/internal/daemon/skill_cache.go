@@ -116,7 +116,17 @@ func validateSkillBundle(ref SkillRefData, bundle SkillData) bool {
 		if !safeSkillFilePath(file.Path) {
 			return false
 		}
-		files = append(files, skillbundle.File{Path: file.Path, Content: file.Content})
+		bundleFile := skillbundle.File{
+			Path:            file.Path,
+			Content:         file.Content,
+			ContentBase64:   file.ContentBase64,
+			ContentEncoding: file.ContentEncoding,
+			Mode:            file.Mode,
+		}
+		if _, err := skillbundle.FileBytes(bundleFile); err != nil {
+			return false
+		}
+		files = append(files, bundleFile)
 	}
 	manifest := skillbundle.BuildManifest(skillbundle.Skill{
 		ID:          bundle.ID,

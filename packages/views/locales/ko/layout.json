@@ -30,6 +30,7 @@
   "help": {
     "trigger": "도움말",
     "docs": "문서",
+    "context_courseware": "컨텍스트 교재",
     "changelog": "변경 로그",
     "discord": "Discord",
     "feedback": "피드백",

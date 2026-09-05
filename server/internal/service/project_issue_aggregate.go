@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+// Bound the database result before it reaches the Go heap or the JSONB report
+// snapshot. The narrative prompt has a smaller per-issue budget, but a report
+// still needs enough recent discussion for its human evidence layer.
+const reportTimelineMaxEventsPerIssue = 120
 
 type ProjectIssueAggregator struct {
 	Queries *db.Queries
@@ -31,6 +37,7 @@ func (a *ProjectIssueAggregator) Aggregate(
 		ProjectID:   project.ID,
 		RangeStart:  pgtype.Timestamptz{Time: rangeStart, Valid: true},
 		RangeEnd:    pgtype.Timestamptz{Time: rangeEnd, Valid: true},
+		MaxEvents:   reportTimelineMaxEventsPerIssue,
 	})
 	if err != nil {
 		return ReportSnapshot{}, fmt.Errorf("list project report timeline: %w", err)
@@ -69,6 +76,12 @@ func (a *ProjectIssueAggregator) Aggregate(
 	if err != nil {
 		return ReportSnapshot{}, fmt.Errorf("list current project issue states: %w", err)
 	}
+	slog.Info("project report: timeline collected",
+		"project_id", util.UUIDToString(project.ID),
+		"timeline_rows", len(rows),
+		"issues", len(issues),
+		"current_issue_rows", len(currentRows),
+	)
 
 	completedIDs := make(map[string]struct{})
 	cancelledIDs := make(map[string]struct{})

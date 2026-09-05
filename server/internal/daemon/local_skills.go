@@ -9,15 +9,20 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/pkg/skillbundle"
 )
 
 const (
-	maxLocalSkillFileSize   int64 = 1 << 20
-	maxLocalSkillBundleSize int64 = 8 << 20
-	// Kept in lockstep with the server-side importer's maxImportFileCount so a
-	// skill that imports from a URL/archive also imports from a runtime-local
-	// directory. The 8 MiB bundle cap is the real guard on skill size.
-	maxLocalSkillFileCount = 256
+	maxLocalSkillFileSize   int64 = 16 << 20
+	maxLocalSkillBundleSize int64 = 64 << 20
+	// Kept in lockstep with the server-side importer's maxImportFileCount /
+	// maxImportFileSize / maxImportTotalSize so a skill that imports from a
+	// URL/archive also imports from a runtime-local directory. The 64 MiB
+	// bundle cap is the real guard on skill size. (The importer's file count
+	// is env-overridable via MULTICA_SKILL_IMPORT_MAX_FILES; this local
+	// discovery cap stays a const — runtime env is not as easy to set as the
+	// backend container's — so the two default to the same 4096 ceiling.)
+	maxLocalSkillFileCount = 4096
 	// Cap how deep skill discovery descends below a runtime root. opencode
 	// stores skills two levels deep (e.g. `release/reporter/SKILL.md`); a
 	// few extra levels covers any realistic future layout while bounding
@@ -226,6 +231,11 @@ func isIgnoredLocalSkillEntry(name string) bool {
 	if strings.HasPrefix(name, ".") {
 		return true
 	}
+	// Mirrors the server-side importer: dependency folders are install-time
+	// concerns for the sandbox, never bundle content.
+	if strings.EqualFold(name, "node_modules") {
+		return true
+	}
 	switch strings.ToLower(name) {
 	case "license", "license.md", "license.txt":
 		return true
@@ -340,7 +350,11 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 			if err != nil {
 				return nil
 			}
-			file.Content = string(content)
+			encoded := skillbundle.FileFromBytes(file.Path, content, int32(info.Mode().Perm()))
+			file.Content = encoded.Content
+			file.ContentBase64 = encoded.ContentBase64
+			file.ContentEncoding = encoded.ContentEncoding
+			file.Mode = encoded.Mode
 		}
 		files = append(files, file)
 		return nil

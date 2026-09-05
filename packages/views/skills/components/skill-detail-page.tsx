@@ -81,7 +81,14 @@ import { ResourceLabelPicker } from "../../labels/resource-label-picker";
 
 const SKILL_MD = "SKILL.md";
 
-type DraftFile = { id?: string; path: string; content: string };
+type DraftFile = {
+  id?: string;
+  path: string;
+  content: string;
+  contentBase64?: string;
+  contentEncoding?: string;
+  mode?: number;
+};
 
 /** The four editable fields, as one snapshot. */
 type SkillDraft = {
@@ -113,7 +120,10 @@ function toDraft(s: Skill): SkillDraft {
     files: (s.files ?? []).map((f: SkillFile) => ({
       id: f.id,
       path: f.path,
-      content: f.content,
+      content: f.content ?? "",
+      contentBase64: f.content_base64,
+      contentEncoding: f.content_encoding,
+      mode: f.mode,
     })),
   };
 }
@@ -126,7 +136,13 @@ function toDraft(s: Skill): SkillDraft {
 function fileSignature(files: DraftFile[]): string {
   return JSON.stringify(
     files
-      .map((f) => ({ path: f.path, content: f.content }))
+      .map((f) => ({
+        path: f.path,
+        content: f.content,
+        contentBase64: f.contentBase64,
+        contentEncoding: f.contentEncoding,
+        mode: f.mode,
+      }))
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
   );
 }
@@ -525,6 +541,8 @@ function FilesTab({
   filePaths,
   selectedPath,
   selectedContent,
+  selectedContentBase64,
+  selectedContentEncoding,
   mode,
   canEdit,
   addingFile,
@@ -543,6 +561,8 @@ function FilesTab({
   filePaths: string[];
   selectedPath: string;
   selectedContent: string;
+  selectedContentBase64?: string;
+  selectedContentEncoding?: string;
   mode: FileMode;
   canEdit: boolean;
   addingFile: boolean;
@@ -701,6 +721,8 @@ function FilesTab({
             key={selectedPath}
             path={selectedPath}
             content={selectedContent}
+            contentBase64={selectedContentBase64}
+            contentEncoding={selectedContentEncoding}
             mode={mode}
             readOnly={!canEdit}
             autoFocus={focusEditor}
@@ -899,7 +921,12 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     return map;
   }, [content, files]);
   const filePaths = useMemo(() => Array.from(fileMap.keys()), [fileMap]);
+  const selectedFile = selectedPath === SKILL_MD
+    ? null
+    : files.find((file) => file.path === selectedPath) ?? null;
   const selectedContent = fileMap.get(selectedPath) ?? "";
+  const selectedContentBase64 = selectedFile?.contentBase64;
+  const selectedContentEncoding = selectedFile?.contentEncoding;
 
   useEffect(() => {
     if (selectedPath !== SKILL_MD && !fileMap.has(selectedPath)) {
@@ -953,7 +980,15 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
         name: trimmedName,
         description: trimmedDesc,
         content,
-        files: files.filter((f) => f.path.trim()),
+        // Binary drafts carry their payload in contentBase64; strip the
+        // editor-only content field so the wire shape stays one-of-two.
+        files: files
+          .filter((f) => f.path.trim())
+          .map((f) =>
+            f.contentEncoding === "base64"
+              ? { ...f, content: "" }
+              : { ...f, contentBase64: undefined },
+          ),
       };
       const updated = await api.updateSkill(skill.id, payload);
       qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
@@ -1264,6 +1299,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
             filePaths={filePaths}
             selectedPath={selectedPath}
             selectedContent={selectedContent}
+            selectedContentBase64={selectedContentBase64}
+            selectedContentEncoding={selectedContentEncoding}
             mode={fileMode}
             canEdit={canEdit}
             addingFile={addingFile}

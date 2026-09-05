@@ -3,8 +3,10 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
 	"sort"
@@ -18,13 +20,30 @@ import (
 // archive import path. The decompressed bundle is still held to the existing
 // per-file / total / file-count caps (maxImportFileSize, maxImportTotalSize,
 // maxImportFileCount); this outer cap just stops a client from streaming an
-// unbounded compressed body before those decompression limits can apply.
-const maxImportArchiveUploadSize = 16 << 20 // 16 MiB
+// unbounded compressed body before those decompression limits can apply. It
+// matches maxUploadSize (the attachment upload cap) and the nginx
+// client_max_body_size, so a bundle the platform already tolerates elsewhere
+// is not rejected here first.
+const maxImportArchiveUploadSize = 100 << 20 // 100 MiB
 
 // isMultipartForm reports whether the request carries a multipart/form-data
 // body (an uploaded skill archive) rather than the JSON URL-import body.
 func isMultipartForm(r *http.Request) bool {
 	return strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data")
+}
+
+// multipartImportErrorMessage turns a ParseMultipartForm failure into a
+// client-facing message that separates "too large" from "malformed" — the old
+// combined wording sent every oversize upload to a dead end with no fix to
+// apply. Malformed bodies keep the underlying detail (and log it), since they
+// usually indicate a client or proxy fault worth reporting.
+func multipartImportErrorMessage(err error) string {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		return fmt.Sprintf("skill archive exceeds the %d MB upload limit", maxImportArchiveUploadSize>>20)
+	}
+	slog.Warn("skill archive import: multipart parse failed", "error", err)
+	return fmt.Sprintf("invalid multipart upload: %v", err)
 }
 
 // importSkillFromArchive handles POST /api/skills/import when the body is an
@@ -36,7 +55,7 @@ func isMultipartForm(r *http.Request) bool {
 func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID string) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportArchiveUploadSize)
 	if err := r.ParseMultipartForm(maxImportArchiveUploadSize); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid multipart upload or file exceeds the size limit")
+		writeError(w, http.StatusBadRequest, multipartImportErrorMessage(err))
 		return
 	}
 	defer func() {
@@ -53,6 +72,15 @@ func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request,
 	strategy := onConflict
 	if strategy == "" {
 		strategy = importOnConflictFail
+	}
+
+	// `global=true` publishes into the cross-workspace shared namespace and is
+	// an administrator action, same gate as the JSON URL-import body.
+	asGlobal := isTruthyFormValue(r.FormValue("global"))
+	if asGlobal {
+		if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+			return
+		}
 	}
 
 	file, header, err := r.FormFile("file")
@@ -78,7 +106,17 @@ func (h *Handler) importSkillFromArchive(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	h.finishSkillImport(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID, strategy, true, imported)
+	h.finishSkillImport(w, r, workspaceID, workspaceUUID, creatorUUID, creatorID, strategy, true, imported, asGlobal)
+}
+
+// isTruthyFormValue parses a boolean multipart/URL form field. Only explicit
+// affirmative spellings enable a flag; anything else reads as false.
+func isTruthyFormValue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // parseSkillArchive decompresses an uploaded skill archive (.skill / .zip) into
@@ -177,9 +215,14 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 			// failing the whole import, matching the local-runtime importer.
 			continue
 		}
-		// addFile enforces the per-bundle caps and drops binary assets; a cap
-		// breach aborts the import instead of silently truncating it.
-		if err := imported.addFile(rel, fileContent); err != nil {
+		// addFileBytes enforces the per-bundle caps and preserves binary assets
+		// through the base64 transport representation; a cap breach aborts the
+		// import instead of silently truncating it.
+		mode := int32(f.FileInfo().Mode().Perm())
+		if mode == 0 {
+			mode = skillFileModeForPath(rel)
+		}
+		if err := imported.addFileBytes(rel, []byte(fileContent), mode); err != nil {
 			return nil, err
 		}
 	}
@@ -222,6 +265,9 @@ func skillNameFromArchive(rootPrefix, filename string) string {
 // isIgnoredArchiveEntry filters editor/OS noise and license files out of the
 // supporting bundle, mirroring the daemon's local-skill discovery rules.
 func isIgnoredArchiveEntry(rel string) bool {
+	if hasDependencyDir(rel) {
+		return true
+	}
 	for _, seg := range strings.Split(rel, "/") {
 		if seg == "" || seg == "__MACOSX" || strings.HasPrefix(seg, ".") {
 			return true

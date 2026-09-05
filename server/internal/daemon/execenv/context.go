@@ -9,7 +9,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/daemon/sandbox"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"gopkg.in/yaml.v3"
 )
 
@@ -941,7 +943,16 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 		// may differ from baseSlug on collision) so the YAML name
 		// matches the directory name; runtimes that key on either
 		// stay consistent.
+		//
+		// If a manifest.yaml is present among supporting files, append
+		// tool-usage instructions so the agent discovers the skill's
+		// tools and knows how to invoke them via `multica skill run`.
 		body := ensureSkillFrontmatter(skill.Content, slug, skill.Description)
+		if manifestData, ok := lookupSkillManifest(skill); ok {
+			if toolMd := sandbox.ToolUsageMarkdown(manifestData, dir); toolMd != "" {
+				body += "\n" + toolMd
+			}
+		}
 		if err := recordWriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644, manifest); err != nil {
 			return err
 		}
@@ -967,7 +978,22 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 			if err := recordMkdirAll(filepath.Dir(fpath), 0o755, manifest); err != nil {
 				return err
 			}
-			if err := recordWriteFile(fpath, []byte(f.Content), 0o644, manifest); err != nil {
+			content, err := skillbundle.FileBytes(skillbundle.File{
+				Path:            f.Path,
+				Content:         f.Content,
+				ContentBase64:   f.ContentBase64,
+				ContentEncoding: f.ContentEncoding,
+				Mode:            f.Mode,
+			})
+			if err != nil {
+				return fmt.Errorf("decode supporting file %q: %w", f.Path, err)
+			}
+			if err := recordWriteFile(
+				fpath,
+				content,
+				os.FileMode(skillbundle.NormalizeFileMode(f.Mode)),
+				manifest,
+			); err != nil {
 				return err
 			}
 		}
@@ -1078,4 +1104,31 @@ func renderAutopilotContext(ctx TaskContextForEnv) string {
 	}
 
 	return b.String()
+}
+
+// lookupSkillManifest scans a skill's supporting files for manifest.yaml and
+// returns a parsed Manifest if one is found. The returned bool is false when
+// no manifest is present or it cannot be parsed (graceful degradation).
+func lookupSkillManifest(skill SkillContextForEnv) (*sandbox.Manifest, bool) {
+	for _, f := range skill.Files {
+		if f.Path != "manifest.yaml" {
+			continue
+		}
+		content, err := skillbundle.FileBytes(skillbundle.File{
+			Path:            f.Path,
+			Content:         f.Content,
+			ContentBase64:   f.ContentBase64,
+			ContentEncoding: f.ContentEncoding,
+			Mode:            f.Mode,
+		})
+		if err != nil {
+			return nil, false
+		}
+		m, err := sandbox.ParseManifest(content)
+		if err != nil {
+			return nil, false
+		}
+		return m, true
+	}
+	return nil, false
 }

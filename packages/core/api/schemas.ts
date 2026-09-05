@@ -44,6 +44,10 @@ import type {
   ListWebhookDeliveriesResponse,
   NotificationPreferenceResponse,
   Project,
+  ProjectReport,
+  ProjectReportHistoryItem,
+  ProjectReportJob,
+  ProjectReportTemplate,
   ResourceLabelsResponse,
   RuntimeModelListRequest,
   SearchIssuesResponse,
@@ -807,6 +811,188 @@ export const EMPTY_PROJECT: Project = {
   issue_count: 0,
   done_count: 0,
   resource_count: 0,
+};
+
+const ProjectReportTimelineEventSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  occurred_at: z.string(),
+  in_range: z.boolean().optional().default(false),
+  author_type: z.string().optional(),
+  author_id: z.string().optional(),
+  content: z.string().optional(),
+  comment_type: z.string().optional(),
+  parent_id: z.string().optional(),
+  action: z.string().optional(),
+  details: z.unknown().optional(),
+}).loose();
+
+const ProjectReportIssueSummarySchema = z.object({
+  issue_id: z.string().optional().default(""),
+  problem: z.string().optional().default(""),
+  actions: z.array(z.string()).optional().default([]),
+  outcome: z.string().optional().default(""),
+  open_items: z.array(z.string()).optional().default([]),
+  work_types: z.array(z.string()).optional(),
+  work_done: z.array(z.string()).optional(),
+  decision: z.string().optional(),
+  deliverables: z.array(z.string()).optional(),
+  verification: z.array(z.string()).optional(),
+  current_state: z.string().optional(),
+  dependencies: z.array(z.string()).optional(),
+  risks: z.array(z.string()).optional(),
+  artifacts: z.array(z.string()).optional(),
+  impact: z.string().optional(),
+  evidence_ids: z.array(z.string()).optional(),
+  confidence: z.string().optional(),
+  summary_source: z.string().optional(),
+}).loose();
+
+const ProjectReportIssueSchema = z.object({
+  issue_id: z.string().optional().default(""),
+  identifier: z.string(),
+  title: z.string(),
+  description: z.string().optional(),
+  business_domain: z.string().optional(),
+  status: z.string().optional().default(""),
+  due_date: z.string().optional(),
+  summary: ProjectReportIssueSummarySchema.optional().default({
+    issue_id: "",
+    problem: "",
+    actions: [],
+    outcome: "",
+    open_items: [],
+  }),
+  timeline: z.array(ProjectReportTimelineEventSchema).optional().default([]),
+  timeline_truncated: z.boolean().optional(),
+}).loose();
+
+const ProjectReportNarrativeSchema = z.object({
+  issue_id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  business_domain: z.string().optional(),
+  status_from: z.string().optional(),
+  status_to: z.string().optional(),
+  done: z.string().default(""),
+  outcome: z.string().optional(),
+  evidence: z.array(z.string()).optional(),
+  risks: z.array(z.string()).optional(),
+  noteworthy: z.boolean().optional().default(false),
+  source: z.string().optional().default("deterministic"),
+}).loose();
+
+const ProjectReportSnapshotSchema = z.object({
+  period_type: z.string(),
+  range_start: z.string(),
+  range_end: z.string(),
+  timezone: z.string(),
+  project_title: z.string().optional(),
+  project_description: z.string().optional(),
+  generated_at: z.string(),
+  summary_version: z.number().optional().default(1),
+  analysis_version: z.number().optional(),
+  issues: z.array(ProjectReportIssueSchema).default([]),
+  active_issue_count: z.number().optional().default(0),
+  analysis_warnings: z.array(z.string()).optional(),
+  narrative_version: z.number().optional(),
+  narratives: z.array(ProjectReportNarrativeSchema).optional(),
+  executive_summary: z.string().optional(),
+  completed: z.array(ProjectReportIssueSchema).optional(),
+  in_progress: z.array(ProjectReportIssueSchema).optional(),
+  blocked: z.array(ProjectReportIssueSchema).optional(),
+  overdue: z.array(ProjectReportIssueSchema).optional(),
+  cancelled: z.array(ProjectReportIssueSchema).optional(),
+  completed_count: z.number().optional(),
+  in_progress_count: z.number().optional(),
+  blocked_count: z.number().optional(),
+  overdue_count: z.number().optional(),
+  cancelled_count: z.number().optional(),
+}).loose();
+
+const ProjectReportTemplateSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().nullable().optional(),
+  name: z.string(),
+  period_type: z.string(),
+  system_prompt: z.string().optional().default(""),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const ProjectReportSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string(),
+  period_type: z.string(),
+  range_start: z.string(),
+  range_end: z.string(),
+  timezone: z.string(),
+  generated_by_type: z.string(),
+  generated_by_id: z.string(),
+  data_snapshot: z.union([
+    ProjectReportSnapshotSchema,
+    z.record(z.string(), z.unknown()),
+  ]).optional(),
+  content: z.string().default(""),
+  created_at: z.string(),
+  saved_at: z.string().nullable().optional(),
+}).loose();
+
+export const ProjectReportTemplateListSchema = z.array(ProjectReportTemplateSchema);
+export const ProjectReportHistoryItemSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string(),
+  period_type: z.string(),
+  range_start: z.string(),
+  range_end: z.string(),
+  timezone: z.string(),
+  generated_by_type: z.string(),
+  generated_by_id: z.string(),
+  created_at: z.string(),
+  saved_at: z.string().nullable().optional(),
+}).loose();
+export const ListProjectReportsResponseSchema = z.object({
+  reports: z.array(ProjectReportHistoryItemSchema).default([]),
+  total: z.number().optional().default(0),
+}).loose();
+export const ProjectReportJobSchema = z.object({
+  job_id: z.string(),
+  report_id: z.string(),
+  status: z.string(),
+  attempt: z.number().optional().default(0),
+  max_attempts: z.number().optional().default(0),
+  error_message: z.string().nullable().optional(),
+  created_at: z.string(),
+  report: ProjectReportSchema.optional(),
+}).loose();
+
+export const EMPTY_PROJECT_REPORT_TEMPLATE_LIST: ProjectReportTemplate[] = [];
+export const EMPTY_LIST_PROJECT_REPORTS_RESPONSE: { reports: ProjectReportHistoryItem[]; total: number } = {
+  reports: [],
+  total: 0,
+};
+export const EMPTY_PROJECT_REPORT: ProjectReport = {
+  id: "",
+  workspace_id: "",
+  project_id: "",
+  period_type: "weekly",
+  range_start: "",
+  range_end: "",
+  timezone: "UTC",
+  generated_by_type: "member",
+  generated_by_id: "",
+  content: "",
+  created_at: "",
+};
+export const EMPTY_PROJECT_REPORT_JOB: ProjectReportJob = {
+  job_id: "",
+  report_id: "",
+  status: "failed",
+  attempt: 0,
+  max_attempts: 0,
+  created_at: "",
 };
 
 const SearchProjectResultSchema = ProjectResponseSchema.extend({

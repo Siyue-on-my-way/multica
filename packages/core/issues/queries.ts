@@ -179,6 +179,7 @@ export type MyIssuesFilter = Pick<
   | "creator_id"
   | "project_id"
   | "involves_user_id"
+  | "q"
 >;
 
 /** Server-side contract for the flat table window. These facets must travel
@@ -500,11 +501,15 @@ export function issueFlatExportOptions(
   });
 }
 
-async function fetchAllMyFirstPages(userId: string, sort?: IssueSortParam): Promise<ListIssuesCache> {
+async function fetchAllMyFirstPages(
+  userId: string,
+  sort?: IssueSortParam,
+  filter: MyIssuesFilter = {},
+): Promise<ListIssuesCache> {
   const [byAssignee, byCreator, byInvolves] = await Promise.all([
-    fetchFirstPages({ assignee_id: userId }, sort),
-    fetchFirstPages({ creator_id: userId }, sort),
-    fetchFirstPages({ involves_user_id: userId }, sort),
+    fetchFirstPages({ ...filter, assignee_id: userId }, sort),
+    fetchFirstPages({ ...filter, creator_id: userId }, sort),
+    fetchFirstPages({ ...filter, involves_user_id: userId }, sort),
   ]);
   const byStatus: ListIssuesCache["byStatus"] = {};
   for (const status of PAGINATED_STATUSES) {
@@ -640,7 +645,7 @@ export function myIssueListOptions(
     queryKey: issueKeys.myListSorted(wsId, scope, filter, sort),
     queryFn: () =>
       scope === "all" && userId
-        ? fetchAllMyFirstPages(userId, sort)
+        ? fetchAllMyFirstPages(userId, sort, filter)
         : fetchFirstPages(filter, sort),
     select: flattenIssueBuckets,
     placeholderData: keepPreviousData,
