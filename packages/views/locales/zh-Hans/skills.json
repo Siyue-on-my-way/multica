@@ -25,7 +25,7 @@
     },
     "empty": {
       "title": "还没有 skill",
-      "description": "创建第一个 skill、从 URL 导入、或从已连接的运行时复制——之后工作区里每个智能体都能用它。"
+      "description": "创建第一个 skill、从 URL 或本地文件夹导入、或从已连接的运行时复制——之后工作区里每个智能体都能用它。"
     },
     "no_matches": {
       "title": "无匹配",
@@ -36,7 +36,7 @@
     },
     "intro_banner": {
       "title": "在工作区内共享。",
-      "body": "任何成员都可以创建 skill、从 URL 导入、或从本地运行时复制——之后所有智能体都能用它。",
+      "body": "任何成员都可以创建 skill、从 URL 或本地文件夹导入、或从本地运行时复制——之后所有智能体都能用它。",
       "highlight": "本地运行时里的 skill 在你复制过来之前是私有的。"
     },
     "list_error": {
@@ -89,7 +89,17 @@
     "cancel": "取消",
     "add_confirm": "添加（{{num}}）",
     "adding": "添加中...",
-    "added_multi_toast_other": "已添加到 {{count}} 个智能体"
+    "added_multi_toast_other": "已添加到 {{count}} 个智能体",
+    "refresh": "从来源更新",
+    "update": "更新",
+    "update_none": "所选内容中没有你可以更新的已导入 skill",
+    "update_dialog_title": "从来源更新 skill？",
+    "update_summary_selected_other": "将从来源更新 {{count}} 个 skill",
+    "update_summary_skipped_other": "{{count}} 个无法从来源更新，跳过",
+    "update_confirm": "更新 {{count}} 个",
+    "update_updating": "更新中 {{done}}/{{total}}...",
+    "updated_toast_other": "已从来源更新 {{count}} 个 skill",
+    "update_partial_toast": "已更新 {{count}} 个，{{failed}} 个失败"
   },
   "toolbar": {
     "result_count_title": "当前结果 / 全部 skill",
@@ -198,6 +208,23 @@
       "mode_preview": "预览",
       "mode_edit": "编辑",
       "mode_raw": "纯文本"
+    },
+    "refresh": {
+      "button": "更新",
+      "tooltip": "从来源重新下载这个 skill",
+      "source_github": "GitHub",
+      "source_skills_sh": "Skills.sh",
+      "source_clawhub": "ClawHub",
+      "toast_success": "已从 {{source}} 更新 skill",
+      "toast_failed": "更新 skill 失败",
+      "dialog": {
+        "title": "从来源更新这个 skill？",
+        "description": "将从 {{source}} 重新下载\"{{name}}\"，并用最新版本替换它的名称、描述、SKILL.md 和文件。",
+        "warning": "对这个 skill 的本地修改将被覆盖。智能体分配、标签和创建者保持不变。",
+        "cancel": "取消",
+        "confirm": "更新",
+        "refreshing": "更新中..."
+      }
     }
   },
   "create": {
@@ -208,7 +235,7 @@
     "method": {
       "chooser": {
         "title": "新建 skill",
-        "desc": "选择一种方式把 skill 添加到工作区。"
+        "desc": "选择添加 skill 的方式。"
       },
       "manual": {
         "title": "手动创建",
@@ -216,15 +243,19 @@
       },
       "url": {
         "title": "从 URL 导入",
-        "desc": "通过 URL 拉取 skill —— 支持 ClawHub、Skills.sh、GitHub 及任意 .zip/.skill 直链，文件由服务端自动下载。"
+        "desc": "通过 URL 拉取已发布的 skill。"
       },
       "runtime": {
         "title": "从运行时复制",
-        "desc": "扫描本地运行时，把它磁盘上的 skill 提升到工作区。"
+        "desc": "把本地运行时里已装好的 skill 提升到工作区。"
       },
       "archive": {
         "title": "上传 zip 包",
         "desc": "导入本地 .skill/.zip 压缩包，同名冲突按所选策略处理。"
+      },
+      "local": {
+        "title": "从本地导入",
+        "desc": "选择包含 SKILL.md 的文件夹，或 .skill / .zip 压缩包。"
       }
     },
     "method_card": {
@@ -235,7 +266,9 @@
       "runtime_title": "从运行时复制",
       "runtime_desc": "把本地运行时里已经装好的 skill 提升过来。",
       "archive_title": "上传 zip 包",
-      "archive_desc": "导入 .skill/.zip 压缩包，含脚本、数据与资源。"
+      "archive_desc": "导入 .skill/.zip 压缩包，含脚本、数据与资源。",
+      "local_title": "从本地导入",
+      "local_desc": "选择运行时本地文件夹或 .skill / .zip 压缩包，导入前可先预览。"
     },
     "manual": {
       "name_label": "名称",
@@ -280,6 +313,23 @@
       "toast_updated": "skill 已更新",
       "fallback_error": "导入失败",
       "too_large": "压缩包超过 100 MB 上限，请精简后重试。"
+    },
+    "local": {
+      "choose_folder": "选择文件夹",
+      "choose_archive": "选择 .skill / .zip",
+      "folder_label": "文件夹",
+      "archive_label": "压缩包",
+      "files_other": "{{count}} 个文件",
+      "missing_skill_md": "这个文件夹不是 skill——里面没有 SKILL.md。",
+      "too_large": "这个 skill 太大，无法导入。",
+      "empty": "文件夹是空的。",
+      "too_many_files": "这个 skill 的文件太多，无法导入。",
+      "name_conflict_hint": "导入的 skill 名称已存在——请先删除已有的再重试。",
+      "fallback_error": "导入失败",
+      "cancel": "取消",
+      "import": "导入",
+      "importing": "导入中...",
+      "toast_imported": "已导入 skill"
     }
   },
   "runtime_import": {
@@ -327,7 +377,7 @@
     "conflict_locked_creator": "该 skill 由 {{creator}} 创建，只能由创建者通过本地导入覆盖；如需修改请到 Skill 详情页编辑。",
     "conflict_locked": "该 skill 只能由创建者通过本地导入覆盖；如需修改请到 Skill 详情页编辑。",
     "conflict_overwrite": "覆盖",
-    "conflict_rename": "改名",
+    "conflict_rename": "重命名",
     "conflict_skip": "跳过",
     "conflict_cancel": "取消",
     "conflict_overwrite_all": "全部覆盖",

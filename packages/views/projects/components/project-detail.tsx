@@ -15,13 +15,14 @@ import { pinListOptions } from "@multica/core/pins";
 import { useCreatePin, useDeletePin } from "@multica/core/pins";
 import { memberListOptions, agentListOptions, workspaceListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useIssuesScope } from "@multica/core/issues/stores";
 import { useRecentContextStore } from "@multica/core/chat";
 import { paths, useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { useNavigation } from "../../navigation";
+import { currentPath, useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
@@ -58,6 +59,7 @@ import {
   getAnimatedRightSidebarInitialOpen,
   rightSidebarPanelMotionProps,
   useAnimatedRightSidebarState,
+  useRightSidebarShortcut,
 } from "../../layout/animated-right-sidebar";
 import {
   AlertDialog,
@@ -119,10 +121,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         projectStatus: project.status,
       });
     }
-  }, [project, recordRecentContext, wsId]);
+  }, [project?.id, project?.title, project?.description, project?.icon, project?.status, recordRecentContext, wsId]);
+  const issueTab = useIssuesScope(`project:${projectId}`);
   const issueScope = useMemo(
-    () => ({ type: "project" as const, projectId }),
-    [projectId],
+    () => ({ type: "project" as const, projectId, actorKind: issueTab }),
+    [projectId, issueTab],
   );
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
@@ -164,6 +167,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     id: "multica_project_detail_layout",
   });
   const sidebarRef = usePanelRef();
+  const rightSidebarShortcutTargetRef = useRef<HTMLDivElement | null>(null);
   const desktopSidebarInitialOpen = getAnimatedRightSidebarInitialOpen(
     true,
     defaultLayout,
@@ -203,6 +207,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       else panel.collapse();
     });
   }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
+
+  useRightSidebarShortcut(rightSidebarShortcutTargetRef, handleToggleSidebar);
 
   // Lead popover
   const [leadOpen, setLeadOpen] = useState(false);
@@ -509,7 +515,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     <>
     <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0" defaultLayout={defaultLayout} onLayoutChanged={onLayoutChanged}>
       <ResizablePanel id="content" minSize="50%">
-        <div className="flex h-full flex-col">
+        <div ref={rightSidebarShortcutTargetRef} className="flex h-full flex-col">
           <BreadcrumbHeader
             segments={[{ href: wsPaths.projects(), label: t(($) => $.detail.breadcrumb_fallback) }]}
             leaf={<span className="truncate font-medium text-foreground">{project.title}</span>}
@@ -540,7 +546,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 />
                 <DropdownMenuContent align="end" className="w-auto">
                   <DropdownMenuItem onClick={() => {
-                    void copyText(window.location.href).then((ok) => {
+                    void copyText(router.getShareableUrl(currentPath(router))).then((ok) => {
                       if (ok) toast.success(t(($) => $.detail.toast_link_copied));
                     });
                   }}>

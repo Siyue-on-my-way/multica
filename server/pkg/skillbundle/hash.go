@@ -31,6 +31,10 @@ const (
 	// DefaultFileMode is the safe mode used for ordinary skill resources. The
 	// executable bit is the only source-file permission that is preserved.
 	DefaultFileMode int32 = 0o644
+
+	// SourcePlugin marks a skill contributed by an installed plugin
+	// (upstream plugin lifecycle).
+	SourcePlugin = "plugin"
 )
 
 type File struct {

@@ -25,7 +25,7 @@
     },
     "empty": {
       "title": "No skills yet",
-      "description": "Create your first skill, import one from a URL, or copy one from a connected runtime — and every agent in the workspace can use it."
+      "description": "Create your first skill, import one from a URL or a local folder, or copy one from a connected runtime — and every agent in the workspace can use it."
     },
     "no_matches": {
       "title": "No matches",
@@ -36,7 +36,7 @@
     },
     "intro_banner": {
       "title": "Shared with your workspace.",
-      "body": "Anyone can create a skill, import one from a URL, or copy one from their local runtime — and every agent can use it.",
+      "body": "Anyone can create a skill, import one from a URL or a local folder, or copy one from their local runtime — and every agent can use it.",
       "highlight": "Local runtime skills stay private until you copy one here."
     },
     "list_error": {
@@ -93,7 +93,20 @@
     "add_confirm": "Add ({{num}})",
     "adding": "Adding...",
     "added_multi_toast_one": "Added to {{count}} agent",
-    "added_multi_toast_other": "Added to {{count}} agents"
+    "added_multi_toast_other": "Added to {{count}} agents",
+    "refresh": "Update from source",
+    "update": "Update",
+    "update_none": "Selection has no imported skills you can update",
+    "update_dialog_title": "Update skills from source?",
+    "update_summary_selected_one": "{{count}} skill will be updated from its source",
+    "update_summary_selected_other": "{{count}} skills will be updated from their sources",
+    "update_summary_skipped_one": "{{count}} can't be updated from a source — skipped",
+    "update_summary_skipped_other": "{{count}} can't be updated from a source — skipped",
+    "update_confirm": "Update {{count}}",
+    "update_updating": "Updating {{done}}/{{total}}…",
+    "updated_toast_one": "Updated {{count}} skill from source",
+    "updated_toast_other": "Updated {{count}} skills from source",
+    "update_partial_toast": "Updated {{count}}, {{failed}} failed"
   },
   "toolbar": {
     "result_count_title": "Matching skills / all skills",
@@ -210,6 +223,23 @@
       "mode_preview": "Preview",
       "mode_edit": "Edit",
       "mode_raw": "Plain text"
+    },
+    "refresh": {
+      "button": "Update",
+      "tooltip": "Re-download this skill from its source",
+      "source_github": "GitHub",
+      "source_skills_sh": "Skills.sh",
+      "source_clawhub": "ClawHub",
+      "toast_success": "Skill updated from {{source}}",
+      "toast_failed": "Failed to update skill",
+      "dialog": {
+        "title": "Update from source?",
+        "description": "This will re-download \"{{name}}\" from {{source}} and replace its name, description, SKILL.md, and files with the latest version.",
+        "warning": "Local edits to this skill will be overwritten. Agent assignments, labels, and creator are preserved.",
+        "cancel": "Cancel",
+        "confirm": "Update",
+        "refreshing": "Updating…"
+      }
     }
   },
   "create": {
@@ -220,23 +250,27 @@
     "method": {
       "chooser": {
         "title": "New skill",
-        "desc": "Choose how you want to add a skill to this workspace."
+        "desc": "Choose how to add a skill to this workspace."
       },
       "manual": {
         "title": "Create manually",
-        "desc": "Write a new SKILL.md from scratch."
+        "desc": "Start from a blank SKILL.md."
       },
       "url": {
         "title": "Import from URL",
-        "desc": "Fetch a published skill by URL — ClawHub, Skills.sh, GitHub, or a direct .zip/.skill link. Files are pulled server-side."
+        "desc": "Fetch a published skill by URL."
       },
       "runtime": {
         "title": "Copy from runtime",
-        "desc": "Scan a local runtime and promote one of its on-disk skills into this workspace."
+        "desc": "Promote a skill installed on your local runtime."
       },
       "archive": {
         "title": "Upload zip archive",
         "desc": "Import a local .skill/.zip bundle. Same-name conflicts follow your chosen strategy."
+      },
+      "local": {
+        "title": "Import from local",
+        "desc": "Pick a folder with SKILL.md, or a .skill / .zip archive."
       }
     },
     "method_card": {
@@ -247,7 +281,9 @@
       "runtime_title": "Copy from runtime",
       "runtime_desc": "Promote a skill already installed on your local runtime.",
       "archive_title": "Upload zip archive",
-      "archive_desc": "Import a .skill/.zip bundle with scripts, data, and resources."
+      "archive_desc": "Import a .skill/.zip bundle with scripts, data, and resources.",
+      "local_title": "Import from local",
+      "local_desc": "Pick a runtime-local folder or a .skill / .zip archive and review it before import."
     },
     "manual": {
       "name_label": "Name",
@@ -292,6 +328,24 @@
       "toast_updated": "Skill updated",
       "fallback_error": "Import failed",
       "too_large": "The archive exceeds the 100 MB upload limit — trim it and retry."
+    },
+    "local": {
+      "choose_folder": "Choose folder",
+      "choose_archive": "Choose .skill / .zip",
+      "folder_label": "Folder",
+      "archive_label": "Archive",
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files",
+      "missing_skill_md": "This folder is not a skill — it has no SKILL.md.",
+      "too_large": "This skill is too large to import.",
+      "empty": "The folder is empty.",
+      "too_many_files": "This skill has too many files to import.",
+      "name_conflict_hint": " The imported skill's name already exists — delete the existing one before retrying.",
+      "fallback_error": "Import failed",
+      "cancel": "Cancel",
+      "import": "Import",
+      "importing": "Importing…",
+      "toast_imported": "Skill imported"
     }
   },
   "runtime_import": {

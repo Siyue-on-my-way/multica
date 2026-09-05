@@ -11,6 +11,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/sandbox"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"gopkg.in/yaml.v3"
 )
@@ -25,9 +26,10 @@ const TaskContextMarkerRelPath = ".multica/daemon_task_context.json"
 const TaskContextMarkerManagedBy = "multica-daemon-task"
 
 type taskContextMarkerFile struct {
-	ManagedBy string `json:"managed_by"`
-	AgentID   string `json:"agent_id,omitempty"`
-	IssueID   string `json:"issue_id,omitempty"`
+	ManagedBy     string `json:"managed_by"`
+	AgentID       string `json:"agent_id,omitempty"`
+	IssueID       string `json:"issue_id,omitempty"`
+	ChatSessionID string `json:"chat_session_id,omitempty"`
 }
 
 // EnsureWorkspacesRootMarker writes a persistent daemon-task marker at
@@ -118,8 +120,17 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 	return nil
 }
 
-// writeContextFiles renders and writes .agent_context/issue_context.md and
-// skills into the appropriate provider-native location.
+// writeContextFiles writes the task's sidecar files: the task-context marker,
+// agent skills in the appropriate provider-native location, and project
+// resources.
+//
+// It deliberately writes no per-task Markdown brief. There used to be an
+// .agent_context/issue_context.md carrying the issue id, trigger comment id,
+// handoff note, quick-create input, and autopilot run data — every one of
+// which the runtime brief and the per-turn user message already carry. No
+// provider read the file (nothing in either surface pointed at it), so it was
+// a third copy that had to be kept in sync with the two that agents actually
+// see, for no reader at all (MUL-6984).
 //
 // Claude:      skills → {workDir}/.claude/skills/{name}/SKILL.md  (native discovery)
 // CodeBuddy:   skills → {workDir}/.codebuddy/skills/{name}/SKILL.md  (native discovery — CodeBuddy is a Claude Code fork but uses its own config directory, not .claude/; see https://www.codebuddy.ai/docs/cli/skills)
@@ -131,9 +142,13 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // Pi:          skills → {workDir}/.pi/skills/{name}/SKILL.md  (native discovery)
 // Cursor:      skills → {workDir}/.cursor/skills/{name}/SKILL.md  (native discovery)
 // Kimi:        skills → {workDir}/.kimi/skills/{name}/SKILL.md  (native discovery)
+// Reasonix:    skills → {workDir}/.reasonix/skills/{name}/SKILL.md  (native discovery)
+// DSH:         skills → {workDir}/.dsh/skills/{name}/SKILL.md  (native discovery)
 // Kiro:        skills → {workDir}/.kiro/skills/{name}/SKILL.md  (native discovery)
 // Qoder/Qoder CN: skills → {workDir}/.qoder/skills/{name}/SKILL.md  (project-level; see the provider docs)
 // Qwen Code:    skills → {workDir}/.qwen/skills/{name}/SKILL.md  (native project-level discovery)
+// QwenPaw:      skills → {workDir}/.qwenpaw/skills/{name}/SKILL.md  (native project-level discovery)
+// MiniMax Code: skills → {workDir}/.minimax/skills/{name}/SKILL.md  (native project-level discovery)
 // Antigravity: skills → {workDir}/.agents/skills/{name}/SKILL.md  (native discovery — see https://antigravity.google/docs/gcli-migration "Workspace skills")
 // Default:     skills → {workDir}/.agent_context/skills/{name}/SKILL.md
 //
@@ -146,27 +161,6 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
-	}
-
-	contextDir := filepath.Join(workDir, ".agent_context")
-	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
-		return fmt.Errorf("create .agent_context dir: %w", err)
-	}
-
-	content := renderIssueContext(provider, ctx)
-	path := filepath.Join(contextDir, "issue_context.md")
-	if err := recordWriteFile(path, []byte(content), 0o644, manifest); err != nil {
-		// A pre-existing path means the user already owns
-		// .agent_context/issue_context.md — either they created it
-		// themselves or it survived from a crashed prior run we can't
-		// safely distinguish from intentional content. Refusing the
-		// write is the correct call: the runtime brief (CLAUDE.md /
-		// AGENTS.md) already carries every fact this file
-		// would, so the agent runs fine without the sidecar copy.
-		// Anything else is a real failure.
-		if !errors.Is(err, errPathPreExists) {
-			return fmt.Errorf("write issue_context.md: %w", err)
-		}
 	}
 
 	if len(ctx.AgentSkills) > 0 {
@@ -209,9 +203,10 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 	// cleanup. If a crash leaves it behind, the CLI intentionally treats it
 	// as daemon context and fails closed instead of using a user PAT.
 	payload := taskContextMarkerFile{
-		ManagedBy: TaskContextMarkerManagedBy,
-		AgentID:   ctx.AgentID,
-		IssueID:   ctx.IssueID,
+		ManagedBy:     TaskContextMarkerManagedBy,
+		AgentID:       ctx.AgentID,
+		IssueID:       ctx.IssueID,
+		ChatSessionID: ctx.ChatSessionID,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
@@ -333,6 +328,11 @@ func resolveSkillsDir(workDir, provider string, manifest *sidecarManifest) (stri
 // (removeReusedManagedSkillDirs) needs the bare path with no side effects so
 // it can match the managed skill roots the prior manifest recorded.
 func skillsDirPath(workDir, provider string) string {
+	// Built-in runtime identities (e.g. "omp") declare their skills dir in
+	// the descriptor; resolve generically before the protocol-family switch.
+	if desc, ok := agent.BuiltinRuntimeByID(provider); ok {
+		return filepath.Join(workDir, desc.SkillsDir)
+	}
 	switch provider {
 	case "claude":
 		// Claude Code natively discovers skills from .claude/skills/ in the workdir.
@@ -358,6 +358,10 @@ func skillsDirPath(workDir, provider string) string {
 		// without those, OpenCode walks from the daemon's inherited PWD and
 		// misses .opencode/skills + AGENTS.md entirely (MUL-2416).
 		return filepath.Join(workDir, ".opencode", "skills")
+	case "codearts":
+		// CodeArts Agent discovers project skills from its provider-owned
+		// .codeartsdoer/skills directory.
+		return filepath.Join(workDir, ".codeartsdoer", "skills")
 	case "deveco":
 		// DevEco Code (Huawei's OpenCode fork) natively discovers project
 		// skills from .deveco/skills/ in the workdir, mirroring OpenCode's
@@ -383,6 +387,14 @@ func skillsDirPath(workDir, provider string) string {
 		// Kimi Code CLI auto-discovers project-level skills from .kimi/skills/
 		// in the workdir. See https://moonshotai.github.io/kimi-cli/en/customization/skills.html
 		return filepath.Join(workDir, ".kimi", "skills")
+	case "reasonix":
+		// Reasonix discovers project skills from .reasonix/skills/ and loads
+		// AGENTS.md independently, so repository memory and task skills coexist.
+		return filepath.Join(workDir, ".reasonix", "skills")
+	case "dsh":
+		// DSH scans both .dsh/skills and .agents/skills. Prefer its branded
+		// project root so runtime-specific skills stay isolated.
+		return filepath.Join(workDir, ".dsh", "skills")
 	case "kiro":
 		// Kiro CLI auto-discovers project-level skills from .kiro/skills/
 		// in the workdir.
@@ -395,6 +407,13 @@ func skillsDirPath(workDir, provider string) string {
 	case "qwen":
 		// Qwen Code discovers project-level skills from .qwen/skills/ in the workdir.
 		return filepath.Join(workDir, ".qwen", "skills")
+	case "qwenpaw":
+		// QwenPaw discovers workspace-level skills from <workDir>/skill_pool/.
+		// See get_workspace_skills_dir in QwenPaw's skill_system/store.py.
+		return filepath.Join(workDir, "skill_pool")
+	case "mcode":
+		// MiniMax Code discovers project-level skills from .minimax/skills/.
+		return filepath.Join(workDir, ".minimax", "skills")
 	case "traecli":
 		// Official TRAE CLI discovers project-level skills from .traecli/skills/
 		// in the workdir (global skills live in ~/.traecli/skills). See

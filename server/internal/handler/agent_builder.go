@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 const agentBuilderInstructions = `You are Multica Agent Builder. Help the user design one practical AI agent through a short conversation.
@@ -20,7 +21,7 @@ const agentBuilderInstructions = `You are Multica Agent Builder. Help the user d
 Your job is to propose and refine configuration, never to create resources yourself. Ask only questions that materially change behavior. Prefer making a reasonable draft immediately, then ask at most two focused questions per turn.
 
 Every response MUST end with exactly one <agent_draft> JSON block using this shape:
-<agent_draft>{"name":"","description":"","instructions":"","model":"","skill_ids":[],"permission_scope":"private","member_ids":[]}</agent_draft>
+<agent_draft>{"name":"","description":"","instructions":"","conversation_starters":[],"model":"","skill_ids":[],"permission_scope":"private","member_ids":[]}</agent_draft>
 
 Rules:
 - The JSON must be valid, compact JSON on one physical line. Do not wrap it in Markdown fences.
@@ -29,6 +30,7 @@ Rules:
 - name is concise and suitable for a workspace list.
 - description is one sentence, at most 200 characters.
 - instructions are a complete Markdown system prompt describing role, workflow, output, and constraints.
+- conversation_starters contains up to three objects with a concise label and a complete prompt. Each should demonstrate a useful first task for this specific agent; never include generic filler.
 - model must be empty, preserve current_draft.model, or exactly match an id explicitly listed in AVAILABLE RUNTIME MODELS. Never use a model label as the id.
 - When AVAILABLE RUNTIME MODELS is null or empty, preserve current_draft.model and never invent a model id.
 - skill_ids may only contain IDs explicitly listed in AVAILABLE WORKSPACE SKILLS.
@@ -121,6 +123,7 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 	}
 
 	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+		ID:          dbid.NewV7(),
 		WorkspaceID: workspaceUUID,
 		AgentID:     builder.ID,
 		CreatorID:   ownerUUID,
@@ -128,6 +131,11 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create agent builder session")
+		return
+	}
+	session, err = qtx.MarkChatSessionExplicitlyCreated(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark agent builder session explicit")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -235,6 +243,16 @@ type SaveAgentBuilderDraftRequest struct {
 // Whole-object last-write-wins is correct here because a conversation has one
 // editor on one screen — a field-level merge could only reconstruct a state the
 // user never saw.
+//
+// The upsert runs under LockChatSessionForDraftWrite, the row lock the delete
+// path already takes, and re-checks the session inside it. Unlocked, this
+// handler's read and its write are two statements a delete can commit between:
+// the client autosaves on a debounce, so a discard confirmed mid-window used to
+// leave a draft hanging off a session that no longer exists — invisible to the
+// UI, and reachable by no prune but the workspace teardown. agent_builder_draft
+// has no chat_session FK to reject that INSERT, so the lock is what makes the
+// two orderings the only ones: either the save commits first and the delete
+// prunes it, or the delete commits first and the save finds nothing to write to.
 func (h *Handler) SaveAgentBuilderDraft(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	userID, ok := requireUserID(w, r)
@@ -262,13 +280,11 @@ func (h *Handler) SaveAgentBuilderDraft(w http.ResponseWriter, r *http.Request) 
 
 	// Creator-only, and only for a builder carrier — the same two gates the
 	// runtime switch applies. Without the carrier check this would be a way to
-	// hang arbitrary JSON off any chat session the caller owns.
+	// hang arbitrary JSON off any chat session the caller owns. Both are decided
+	// on this unlocked read: workspace, creator and carrier are immutable for a
+	// given session, so nothing the lock below could observe would change them.
 	session, ok := h.loadChatSessionForUser(w, r, userID, workspaceID, chi.URLParam(r, "sessionId"))
 	if !ok {
-		return
-	}
-	if session.Status != "active" {
-		writeError(w, http.StatusBadRequest, "chat session is archived")
 		return
 	}
 	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
@@ -281,11 +297,42 @@ func (h *Handler) SaveAgentBuilderDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, err := h.Queries.UpsertAgentBuilderDraft(r.Context(), db.UpsertAgentBuilderDraftParams{
-		ChatSessionID: session.ID,
-		WorkspaceID:   session.WorkspaceID,
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save agent builder draft")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	// Everything a concurrent writer can still change about this session —
+	// whether it exists at all, and whether it is still active — is decided here,
+	// under the lock, on a re-read row. A save that blocked on a delete or an
+	// archive resumes holding the values it read before blocking, so the earlier
+	// read cannot be trusted for either.
+	locked, err := qtx.LockChatSessionForDraftWrite(r.Context(), session.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "chat session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to lock chat session")
+		return
+	}
+	if locked.Status != "active" {
+		writeError(w, http.StatusBadRequest, "chat session is archived")
+		return
+	}
+
+	if _, err := qtx.UpsertAgentBuilderDraft(r.Context(), db.UpsertAgentBuilderDraftParams{
+		ChatSessionID: locked.ID,
+		WorkspaceID:   locked.WorkspaceID,
 		Draft:         req.Draft,
 	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save agent builder draft")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save agent builder draft")
 		return
 	}
@@ -316,7 +363,7 @@ func (h *Handler) resolveBuilderRuntime(w http.ResponseWriter, r *http.Request, 
 		return db.AgentRuntime{}, false
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can use it")
+		writeError(w, http.StatusForbidden, "this runtime is private; only its owner can use it")
 		return db.AgentRuntime{}, false
 	}
 	if runtime.Status != "online" {

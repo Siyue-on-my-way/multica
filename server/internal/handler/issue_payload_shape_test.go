@@ -148,6 +148,7 @@ func fullyPopulatedIssue(t *testing.T) db.Issue {
 		DueDate:        pgtype.Date{Time: utcDate(2026, time.February, 1), Valid: true},
 		CreatedAt:      pgtype.Timestamptz{Time: utcDate(2026, time.January, 1), Valid: true},
 		UpdatedAt:      pgtype.Timestamptz{Time: utcDate(2026, time.January, 2), Valid: true},
+		LastActivityAt: pgtype.Timestamptz{Time: utcDate(2026, time.January, 3), Valid: true},
 		Metadata:       []byte(`{"pr_url":"https://example.test/pr/1"}`),
 		Properties:     []byte(`{"77777777-7777-7777-7777-777777777777":"done"}`),
 	}

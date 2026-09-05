@@ -77,3 +77,7 @@ data/
 
 # docker volumes (runtime data, never commit)
 docker/volumes/
+
+# Python (agent tooling)
+__pycache__/
+*.pyc

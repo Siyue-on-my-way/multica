@@ -25,18 +25,25 @@ const skillMatchTextCap = 128 << 10
 
 // LoadTaskSkills returns the skill set for one task run: the agent's assigned
 // skills, then any global skills the trigger text invokes.
-func (s *TaskService) LoadTaskSkills(ctx context.Context, task *db.AgentTaskQueue) []AgentSkillData {
-	skills := s.LoadAgentSkills(ctx, task.AgentID)
+func (s *TaskService) LoadTaskSkills(ctx context.Context, task *db.AgentTaskQueue, agentSystemKey string, legacyRedirects bool) ([]AgentSkillData, error) {
+	skills, err := s.LoadAgentSkills(ctx, task.AgentID)
+	if err != nil {
+		return nil, err
+	}
 	globals := s.MatchedGlobalSkills(ctx, task, skills)
-	return append(skills, globals...)
+	return append(skills, globals...), nil
 }
 
 // LoadTaskSkillBundles is the bundle/ref variant of LoadTaskSkills, matching
 // the shape LoadAgentSkillBundles returns for claims that carry skill refs.
-func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, task *db.AgentTaskQueue) ([]AgentSkillData, []AgentSkillRefData) {
-	skills := s.LoadTaskSkills(ctx, task)
-	skills = append(skills, s.BuiltinSkills()...)
-	return BuildAgentSkillBundles(skills)
+func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, task *db.AgentTaskQueue, agentSystemKey string, legacyRedirects bool) ([]AgentSkillData, []AgentSkillRefData, error) {
+	skills, err := s.LoadTaskSkills(ctx, task, agentSystemKey, legacyRedirects)
+	if err != nil {
+		return nil, nil, err
+	}
+	skills = append(skills, s.BuiltinSkills(agentSystemKey, legacyRedirects)...)
+	bundles, refs := BuildAgentSkillBundles(skills)
+	return bundles, refs, nil
 }
 
 // MatchedGlobalSkills returns every global skill whose name appears in the

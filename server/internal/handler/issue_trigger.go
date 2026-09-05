@@ -3,12 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
-	agentver "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -16,10 +16,35 @@ import (
 // selection cannot fan out into thousands of readiness probes.
 const maxPreviewTriggerIssues = 500
 
-// issueTriggerProbe builds the request-scoped gates shared by preview and the
-// real write paths. Status-only updates do not pass through validateAssigneePair,
-// so the invocation gate must remain part of the enqueue decision itself.
-func (h *Handler) issueTriggerProbe(r *http.Request, actorType, actorID, workspaceID string, issue db.Issue) service.IssueTriggerProbe {
+// issueTriggerWriteProbe builds the probe the write paths feed to
+// WillEnqueueRun. The private-agent gate is already enforced at the HTTP
+// boundary (validateAssigneePair on assign) and inside enqueueSquadLeaderTask
+// (canEnqueueSquadLeader), so a write must NOT re-run or sink it — it passes
+// allow-all. The self-loop check needs the request's X-Task-ID header.
+func (h *Handler) issueTriggerWriteProbe(r *http.Request, actorType, actorID string, issue db.Issue) service.IssueTriggerProbe {
+	return service.IssueTriggerProbe{
+		CanAccessAgent: nil, // allow-all; gate lives at the write boundary
+		IsSelfLoop: func() bool {
+			return h.isAgentRunningOnIssue(r, actorType, issue)
+		},
+		SuppressActiveSelfAssignment: func(agentID pgtype.UUID) bool {
+			suppress := h.shouldSuppressActiveSelfAssignment(r.Context(), actorType, actorID, issue.ID, agentID)
+			if suppress {
+				slog.Info("suppressing duplicate self-assignment enqueue",
+					"issue_id", uuidToString(issue.ID),
+					"agent_id", uuidToString(agentID),
+				)
+			}
+			return suppress
+		},
+	}
+}
+
+// issueTriggerPreviewProbe mirrors the real write-time gates for the read-only
+// preview: the private-agent gate (so preview never leaks a private agent's
+// readiness to a member who cannot see it — matching validateAssigneePair /
+// canEnqueueSquadLeader) and the same self-loop guard.
+func (h *Handler) issueTriggerPreviewProbe(r *http.Request, actorType, actorID, workspaceID string, issue db.Issue) service.IssueTriggerProbe {
 	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
 	return service.IssueTriggerProbe{
 		CanAccessAgent: func(agent db.Agent) bool {
@@ -28,13 +53,34 @@ func (h *Handler) issueTriggerProbe(r *http.Request, actorType, actorID, workspa
 		IsSelfLoop: func() bool {
 			return h.isAgentRunningOnIssue(r, actorType, issue)
 		},
+		SuppressActiveSelfAssignment: func(agentID pgtype.UUID) bool {
+			return h.shouldSuppressActiveSelfAssignment(r.Context(), actorType, actorID, issue.ID, agentID)
+		},
 	}
 }
 
+// shouldSuppressActiveSelfAssignment prevents a trusted task-scoped agent
+// actor from creating another run for the target pair merely to claim issue
+// ownership. It intentionally checks the TARGET pair, not whether the actor is
+// busy anywhere: cross-issue self handoffs are a supported workflow and must
+// still enqueue when the target has no active run. Query errors fail closed
+// against the external enqueue side effect while leaving the ownership write
+// itself intact. The API still returns success for that ownership write; only
+// the server log exposes the failed advisory lookup, because enqueue is the
+// optional side effect and suppressing it is safer than risking duplicate work.
+func (h *Handler) shouldSuppressActiveSelfAssignment(ctx context.Context, actorType, actorID string, issueID, targetAgentID pgtype.UUID) bool {
+	if actorType != "agent" || actorID == "" || actorID != uuidToString(targetAgentID) {
+		return false
+	}
+	active, err := h.hasActiveTaskForIssueAndAgent(ctx, issueID, targetAgentID)
+	return active || err != nil
+}
+
 // dispatchIssueRun executes the enqueue side effect for a decision produced by
-// WillEnqueueRun, carrying an optional handoff note into the run's opening
-// context. The squad path still flows through enqueueSquadLeaderTask so the
-// leader access gate and pending dedup stay in one place.
+// WillEnqueueRun. handoffNote is a legacy API input retained for installed
+// clients and travels only with a run that actually starts. The squad path
+// still flows through enqueueSquadLeaderTask so the leader access gate and
+// pending dedup stay in one place.
 //
 // When the new assignee is an agent and the LLM layer is configured,
 // compressHandoffContext is called synchronously before enqueueing: it reads the
@@ -89,14 +135,10 @@ type IssueTriggerPreviewRequest struct {
 
 // IssueTriggerPreviewItem is one issue that WILL start a run under the
 // prospective write. AgentID is the runnable agent (squad leader for squads).
-// HandoffSupported is the soft-gate signal: false when the target runtime's
-// daemon is too old to render a handoff note, so the UI can gray out the note
-// box rather than silently drop the text. The assignment itself still works.
 type IssueTriggerPreviewItem struct {
-	IssueID          string `json:"issue_id"`
-	AgentID          string `json:"agent_id"`
-	Source           string `json:"source"`
-	HandoffSupported bool   `json:"handoff_supported"`
+	IssueID string `json:"issue_id"`
+	AgentID string `json:"agent_id"`
+	Source  string `json:"source"`
 }
 
 // IssueTriggerPreviewResponse lists every issue that will enqueue plus a total
@@ -154,13 +196,12 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 	resp := IssueTriggerPreviewResponse{Triggers: make([]IssueTriggerPreviewItem, 0)}
 
 	appendTrigger := func(issue db.Issue, in service.IssueTriggerInput) {
-		probe := h.issueTriggerProbe(r, actorType, actorID, workspaceID, issue)
+		probe := h.issueTriggerPreviewProbe(r, actorType, actorID, workspaceID, issue)
 		if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(), in, probe); ok {
 			resp.Triggers = append(resp.Triggers, IssueTriggerPreviewItem{
-				IssueID:          uuidToString(trigger.IssueID),
-				AgentID:          uuidToString(trigger.AgentID),
-				Source:           string(trigger.Source),
-				HandoffSupported: h.runtimeSupportsHandoff(r.Context(), trigger.AgentID),
+				IssueID: uuidToString(trigger.IssueID),
+				AgentID: uuidToString(trigger.AgentID),
+				Source:  string(trigger.Source),
 			})
 		}
 	}
@@ -218,19 +259,4 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 
 	resp.TotalCount = len(resp.Triggers)
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// runtimeSupportsHandoff reports whether the agent's bound runtime reports a
-// CLI version new enough to render handoff notes. Drives the preview's
-// handoff_supported soft-gate signal. Any resolution failure → false (degrade).
-func (h *Handler) runtimeSupportsHandoff(ctx context.Context, agentID pgtype.UUID) bool {
-	agent, err := h.Queries.GetAgent(ctx, agentID)
-	if err != nil || !agent.RuntimeID.Valid {
-		return false
-	}
-	rt, err := h.Queries.GetAgentRuntime(ctx, agent.RuntimeID)
-	if err != nil {
-		return false
-	}
-	return agentver.HandoffSupported(readRuntimeCLIVersion(rt.Metadata))
 }

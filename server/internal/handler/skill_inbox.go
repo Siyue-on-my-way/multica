@@ -29,7 +29,7 @@ import (
 //
 // There is no user identity behind an inbox drop — placing a file on the
 // server's upload volume is itself an administrator action, so imports here
-// bypass the per-user ownership checks (skillOverwriteInput.BypassOwnershipCheck)
+// bypass the per-user ownership checks (skillOverwriteInput.AllowOverwrite)
 // and same-name conflicts overwrite in place, per the SIY-95 decision.
 
 const (
@@ -312,7 +312,7 @@ func upsertGlobalSkillFromImport(ctx context.Context, h *Handler, name string, i
 			Files:         files,
 			// No user is behind an inbox drop; the host filesystem is the
 			// administrator credential here.
-			BypassOwnershipCheck: true,
+			AllowOverwrite: allowAllSkillOverwrite,
 		})
 		return overwrite, false, err
 	}

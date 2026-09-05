@@ -900,7 +900,7 @@ export function ProjectReportDialog({
                   onChange={setStartDate}
                   icon={<CalendarRange className="h-3.5 w-3.5 text-muted-foreground" />}
                   placeholder={t(($) => $.detail.report_dialog.select_date)}
-                  clearLabel={t(($) => $.detail.report_dialog.clear_date)}
+                  emptyLabel={t(($) => $.detail.report_dialog.clear_date)}
                   triggerRender={
                     <Button
                       type="button"
@@ -922,7 +922,7 @@ export function ProjectReportDialog({
                   onChange={setEndDate}
                   icon={<CalendarRange className="h-3.5 w-3.5 text-muted-foreground" />}
                   placeholder={t(($) => $.detail.report_dialog.select_date)}
-                  clearLabel={t(($) => $.detail.report_dialog.clear_date)}
+                  emptyLabel={t(($) => $.detail.report_dialog.clear_date)}
                   triggerRender={
                     <Button
                       type="button"

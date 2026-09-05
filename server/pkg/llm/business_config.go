@@ -628,11 +628,19 @@ func (r *BusinessRegistry) callSnapshotFromFile(
 	if apiKeyEnv != "" {
 		apiKey = strings.TrimSpace(os.Getenv(apiKeyEnv))
 	}
+	// Config.MaxRetries is an unbuildable-invalid *RetryOverride; translate the
+	// YAML int through Retries so a negative value surfaces as a config error
+	// instead of being coerced. (The registry's own validation already rejects
+	// negatives — this is the same rule enforced at the type boundary.)
+	retries, err := Retries(llmFile.MaxRetries)
+	if err != nil {
+		return nil, err
+	}
 	clientConfig := Config{
 		APIKey:       apiKey,
 		BaseURL:      strings.TrimSpace(llmFile.BaseURL),
 		DefaultModel: strings.TrimSpace(llmFile.Model),
-		MaxRetries:   llmFile.MaxRetries,
+		MaxRetries:   retries,
 		HTTPClient:   r.httpClient,
 	}
 	return &businessCallSnapshot{

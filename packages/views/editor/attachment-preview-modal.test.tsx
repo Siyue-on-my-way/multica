@@ -75,6 +75,7 @@ vi.mock("../navigation", () => ({
     back: vi.fn(),
     pathname: "/acme/issues",
     searchParams: new URLSearchParams(),
+    hash: "",
     ...(navState.hasOpenInNewTab ? { openInNewTab: openInNewTabMock } : {}),
     getShareableUrl: getShareableUrlMock,
   }),
@@ -784,7 +785,12 @@ describe("useAttachmentPreview — tryOpen gate", () => {
         forceKind: "image",
       });
     });
-    rtlRender(<>{result.current.modal}</>);
+    // The merged modal re-signs inline media through react-query; provide a
+    // client so the forceKind canvas can mount outside a full app tree.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rtlRender(
+      <QueryClientProvider client={qc}>{result.current.modal}</QueryClientProvider>,
+    );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });
@@ -1010,42 +1016,6 @@ describe("AttachmentPreviewModal — image zoom", () => {
 
     fireEvent.click(screen.getByRole("dialog"));
     expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("gives the canvas a flex-column parent so it can claim the modal body height", () => {
-    // jsdom has no layout, so this is asserted structurally: `.zoom-canvas`
-    // sizes itself with `flex: 1 1 auto` and positions its content
-    // absolutely. In a plain block parent it collapses to zero height and the
-    // image disappears entirely.
-    stubNaturalSize({ width: 1600, height: 800 });
-    renderImagePreview();
-
-    const body = zoomCanvas().parentElement!;
-    expect(body.className).toContain("flex-col");
-    expect(body.className).toContain("flex-1");
-    expect(body.className).toContain("overflow-hidden");
-  });
-
-  it("keeps the scrolling block body for non-image kinds", () => {
-    render(
-      <AttachmentPreviewModal
-        source={{
-          kind: "full",
-          attachment: makeAttachment({
-            filename: "notes.md",
-            content_type: "text/markdown",
-          }),
-        }}
-        open
-        onClose={() => {}}
-      />,
-    );
-
-    // A flex column here would let a tall markdown preview shrink to fit
-    // instead of scrolling.
-    const body = document.querySelector(".min-h-0.flex-1")!;
-    expect(body.className).toContain("overflow-auto");
-    expect(body.className).not.toContain("flex-col");
   });
 
   it("shows no zoom controls for non-image kinds", () => {

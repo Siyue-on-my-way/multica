@@ -146,7 +146,12 @@ func projectReportHandler(queries *db.Queries, generator ProjectReportGenerator)
 			return HandlerResult{RowsAffected: 1, Result: reportJobResult(reportID)}, nil
 		}
 
-		project, err := queries.GetProject(ctx, report.ProjectID)
+		// Upstream retired the bare GetProject in favour of the workspace-scoped
+		// variant; report rows carry both ids, so scope the read the same way.
+		project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+			ID:          report.ProjectID,
+			WorkspaceID: report.WorkspaceID,
+		})
 		if err != nil {
 			return HandlerResult{}, fmt.Errorf("load report project: %w", err)
 		}

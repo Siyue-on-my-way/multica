@@ -1,4 +1,5 @@
-import type { Issue, IssueMetadata, IssueStatus, IssuePriority, IssueAssigneeType } from "./issue";
+import type { Issue, IssueMetadata, IssueStatus, IssueStatusCategory, IssuePriority, IssueAssigneeType } from "./issue";
+import type { PropertyFilterValue } from "./property";
 import type { MemberRole } from "./workspace";
 import type { Project } from "./project";
 
@@ -24,9 +25,41 @@ export interface CreateIssueRequest {
   ancestor_context_refs?: { id: string; updated_at: string }[];
 }
 
+export interface CreateCommentSubIssueManualRequest {
+  mode: "manual";
+  capture_token: string;
+  issue: CreateIssueRequest;
+}
+
+export interface CreateCommentSubIssueAgentRequest {
+  mode: "agent";
+  capture_token: string;
+  quick_create: {
+    agent_id?: string;
+    squad_id?: string;
+    prompt: string;
+    priority?: IssuePriority;
+    due_date?: string;
+    project_id?: string | null;
+    attachment_ids?: string[];
+  };
+}
+
+export type CreateCommentSubIssueRequest =
+  | CreateCommentSubIssueManualRequest
+  | CreateCommentSubIssueAgentRequest;
+
 export interface UpdateIssueRequest {
+  /** Legacy aggregate compare-and-swap token. New text editors use field
+   * baselines so unrelated issue activity does not reject their edits. */
+  expected_revision?: number;
   title?: string;
+  /** Authoritative title the editor adopted before producing this update. */
+  title_base?: string;
   description?: string;
+  /** Authoritative description the editor had adopted before producing this
+   * update. The server uses it to merge channel media that landed meanwhile. */
+  description_base?: string;
   status?: IssueStatus;
   priority?: IssuePriority;
   assignee_type?: IssueAssigneeType | null;
@@ -46,10 +79,6 @@ export interface UpdateIssueRequest {
    *  MUL-3375). The assignee/status change still applies. Control field —
    *  strip from optimistic cache patches; never written onto the Issue. */
   suppress_run?: boolean;
-  /** Free-text handoff instruction injected into the started run's opening
-   *  context (MUL-3375). Only consumed when a run actually starts. Control
-   *  field — strip from optimistic cache patches. */
-  handoff_note?: string;
 }
 
 /**
@@ -138,14 +167,11 @@ export interface IssueTriggerPreviewParams {
 }
 
 /** One issue that WILL start a run under the prospective write. `agent_id` is
- *  the runnable agent (squad leader for squads). `handoff_supported` is the
- *  soft-gate signal: false when the target runtime is too old to render a
- *  handoff note (gray the note box; the assignment still works). */
+ *  the runnable agent (squad leader for squads). */
 export interface IssueTriggerPreviewItem {
   issue_id: string;
   agent_id: string;
   source: string;
-  handoff_supported: boolean;
 }
 
 export interface IssueTriggerPreview {
@@ -162,6 +188,15 @@ export interface ListIssuesParams {
   status?: IssueStatus;
   /** Multi-value table facet. OR within the field. */
   statuses?: IssueStatus[];
+  /**
+   * Filter by status CATEGORY rather than by exact key, so one bucket holds a
+   * category's canonical status plus every custom status that inherits it.
+   * This is what keeps the board's fan-out fixed at 7 requests however many
+   * custom statuses a workspace defines. (MUL-6243)
+   */
+  status_category?: IssueStatusCategory;
+  /** Multi-value form of `status_category`. OR within the field. */
+  status_categories?: IssueStatusCategory[];
   priority?: IssuePriority;
   /** Multi-value table facet. OR within the field. */
   priorities?: IssuePriority[];
@@ -203,8 +238,9 @@ export interface ListIssuesParams {
   /** JSONB containment filter on `issue.metadata`. AND across keys. */
   metadata?: IssueMetadata;
   /** Custom-property filter: definition id → accepted values (option ids or
-   *  "true"/"false" for checkbox). OR within a definition, AND across. */
-  properties?: Record<string, string[]>;
+   *  "true"/"false" for checkbox; a plain string is exact equality, an
+   *  operator object narrows it). OR within a definition, AND across. */
+  properties?: Record<string, PropertyFilterValue[]>;
   open_only?: boolean;
   /**
    * Restrict the result to issues with at least one of `start_date` /
@@ -223,6 +259,7 @@ export interface ListIssuesParams {
     | "title"
     | "created_at"
     | "updated_at"
+    | "last_activity"
     | "start_date"
     | "due_date"
     | `property:${string}`;
@@ -253,8 +290,9 @@ export interface ListGroupedIssuesParams {
   /** JSONB containment filter on `issue.metadata`. AND across keys. */
   metadata?: IssueMetadata;
   /** Custom-property filter: definition id → accepted values (option ids or
-   *  "true"/"false" for checkbox). OR within a definition, AND across. */
-  properties?: Record<string, string[]>;
+   *  "true"/"false" for checkbox; a plain string is exact equality, an
+   *  operator object narrows it). OR within a definition, AND across. */
+  properties?: Record<string, PropertyFilterValue[]>;
   assignee_filters?: IssueActorRef[];
   include_no_assignee?: boolean;
   creator_filters?: IssueActorRef[];
@@ -273,6 +311,7 @@ export interface ListGroupedIssuesParams {
     | "title"
     | "created_at"
     | "updated_at"
+    | "last_activity"
     | "start_date"
     | "due_date"
     | `property:${string}`;
@@ -303,7 +342,7 @@ export interface GroupedIssuesResponse {
 // state such as collapsed groups/parents.
 export type IssueTableScope =
   | { kind: "workspace"; assignee_types?: IssueAssigneeType[] }
-  | { kind: "project"; project_id: string }
+  | { kind: "project"; project_id: string; assignee_types?: IssueAssigneeType[] }
   | { kind: "assignee"; actor: IssueActorRef }
   | { kind: "creator"; actor: IssueActorRef }
   | { kind: "my"; relation: "assigned" | "created" | "involved" | "any" };
@@ -317,7 +356,9 @@ export interface IssueTableFilters {
   project_ids?: string[];
   include_no_project?: boolean;
   label_ids?: string[];
-  properties?: Record<string, string[]>;
+  /** Same shape as `ListIssuesParams.properties`: bare strings are exact
+   *  equality / "No value", operator objects narrow scalar matches. */
+  properties?: Record<string, PropertyFilterValue[]>;
   date?: {
     field: "created_at" | "updated_at";
     start: string;
@@ -337,6 +378,7 @@ export type IssueTableSortField =
   | "title"
   | "created_at"
   | "updated_at"
+  | "last_activity"
   | "start_date"
   | "due_date"
   | `property:${string}`;
@@ -354,17 +396,30 @@ export interface IssueTableQuerySpec {
 export type IssueTableGroupSpec =
   | { kind: "none" }
   | { kind: "status" }
+  /**
+   * Group by the CATEGORY a status behaves as, not by the status key.
+   *
+   * Board columns, list sections and swimlane cells are categories, so a custom
+   * status folds into the column it behaves as instead of getting one of its
+   * own — which is what keeps the surface's fan-out pinned at 7 no matter how
+   * many statuses a workspace defines. The descriptor still reports
+   * `value.kind === "status"` because a category's value IS its canonical
+   * status key; the group KEY is what distinguishes the two contracts.
+   * (MUL-6243)
+   */
+  | { kind: "status_category" }
   | { kind: "assignee" }
   | { kind: "project" }
   | { kind: "parent" }
   | {
       kind: "compound";
       primary: "assignee" | "project" | "parent";
-      secondary: "status";
+      /** `status_category` folds custom statuses into their category's cell. */
+      secondary: "status" | "status_category";
       /** Optional visible secondary buckets. When present, the server pages
        * only primary groups that contain at least one matching card and
        * returns `total` for that complete visible result set. */
-      secondary_values?: IssueStatus[];
+      secondary_values?: IssueStatus[] | IssueStatusCategory[];
     }
   | { kind: "property"; property_id: string; include_empty?: boolean };
 
@@ -509,7 +564,8 @@ export interface IssueStatusBucket {
  * `api.listIssues` responses by the query functions in `issues/queries.ts`.
  */
 export interface ListIssuesCache {
-  byStatus: Partial<Record<IssueStatus, IssueStatusBucket>>;
+  /** Bucketed by status CATEGORY — see PAGINATED_CATEGORIES. (MUL-6243) */
+  byStatus: Partial<Record<IssueStatusCategory, IssueStatusBucket>>;
 }
 
 export interface SearchIssueResult extends Issue {
@@ -521,7 +577,6 @@ export interface SearchIssueResult extends Issue {
 
 export interface SearchIssuesResponse {
   issues: SearchIssueResult[];
-  total: number;
 }
 
 export interface SearchProjectResult extends Project {
@@ -531,7 +586,6 @@ export interface SearchProjectResult extends Project {
 
 export interface SearchProjectsResponse {
   projects: SearchProjectResult[];
-  total: number;
 }
 
 export interface UpdateMeRequest {

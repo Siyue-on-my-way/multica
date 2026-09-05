@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/daemon"
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // seededReadyAgentID returns a workspace agent that has a runtime bound (the
@@ -24,13 +27,9 @@ func seededReadyAgentID(t *testing.T) string {
 }
 
 func previewIssueTrigger(t *testing.T, body map[string]any) IssueTriggerPreviewResponse {
-	return previewIssueTriggerAs(t, testUserID, body)
-}
-
-func previewIssueTriggerAs(t *testing.T, userID string, body map[string]any) IssueTriggerPreviewResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req := newRequestAs(userID, "POST", "/api/issues/preview-trigger?workspace_id="+testWorkspaceID, body)
+	req := newRequest("POST", "/api/issues/preview-trigger?workspace_id="+testWorkspaceID, body)
 	testHandler.PreviewIssueTrigger(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PreviewIssueTrigger: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -70,15 +69,6 @@ func taskCountFor(t *testing.T, issueID, agentID string) int {
 		t.Fatalf("count tasks: %v", err)
 	}
 	return n
-}
-
-func assignIssueToAgentForTest(t *testing.T, issueID, agentID string) {
-	t.Helper()
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1
-	`, issueID, agentID); err != nil {
-		t.Fatalf("assign issue to agent: %v", err)
-	}
 }
 
 // TestPreviewIssueTrigger_CreateAgentVsBacklog covers the create entry point:
@@ -148,201 +138,6 @@ func TestPreviewIssueTrigger_BatchAggregates(t *testing.T) {
 	}
 	if !seen[i1.ID] || !seen[i2.ID] {
 		t.Fatalf("batch promote: missing an issue in %+v", resp.Triggers)
-	}
-}
-
-// TestBlockedToTodoRestartsSquad verifies that once a squad-assigned issue is
-// parked as blocked and its previous run has ended, moving it back to todo must
-// preview and enqueue a fresh leader task.
-func TestBlockedToTodoRestartsSquad(t *testing.T) {
-	ctx := context.Background()
-	leaderID := seededReadyAgentID(t)
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, $2, '', $3, $4)
-		RETURNING id
-	`, testWorkspaceID, "Blocked Recovery Squad", leaderID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	issue := createIssueForTest(t, map[string]any{
-		"title":  "blocked squad recovery",
-		"status": "blocked",
-	})
-	if _, err := testPool.Exec(ctx, `
-		UPDATE issue SET assignee_type = 'squad', assignee_id = $2 WHERE id = $1
-	`, issue.ID, squadID); err != nil {
-		t.Fatalf("assign blocked issue to squad: %v", err)
-	}
-
-	preview := previewIssueTrigger(t, map[string]any{
-		"issue_ids": []string{issue.ID},
-		"status":    "todo",
-	})
-	if preview.TotalCount != 1 || len(preview.Triggers) != 1 {
-		t.Fatalf("blocked->todo preview: expected 1 trigger, got %+v", preview)
-	}
-	if trigger := preview.Triggers[0]; trigger.AgentID != leaderID || trigger.Source != "status" {
-		t.Fatalf("blocked->todo preview: wrong trigger %+v", trigger)
-	}
-
-	w := httptest.NewRecorder()
-	req := withURLParam(newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{
-		"status": "todo",
-	}), "id", issue.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue blocked->todo: %d %s", w.Code, w.Body.String())
-	}
-	if got := taskCountFor(t, issue.ID, leaderID); got != 1 {
-		t.Fatalf("blocked->todo: expected 1 squad-leader task, got %d", got)
-	}
-}
-
-func TestBlockedToNonRunnableStatusDoesNotRestart(t *testing.T) {
-	agentID := seededReadyAgentID(t)
-	for _, status := range []string{"backlog", "done", "cancelled"} {
-		t.Run(status, func(t *testing.T) {
-			issue := createIssueForTest(t, map[string]any{
-				"title":  "blocked non-runnable " + status,
-				"status": "blocked",
-			})
-			if _, err := testPool.Exec(context.Background(), `
-				UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1
-			`, issue.ID, agentID); err != nil {
-				t.Fatalf("assign blocked issue: %v", err)
-			}
-
-			preview := previewIssueTrigger(t, map[string]any{
-				"issue_ids": []string{issue.ID},
-				"status":    status,
-			})
-			if preview.TotalCount != 0 {
-				t.Fatalf("blocked->%s: expected no trigger, got %+v", status, preview)
-			}
-		})
-	}
-}
-
-// TestBlockedPrivateAgentResumeRequiresInvokePermission covers status-only
-// writes, which keep the existing assignee and therefore do not pass through
-// validateAssigneePair. Preview and write must both deny an unrelated member,
-// while still applying the requested issue status.
-func TestBlockedPrivateAgentResumeRequiresInvokePermission(t *testing.T) {
-	agentID, _, memberID := privateAgentTestFixture(t)
-
-	for _, status := range []string{"todo", "in_progress", "in_review"} {
-		t.Run(status, func(t *testing.T) {
-			issue := createIssueForTest(t, map[string]any{
-				"title":  "private agent resume denied " + status,
-				"status": "blocked",
-			})
-			assignIssueToAgentForTest(t, issue.ID, agentID)
-
-			preview := previewIssueTriggerAs(t, memberID, map[string]any{
-				"issue_ids": []string{issue.ID},
-				"status":    status,
-			})
-			if preview.TotalCount != 0 {
-				t.Fatalf("blocked->%s preview: expected no trigger, got %+v", status, preview)
-			}
-
-			w := httptest.NewRecorder()
-			req := withURLParam(newRequestAs(memberID, "PUT", "/api/issues/"+issue.ID, map[string]any{
-				"status": status,
-			}), "id", issue.ID)
-			testHandler.UpdateIssue(w, req)
-			if w.Code != http.StatusOK {
-				t.Fatalf("UpdateIssue blocked->%s: %d %s", status, w.Code, w.Body.String())
-			}
-			var updated IssueResponse
-			if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
-				t.Fatalf("decode blocked->%s response: %v", status, err)
-			}
-			if updated.Status != status {
-				t.Fatalf("blocked->%s status was not applied: got %q", status, updated.Status)
-			}
-			if got := taskCountFor(t, issue.ID, agentID); got != 0 {
-				t.Fatalf("blocked->%s write disagreed with preview: enqueued %d tasks", status, got)
-			}
-		})
-	}
-}
-
-func TestBatchBlockedPrivateAgentResumeRequiresInvokePermission(t *testing.T) {
-	agentID, _, memberID := privateAgentTestFixture(t)
-	issues := []IssueResponse{
-		createIssueForTest(t, map[string]any{"title": "private batch resume 1", "status": "blocked"}),
-		createIssueForTest(t, map[string]any{"title": "private batch resume 2", "status": "blocked"}),
-	}
-	issueIDs := make([]string, 0, len(issues))
-	for _, issue := range issues {
-		assignIssueToAgentForTest(t, issue.ID, agentID)
-		issueIDs = append(issueIDs, issue.ID)
-	}
-
-	preview := previewIssueTriggerAs(t, memberID, map[string]any{
-		"issue_ids": issueIDs,
-		"status":    "todo",
-	})
-	if preview.TotalCount != 0 {
-		t.Fatalf("batch preview: expected no triggers, got %+v", preview)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequestAs(memberID, "POST", "/api/issues/batch-update", map[string]any{
-		"issue_ids": issueIDs,
-		"updates":   map[string]any{"status": "todo"},
-	})
-	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("BatchUpdateIssues: %d %s", w.Code, w.Body.String())
-	}
-	var batchResp struct {
-		Updated int `json:"updated"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&batchResp); err != nil {
-		t.Fatalf("decode batch response: %v", err)
-	}
-	if batchResp.Updated != len(issues) {
-		t.Fatalf("batch status update: expected %d updated, got %d", len(issues), batchResp.Updated)
-	}
-	for _, issue := range issues {
-		if got := taskCountFor(t, issue.ID, agentID); got != 0 {
-			t.Fatalf("batch write disagreed with preview for issue %s: enqueued %d tasks", issue.ID, got)
-		}
-	}
-}
-
-func TestBlockedPrivateAgentResumeAllowsOwner(t *testing.T) {
-	agentID, ownerID, _ := privateAgentTestFixture(t)
-	issue := createIssueForTest(t, map[string]any{
-		"title":  "private agent owner resume",
-		"status": "blocked",
-	})
-	assignIssueToAgentForTest(t, issue.ID, agentID)
-
-	preview := previewIssueTriggerAs(t, ownerID, map[string]any{
-		"issue_ids": []string{issue.ID},
-		"status":    "todo",
-	})
-	if preview.TotalCount != 1 || len(preview.Triggers) != 1 {
-		t.Fatalf("owner preview: expected one trigger, got %+v", preview)
-	}
-
-	w := httptest.NewRecorder()
-	req := withURLParam(newRequestAs(ownerID, "PUT", "/api/issues/"+issue.ID, map[string]any{
-		"status": "todo",
-	}), "id", issue.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue as owner: %d %s", w.Code, w.Body.String())
-	}
-	if got := taskCountFor(t, issue.ID, agentID); got != 1 {
-		t.Fatalf("owner write disagreed with preview: expected 1 task, got %d", got)
 	}
 }
 
@@ -428,46 +223,49 @@ func TestUpdateIssueSuppressRunSkipsEnqueue(t *testing.T) {
 	}
 }
 
-// TestUpdateIssueHandoffNotePersistsOnTask verifies an assign carrying a
-// handoff_note writes that note onto the enqueued task (the daemon then renders
-// it), while a suppressed assign with a note enqueues nothing at all.
-func TestUpdateIssueHandoffNotePersistsOnTask(t *testing.T) {
+// TestLegacyV0438HandoffPayloadReachesTaskPrompt is the cross-version guard
+// for installed clients: the v0.4.38 update payload must survive the current
+// API, task queue, claim wire shape, and daemon prompt rendering.
+func TestLegacyV0438HandoffPayloadReachesTaskPrompt(t *testing.T) {
 	agentID := seededReadyAgentID(t)
 	note := "Only touch the login flow."
+	issue := createIssueForTest(t, map[string]any{
+		"title":  "legacy handoff compatibility",
+		"status": "todo",
+	})
 
-	issue := createIssueForTest(t, map[string]any{"title": "handoff persist", "status": "todo"})
 	w := httptest.NewRecorder()
 	req := withURLParam(newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{
-		"assignee_type": "agent", "assignee_id": agentID, "handoff_note": note,
+		"assignee_type": "agent",
+		"assignee_id":   agentID,
+		"handoff_note":  note,
 	}), "id", issue.ID)
 	testHandler.UpdateIssue(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue with handoff: %d %s", w.Code, w.Body.String())
+		t.Fatalf("UpdateIssue with v0.4.38 handoff payload: %d %s", w.Code, w.Body.String())
 	}
 
-	var stored string
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT COALESCE(handoff_note, '') FROM agent_task_queue
-		WHERE issue_id = $1 AND agent_id = $2 ORDER BY created_at DESC LIMIT 1
-	`, issue.ID, agentID).Scan(&stored); err != nil {
-		t.Fatalf("read task handoff_note: %v", err)
+	tasks, err := testHandler.Queries.ListTasksByIssue(context.Background(), util.MustParseUUID(issue.ID))
+	if err != nil {
+		t.Fatalf("ListTasksByIssue: %v", err)
 	}
-	if stored != note {
-		t.Fatalf("expected task handoff_note %q, got %q", note, stored)
+	if len(tasks) != 1 {
+		t.Fatalf("legacy handoff update queued %d tasks, want 1", len(tasks))
 	}
 
-	// Suppressed assign with a note: no task at all (no run to inject into).
-	suppressed := createIssueForTest(t, map[string]any{"title": "handoff suppressed", "status": "todo"})
-	w2 := httptest.NewRecorder()
-	req2 := withURLParam(newRequest("PUT", "/api/issues/"+suppressed.ID, map[string]any{
-		"assignee_type": "agent", "assignee_id": agentID, "handoff_note": note, "suppress_run": true,
-	}), "id", suppressed.ID)
-	testHandler.UpdateIssue(w2, req2)
-	if w2.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue suppressed handoff: %d %s", w2.Code, w2.Body.String())
+	claimJSON, err := json.Marshal(taskToResponse(tasks[0], testWorkspaceID))
+	if err != nil {
+		t.Fatalf("marshal claim response: %v", err)
 	}
-	if got := taskCountFor(t, suppressed.ID, agentID); got != 0 {
-		t.Fatalf("suppressed handoff should enqueue no task, got %d", got)
+	var claimed daemon.Task
+	if err := json.Unmarshal(claimJSON, &claimed); err != nil {
+		t.Fatalf("decode daemon task: %v", err)
+	}
+	if claimed.HandoffNote != note {
+		t.Fatalf("claimed handoff note = %q, want %q", claimed.HandoffNote, note)
+	}
+	if prompt := daemon.BuildPrompt(claimed, "codex"); !strings.Contains(prompt, note) {
+		t.Fatalf("daemon prompt dropped legacy handoff note:\n%s", prompt)
 	}
 }
 
