@@ -1258,6 +1258,196 @@ func TestFetchFromGitHub_RepoRootMissingSKILLmdReturnsActionableError(t *testing
 	}
 }
 
+// A bare repo URL whose SKILL.md lives in a single subdirectory (the
+// tt-a1i/archify layout: archify/SKILL.md) must import without the user
+// re-pasting a /tree/ URL — the auto-detect pass locates it from the tree.
+func TestFetchFromGitHub_AutoDetectsSingleNestedSkill(t *testing.T) {
+	client, requests := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Test-Original-Host") {
+		case "api.github.com":
+			switch r.URL.Path {
+			case "/repos/tt-a1i/archify":
+				writeJSON(w, http.StatusOK, map[string]any{"default_branch": "main"})
+			case "/repos/tt-a1i/archify/git/trees/main":
+				writeJSON(w, http.StatusOK, githubTreeResponse{Tree: []githubTreeEntry{
+					{Path: "README.md", Type: "blob", Size: 10},
+					{Path: "archify/SKILL.md", Type: "blob", Size: 100},
+					{Path: "archify/scripts/run.js", Type: "blob", Size: 20},
+				}})
+			default:
+				http.NotFound(w, r)
+			}
+		case "raw.githubusercontent.com":
+			switch r.URL.Path {
+			case "/tt-a1i/archify/main/archify/SKILL.md":
+				w.Write([]byte("---\nname: archify\ndescription: repo skill\n---\nbody"))
+			case "/tt-a1i/archify/main/archify/scripts/run.js":
+				w.Write([]byte("console.log('run')"))
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	result, err := fetchFromGitHub(t.Context(), client, "https://github.com/tt-a1i/archify")
+	if err != nil {
+		t.Fatalf("fetchFromGitHub: %v", err)
+	}
+	if result.name != "archify" {
+		t.Fatalf("name = %q, want archify", result.name)
+	}
+	if result.description != "repo skill" {
+		t.Fatalf("description = %q, want repo skill", result.description)
+	}
+	if got := importedFilePaths(result.files); !equalStrings(got, []string{"scripts/run.js"}) {
+		t.Fatalf("files = %v (relative to the detected skill dir), want [scripts/run.js]", got)
+	}
+	if result.origin["path"] != "archify" {
+		t.Fatalf("origin path = %v, want archify", result.origin["path"])
+	}
+	// The auto-detect tree listing must be reused for supporting files —
+	// one tree request total, not two.
+	treeFetches := 0
+	for _, req := range *requests {
+		if strings.Contains(req, "/git/trees/main") {
+			treeFetches++
+		}
+	}
+	if treeFetches != 1 {
+		t.Fatalf("tree fetched %d times, want 1 (auto-detect + supporting files share it)", treeFetches)
+	}
+}
+
+// Several SKILL.md candidates: the one whose frontmatter name matches the
+// repo wins, even when its directory doesn't.
+func TestFetchFromGitHub_AutoDetectPicksRepoNameMatchAmongMany(t *testing.T) {
+	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Test-Original-Host") {
+		case "api.github.com":
+			switch r.URL.Path {
+			case "/repos/acme/bundle":
+				writeJSON(w, http.StatusOK, map[string]any{"default_branch": "main"})
+			case "/repos/acme/bundle/git/trees/main":
+				writeJSON(w, http.StatusOK, githubTreeResponse{Tree: []githubTreeEntry{
+					{Path: "other/SKILL.md", Type: "blob", Size: 100},
+					{Path: "archify/SKILL.md", Type: "blob", Size: 100},
+					{Path: "other/readme.txt", Type: "blob", Size: 5},
+				}})
+			default:
+				http.NotFound(w, r)
+			}
+		case "raw.githubusercontent.com":
+			switch r.URL.Path {
+			case "/acme/bundle/main/other/SKILL.md":
+				w.Write([]byte("---\nname: bundle\n---\nbody"))
+			case "/acme/bundle/main/archify/SKILL.md":
+				w.Write([]byte("---\nname: archify\n---\nbody"))
+			case "/acme/bundle/main/other/readme.txt":
+				w.Write([]byte("hello"))
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	result, err := fetchFromGitHub(t.Context(), client, "https://github.com/acme/bundle")
+	if err != nil {
+		t.Fatalf("fetchFromGitHub: %v", err)
+	}
+	if result.name != "bundle" {
+		t.Fatalf("name = %q, want bundle", result.name)
+	}
+	if got := importedFilePaths(result.files); !equalStrings(got, []string{"readme.txt"}) {
+		t.Fatalf("files = %v, want [readme.txt]", got)
+	}
+}
+
+// No frontmatter match but exactly one candidate sits in a repo-name
+// directory: accepted by path, so a display-name frontmatter still resolves.
+func TestFetchFromGitHub_AutoDetectAcceptsSinglePathMatchWithoutFrontmatterHit(t *testing.T) {
+	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Test-Original-Host") {
+		case "api.github.com":
+			switch r.URL.Path {
+			case "/repos/acme/archify":
+				writeJSON(w, http.StatusOK, map[string]any{"default_branch": "main"})
+			case "/repos/acme/archify/git/trees/main":
+				writeJSON(w, http.StatusOK, githubTreeResponse{Tree: []githubTreeEntry{
+					{Path: "docs/SKILL.md", Type: "blob", Size: 100},
+					{Path: "tools/archify/SKILL.md", Type: "blob", Size: 100},
+				}})
+			default:
+				http.NotFound(w, r)
+			}
+		case "raw.githubusercontent.com":
+			switch r.URL.Path {
+			case "/acme/archify/main/docs/SKILL.md":
+				w.Write([]byte("---\nname: docs\n---\nbody"))
+			case "/acme/archify/main/tools/archify/SKILL.md":
+				w.Write([]byte("---\nname: Archify\n---\nbody"))
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	result, err := fetchFromGitHub(t.Context(), client, "https://github.com/acme/archify")
+	if err != nil {
+		t.Fatalf("fetchFromGitHub: %v", err)
+	}
+	if result.name != "Archify" {
+		t.Fatalf("name = %q, want Archify", result.name)
+	}
+}
+
+// Genuinely ambiguous multi-skill repos keep failing, but the error now
+// names every SKILL.md found so the user can pick one with a /tree/ URL.
+func TestFetchFromGitHub_AutoDetectAmbiguousErrorListsCandidates(t *testing.T) {
+	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Test-Original-Host") {
+		case "api.github.com":
+			switch r.URL.Path {
+			case "/repos/acme/monorepo":
+				writeJSON(w, http.StatusOK, map[string]any{"default_branch": "main"})
+			case "/repos/acme/monorepo/git/trees/main":
+				writeJSON(w, http.StatusOK, githubTreeResponse{Tree: []githubTreeEntry{
+					{Path: "alpha/SKILL.md", Type: "blob", Size: 100},
+					{Path: "beta/SKILL.md", Type: "blob", Size: 100},
+				}})
+			default:
+				http.NotFound(w, r)
+			}
+		case "raw.githubusercontent.com":
+			switch r.URL.Path {
+			case "/acme/monorepo/main/alpha/SKILL.md":
+				w.Write([]byte("---\nname: alpha\n---\nbody"))
+			case "/acme/monorepo/main/beta/SKILL.md":
+				w.Write([]byte("---\nname: beta\n---\nbody"))
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	_, err := fetchFromGitHub(t.Context(), client, "https://github.com/acme/monorepo")
+	if err == nil {
+		t.Fatal("expected ambiguity error")
+	}
+	for _, candidate := range []string{"alpha/SKILL.md", "beta/SKILL.md"} {
+		if !strings.Contains(err.Error(), candidate) {
+			t.Fatalf("error should list candidate %q, got %q", candidate, err.Error())
+		}
+	}
+}
+
 func TestFetchFromGitHub_BlobURLImportsSpecificSkill(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {

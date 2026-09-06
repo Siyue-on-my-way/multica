@@ -189,8 +189,11 @@ func extractInboxURLs(content string) []string {
 		}
 	}
 	for _, line := range strings.Split(content, "\n") {
-		if m := inboxURLPattern.FindString(line); m != "" {
-			add(m)
+		matches := inboxURLPattern.FindAllString(line, -1)
+		if len(matches) > 0 {
+			for _, m := range matches {
+				add(m)
+			}
 			continue
 		}
 		candidate := strings.TrimSpace(strings.TrimPrefix(line, "-"))

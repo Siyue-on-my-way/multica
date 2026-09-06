@@ -1701,9 +1701,6 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		if lowerBase == "skill.md" || lowerBase == "license" || lowerBase == "license.txt" || lowerBase == "license.md" {
 			continue
 		}
-		if skillpkg.IsLikelyBinaryFilePath(relPath) {
-			continue
-		}
 		eligible = append(eligible, treeFile{repoPath: entry.Path, relPath: relPath, size: entry.size()})
 	}
 
@@ -2229,16 +2226,43 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 	rawPrefix := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s",
 		url.PathEscape(spec.owner), url.PathEscape(spec.repo), escapeRefPath(spec.ref))
 
+	// The tree serves double duty: auto-detecting the skill when a bare repo
+	// URL has no root SKILL.md, then enumerating that skill's supporting
+	// files. Fetch it once and share it between both phases.
+	var tree []githubTreeEntry
+	treeTruncated := false
+	treeResolved := false
+
 	skillMdPath := "SKILL.md"
 	if spec.skillDir != "" {
 		skillMdPath = spec.skillDir + "/SKILL.md"
 	}
 	skillMdBody, err := fetchRawFile(ctx, httpClient, buildRawGitHubURL(rawPrefix, skillMdPath))
-	if err != nil {
-		if spec.skillDir == "" {
-			return nil, fmt.Errorf("SKILL.md not found at the root of %s/%s@%s. For multi-skill repositories, point to a specific directory using github.com/%s/%s/tree/%s/<skill-dir>",
-				spec.owner, spec.repo, spec.ref, spec.owner, spec.repo, spec.ref)
+	if err != nil && spec.skillDir == "" {
+		// A bare repo URL promises a skill, not a layout. Before failing,
+		// locate the SKILL.md in the tree automatically — most single-skill
+		// repos keep it in a named subdirectory (archify/SKILL.md,
+		// skills/<name>/SKILL.md, ...) and re-pasting a tree URL for that is
+		// pure friction.
+		autoTree, autoTruncated, autoErr := fetchGitHubTree(ctx, httpClient, spec.owner, spec.repo, spec.ref)
+		switch {
+		case autoErr != nil:
+			slog.Warn("github import: skill auto-detection skipped, tree unavailable",
+				"owner", spec.owner, "repo", spec.repo, "error", autoErr)
+		case autoTruncated:
+			slog.Warn("github import: skill auto-detection skipped, tree truncated",
+				"owner", spec.owner, "repo", spec.repo)
+		default:
+			tree, treeTruncated, treeResolved = autoTree, autoTruncated, true
+			if dir, body, ok := autoDetectGitHubSkillDir(ctx, httpClient, rawPrefix, spec.repo, tree); ok {
+				spec.skillDir = dir
+				skillMdBody = body
+			}
 		}
+		if skillMdBody == nil {
+			return nil, skillMdRootNotFoundError(spec.owner, spec.repo, spec.ref, tree, treeResolved)
+		}
+	} else if err != nil {
 		return nil, fmt.Errorf("SKILL.md not found at %s in %s/%s@%s: %w",
 			skillMdPath, spec.owner, spec.repo, spec.ref, err)
 	}
@@ -2270,9 +2294,13 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 	// import caps against the tree metadata before downloading anything. Fall
 	// back to the per-directory contents crawl when the tree is unavailable or
 	// truncated (kept lenient so a rate-limited listing doesn't fail an import
-	// that already produced a valid SKILL.md).
-	tree, truncated, treeErr := fetchGitHubTree(ctx, httpClient, spec.owner, spec.repo, spec.ref)
-	if treeErr == nil && !truncated {
+	// that already produced a valid SKILL.md). The tree is already in hand
+	// when skill auto-detection ran; don't pay for a second listing.
+	treeErr := error(nil)
+	if !treeResolved {
+		tree, treeTruncated, treeErr = fetchGitHubTree(ctx, httpClient, spec.owner, spec.repo, spec.ref)
+	}
+	if treeErr == nil && !treeTruncated {
 		if err := addSupportingFilesFromTree(ctx, httpClient, result, tree, rawPrefix, spec.skillDir); err != nil {
 			return nil, err
 		}
@@ -2282,6 +2310,84 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 		return nil, err
 	}
 	return result, nil
+}
+
+// skillMdCandidates returns the SKILL.md paths in a repository tree that are
+// plausible skill sources: dependency folders are install-time junk, never
+// skill sources, and macOS archive noise likewise.
+func skillMdCandidates(tree []githubTreeEntry) []string {
+	var paths []string
+	for _, p := range extractSkillMdPaths(tree) {
+		if hasDependencyDir(p) || strings.Contains(p, "__MACOSX/") {
+			continue
+		}
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+// autoDetectGitHubSkillDir locates a repository's skill when the root
+// SKILL.md is absent. Repo layouts vary (a named subdirectory, skills/
+// monorepos, .claude/skills/), so candidates resolve most-specific-first and
+// genuine ambiguity is never guessed away:
+//
+//  1. exactly one SKILL.md in the tree — it is the skill;
+//  2. several — the one whose frontmatter name matches the repo;
+//  3. several, no frontmatter match — the single candidate whose directory
+//     path matches the repo name (archify/SKILL.md, skills/archify/SKILL.md),
+//     so a display-name frontmatter like `name: Archify` still resolves;
+//  4. anything left ambiguous returns false and the caller's error lists
+//     the candidates so the user can pick a tree URL explicitly.
+func autoDetectGitHubSkillDir(ctx context.Context, httpClient *http.Client, rawPrefix, repoName string, tree []githubTreeEntry) (string, []byte, bool) {
+	skillPaths := skillMdCandidates(tree)
+	if len(skillPaths) == 0 {
+		return "", nil, false
+	}
+	fetchCandidate := func(p string) ([]byte, bool) {
+		body, err := fetchRawFile(ctx, httpClient, buildRawGitHubURL(rawPrefix, p))
+		if err != nil {
+			slog.Warn("github import: auto-detected SKILL.md fetch failed", "path", p, "error", err)
+			return nil, false
+		}
+		return body, true
+	}
+	if len(skillPaths) == 1 {
+		body, ok := fetchCandidate(skillPaths[0])
+		if !ok {
+			return "", nil, false
+		}
+		return skillDirFromSkillFilePath(skillPaths[0]), body, true
+	}
+	preferred, remaining := partitionSkillMdPaths(repoName, skillPaths)
+	if dir, body, ok := findMatchingSkillDirByFrontmatter(ctx, httpClient, rawPrefix, repoName, preferred); ok {
+		return dir, body, true
+	}
+	if dir, body, ok := findMatchingSkillDirByFrontmatter(ctx, httpClient, rawPrefix, repoName, remaining); ok {
+		return dir, body, true
+	}
+	if len(preferred) == 1 {
+		if body, ok := fetchCandidate(preferred[0]); ok {
+			return skillDirFromSkillFilePath(preferred[0]), body, true
+		}
+	}
+	return "", nil, false
+}
+
+// skillMdRootNotFoundError builds the failure for a bare repo URL whose root
+// SKILL.md is missing. When the tree was readable it names the SKILL.md
+// locations actually present, turning a dead end into a one-step fix.
+func skillMdRootNotFoundError(owner, repo, ref string, tree []githubTreeEntry, treeResolved bool) error {
+	base := fmt.Sprintf("SKILL.md not found at the root of %s/%s@%s", owner, repo, ref)
+	if !treeResolved {
+		return fmt.Errorf("%s. For multi-skill repositories, point to a specific directory using github.com/%s/%s/tree/%s/<skill-dir>",
+			base, owner, repo, ref)
+	}
+	candidates := skillMdCandidates(tree)
+	if len(candidates) == 0 {
+		return fmt.Errorf("%s, and the repository contains no SKILL.md at any path", base)
+	}
+	return fmt.Errorf("%s. The repository has SKILL.md at %s — point to the skill you want using github.com/%s/%s/tree/%s/<skill-dir>",
+		base, strings.Join(candidates, ", "), owner, repo, ref)
 }
 
 // --- Shared helpers ---

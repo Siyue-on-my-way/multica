@@ -140,8 +140,11 @@ func TestProcessSkillInboxURLFilePartialFailureKeepsFile(t *testing.T) {
 		!strings.Contains(err.Error(), "https://github.com/owner/repo") {
 		t.Fatalf("error %v should name both the failed and the succeeded URL", err)
 	}
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Fatal("URL file must be kept for quarantine when any import fails")
+	// The drop is claimed under its .importing name for processing; on
+	// failure it must still be there so the caller can quarantine it under
+	// the original name (quarantineSkillInboxFile reads the .importing path).
+	if _, statErr := os.Stat(path + skillInboxInFlightSuffix); statErr != nil {
+		t.Fatal("claimed URL file must remain for quarantine when any import fails")
 	}
 }
 
