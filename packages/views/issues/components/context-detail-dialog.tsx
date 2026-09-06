@@ -48,6 +48,15 @@ export function ContextDetailDialog({
     enabled: open,
     staleTime: 60_000,
   });
+  // A provider-start failure is a real observation with an unknown resume
+  // outcome; only the empty fallback response means that no observation row
+  // exists. Keep the former visible so its assembled Prompt can still be
+  // inspected after the provider failed to start.
+  const noObservation =
+    !data ||
+    (data.resume_actual === "unknown" &&
+      data.sections.length === 0 &&
+      data.prompt_bytes === 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,7 +70,7 @@ export function ContextDetailDialog({
           <p className="text-caption text-muted-foreground">{t(($) => $.context.loading)}</p>
         ) : error ? (
           <p className="text-caption text-destructive">{t(($) => $.context.error)}</p>
-        ) : !data || data.resume_actual === "unknown" ? (
+        ) : noObservation ? (
           <p className="text-caption text-muted-foreground">{t(($) => $.context.no_data)}</p>
         ) : (
           <Tabs defaultValue="overview" className="mt-2">

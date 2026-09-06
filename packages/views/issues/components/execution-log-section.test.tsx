@@ -71,14 +71,19 @@ afterEach(() => {
 
 describe("ActiveTaskRow", () => {
   it("renders running status as elapsed time only", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     renderWithI18n(
-      <ActiveTaskRow
-        task={makeTask({
-          trigger_comment_id: "comment-3",
-          coalesced_comment_ids: ["comment-1", "comment-2"],
-        })}
-        issueId="issue-1"
-      />,
+      <QueryClientProvider client={queryClient}>
+        <ActiveTaskRow
+          task={makeTask({
+            trigger_comment_id: "comment-3",
+            coalesced_comment_ids: ["comment-1", "comment-2"],
+          })}
+          issueId="issue-1"
+        />
+      </QueryClientProvider>,
     );
 
     expect(screen.getByText("5m 04s")).toBeInTheDocument();
@@ -279,11 +284,16 @@ describe("per-run token usage", () => {
   // running task carries usage in production. Asserting a token figure here
   // would only prove that a hand-written fixture renders.
   it("shows a running row's timer, and no token figure even if usage exists", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     renderWithI18n(
-      <ActiveTaskRow
-        task={makeTask({ usage: [usageSlice()] })}
-        issueId="issue-1"
-      />,
+      <QueryClientProvider client={queryClient}>
+        <ActiveTaskRow
+          task={makeTask({ usage: [usageSlice()] })}
+          issueId="issue-1"
+        />
+      </QueryClientProvider>,
     );
 
     expect(screen.getByText("5m 04s")).toBeInTheDocument();

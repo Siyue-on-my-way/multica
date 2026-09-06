@@ -11,16 +11,9 @@ import { useT } from "../../i18n";
 import { formatTokens } from "../../runtimes/utils";
 import { ContextDetailDialog } from "./context-detail-dialog";
 
-// SIY-125: a compact Context badge on each execution-log run row. It lazy-
-// loads the per-task observation (only once a run is terminal — the daemon
-// reports it at the completion boundary), renders the resume state, and opens
-// the three-layer detail dialog on click.
-
-const TERMINAL_STATUSES = new Set<AgentTask["status"]>([
-  "completed",
-  "failed",
-  "cancelled",
-]);
+// SIY-125: a compact Context badge on each execution-log run row. The daemon
+// records the boundary snapshot before provider startup, so active runs can
+// show their prompt summary and the dialog can be opened before completion.
 
 const STATE_CLASSES: Record<ContextBadgeState, string> = {
   resumed: "bg-success/15 text-success",
@@ -34,12 +27,18 @@ export function ContextBadge({ task }: { task: AgentTask }) {
   const [open, setOpen] = useState(false);
 
   const { data } = useQuery({
-    queryKey: issueKeys.taskContext(task.id),
+    // Include status so the transition to a terminal row forces one read of
+    // the refined observation instead of leaving the boundary snapshot in a
+    // still-fresh React Query cache.
+    queryKey: [...issueKeys.taskContext(task.id), task.status],
     queryFn: () => api.getTaskContext(task.id),
-    // No observation exists mid-run; the daemon reports at the completion
-    // boundary, so only fetch for terminal rows.
-    enabled: TERMINAL_STATUSES.has(task.status),
-    staleTime: 60_000,
+    // The boundary snapshot exists before provider startup. Poll active rows
+    // briefly so a fallback/final session update replaces the initial state.
+    staleTime: 5_000,
+    refetchInterval:
+      task.status === "completed" || task.status === "failed" || task.status === "cancelled"
+        ? false
+        : 5_000,
   });
 
   const state = contextBadgeState(data);

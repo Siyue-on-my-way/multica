@@ -9,27 +9,27 @@ import (
 
 func baseTask() Task {
 	return Task{
-		ID:                     "task-fresh-1",
-		RuntimeID:              "rt-1",
-		IssueID:                "issue-1",
-		AgentID:                "agent-1",
-		CurrentIssueTitle:      "Implement feature X",
+		ID:                      "task-fresh-1",
+		RuntimeID:               "rt-1",
+		IssueID:                 "issue-1",
+		AgentID:                 "agent-1",
+		CurrentIssueTitle:       "Implement feature X",
 		CurrentIssueDescription: "Do the thing.",
-		AncestorBrief:          "ANCESTOR_BRIEF (background reference only)\n[Background source: Issue parent]",
+		AncestorBrief:           "ANCESTOR_BRIEF (background reference only)\n[Background source: Issue parent]",
 	}
 }
 
 func TestBuildContextObservation_FreshSession(t *testing.T) {
 	task := baseTask()
 	obs := buildContextObservation(observationParams{
-		task:             task,
-		provider:         "claude",
-		runtimeID:        task.RuntimeID,
-		runtimeBrief:     "# Multica Agent Runtime\n...",
-		prompt:           "You are running as a local coding agent...\n\nYour assigned issue ID is: issue-1\n",
-		resumeSessionID:  "",
-		resumeExpected:   false,
-		workdirReused:    false,
+		task:            task,
+		provider:        "claude",
+		runtimeID:       task.RuntimeID,
+		runtimeBrief:    "# Multica Agent Runtime\n...",
+		prompt:          "You are running as a local coding agent...\n\nYour assigned issue ID is: issue-1\n",
+		resumeSessionID: "",
+		resumeExpected:  false,
+		workdirReused:   false,
 	}, time.Time{})
 
 	if obs.SessionReused {
@@ -64,14 +64,14 @@ func TestBuildContextObservation_WarmResume(t *testing.T) {
 	task.PriorSessionID = "prior-sess-123"
 	obs := buildContextObservation(observationParams{
 		task:               task,
-		provider:          "codex",
-		runtimeID:         task.RuntimeID,
-		runtimeBrief:      "# brief",
-		prompt:            "prompt body",
-		resumeSessionID:   "prior-sess-123", // gates passed → session id handed to provider
-		inlineSystemPrompt: true,            // provider that cannot read the file
-		resumeExpected:    true,
-		workdirReused:     true,
+		provider:           "codex",
+		runtimeID:          task.RuntimeID,
+		runtimeBrief:       "# brief",
+		prompt:             "prompt body",
+		resumeSessionID:    "prior-sess-123", // gates passed → session id handed to provider
+		inlineSystemPrompt: true,             // provider that cannot read the file
+		resumeExpected:     true,
+		workdirReused:      true,
 	}, time.Time{})
 
 	if !obs.SessionReused || !obs.ResumeExpected || !obs.WorkdirReused {
@@ -92,23 +92,25 @@ func TestRefineContextObservation_FallbackRetry(t *testing.T) {
 	task := baseTask()
 	task.PriorSessionID = "prior-sess"
 	obs := buildContextObservation(observationParams{
-		task:             task,
-		provider:         "codex",
-		runtimeID:        task.RuntimeID,
-		runtimeBrief:     "# brief",
-		prompt:           "prompt",
-		resumeSessionID:  "prior-sess",
-		resumeExpected:   true,
-		workdirReused:    true,
+		task:            task,
+		provider:        "codex",
+		runtimeID:       task.RuntimeID,
+		runtimeBrief:    "# brief",
+		prompt:          "prompt",
+		resumeSessionID: "prior-sess",
+		resumeExpected:  true,
+		workdirReused:   true,
 	}, time.Time{})
 	// The provider rejected the resume; the daemon retried fresh.
-	refineContextObservation(&obs, "fresh-after-retry", true, "session history unresumable", time.Now())
+	refineContextObservation(&obs, "fresh-after-retry", true, "session history unresumable at /root/private with owner@example.com", time.Now())
 	if obs.ResumeActual != resumeActualFallback {
 		t.Fatalf("retry must refine to fallback, got %q", obs.ResumeActual)
 	}
 	if obs.FallbackReason == "" {
 		t.Fatalf("fallback must carry the failure reason")
 	}
+	mustNotContain(t, obs.FallbackReason, "/root/private", "fallback reason leaked absolute path")
+	mustNotContain(t, obs.FallbackReason, "owner@example.com", "fallback reason leaked email")
 	if obs.SessionID != "fresh-after-retry" {
 		t.Fatalf("fallback must record the fresh retry's session id")
 	}
@@ -139,19 +141,50 @@ func TestRefineContextObservation_AgentSwitchIsFresh(t *testing.T) {
 	}
 }
 
+func TestFinalizeContextObservation_ProviderStartFailureIsUnknown(t *testing.T) {
+	prompt := "final assembled prompt"
+	obs := buildContextObservation(observationParams{
+		task:            baseTask(),
+		provider:        "claude",
+		prompt:          prompt,
+		resumeSessionID: "prior-session",
+		resumeExpected:  true,
+	}, time.Time{})
+
+	finalizeContextObservation(
+		&obs,
+		false,
+		"failed to start /root/provider owner@example.com",
+		"",
+		false,
+		"",
+		time.Now(),
+	)
+
+	if obs.ResumeActual != resumeActualUnknown {
+		t.Fatalf("provider startup failure must be unknown, got %q", obs.ResumeActual)
+	}
+	mustNotContain(t, obs.FallbackReason, "/root/provider", "startup error leaked absolute path")
+	mustNotContain(t, obs.FallbackReason, "owner@example.com", "startup error leaked email")
+	promptSection := findSection(obs.Sections, "task_prompt")
+	if promptSection == nil || promptSection.Raw != prompt {
+		t.Fatal("startup failure must retain the assembled prompt for on-demand inspection")
+	}
+}
+
 func TestRedaction_StripsSecretsEmailsAndPaths(t *testing.T) {
 	task := baseTask()
 	task.TriggerCommentContent = "Reach me at owner@example.com and check /root/secret/config.yaml token=sk-abcd1234efgh5678ijklmnopqrstuv0123"
 	obs := buildContextObservation(observationParams{
-		task:             task,
-		provider:         "claude",
-		runtimeID:        task.RuntimeID,
-		runtimeBrief:     "MULTICA_TOKEN=supersecretvalue123456 path /etc/ssl/private.key",
-		prompt:           "issue body owner@example.com /abs/path/to/repo",
-		mcpConfig:        json.RawMessage(`{"mcpServers":{"x":{"command":"x","env":{"API_KEY":"sk-live-token-1234567890abcdef"}}}}`),
-		resumeSessionID:  "",
-		resumeExpected:   false,
-		workdirReused:    false,
+		task:            task,
+		provider:        "claude",
+		runtimeID:       task.RuntimeID,
+		runtimeBrief:    "MULTICA_TOKEN=supersecretvalue123456 path /etc/ssl/private.key",
+		prompt:          "issue body owner@example.com /abs/path/to/repo",
+		mcpConfig:       json.RawMessage(`{"mcpServers":{"x":{"command":"x","env":{"API_KEY":"sk-live-token-1234567890abcdef"}}}}`),
+		resumeSessionID: "",
+		resumeExpected:  false,
+		workdirReused:   false,
 	}, time.Time{})
 
 	for _, s := range obs.Sections {

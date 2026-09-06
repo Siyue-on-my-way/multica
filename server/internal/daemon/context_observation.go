@@ -28,8 +28,8 @@ import (
 // what was written to the workdir, what was handed to the provider as MCP, and
 // what only the platform can read on demand.
 const (
-	deliveryProviderPrompt = "provider_prompt"  // placed into the user/system message sent to the provider
-	deliveryWorkdirFile    = "workdir_file"     // written into the task workdir (AGENTS.md, sidecars, skills)
+	deliveryProviderPrompt = "provider_prompt"   // placed into the user/system message sent to the provider
+	deliveryWorkdirFile    = "workdir_file"      // written into the task workdir (AGENTS.md, sidecars, skills)
 	deliveryProviderMCP    = "provider_mcp"      // handed to the provider via its MCP config, not the prompt text
 	deliveryPlatformRead   = "platform_readable" // readable from the platform DB on demand (issue/comments/metadata)
 )
@@ -63,8 +63,8 @@ type ContextSection struct {
 	Bytes      int    `json:"bytes"`
 	TokenCount int    `json:"token_count"`
 	Truncated  bool   `json:"truncated"`
-	Digest     string `json:"digest"`  // first 8 hex chars of sha256 over the redacted raw
-	Preview    string `json:"preview"` // redacted, capped excerpt
+	Digest     string `json:"digest"`        // first 8 hex chars of sha256 over the redacted raw
+	Preview    string `json:"preview"`       // redacted, capped excerpt
 	Raw        string `json:"raw,omitempty"` // redacted full text; only served on demand with permission
 }
 
@@ -72,37 +72,37 @@ type ContextSection struct {
 // summary fields are safe to surface in lists; SessionID and section Raw are
 // gated behind a permission check on read.
 type ContextObservation struct {
-	TaskID          string           `json:"task_id"`
-	Provider        string           `json:"provider"`
-	RuntimeID       string           `json:"runtime_id,omitempty"`
-	SessionReused   bool             `json:"session_reused"`   // a resume session id was handed to the provider
-	ResumeExpected  bool             `json:"resume_expected"`   // the run intended to resume a prior session
-	ResumeActual    string           `json:"resume_actual"`     // resumed | fresh | fallback | unknown
-	FallbackReason  string           `json:"fallback_reason,omitempty"`
-	WorkdirReused   bool             `json:"workdir_reused"`
-	PromptBytes     int              `json:"prompt_bytes"`
-	InputTokens     int              `json:"input_tokens"`
-	TokenMode       string           `json:"token_mode"` // exact | estimated
-	Sections        []ContextSection `json:"sections"`
-	SessionID       string           `json:"session_id,omitempty"` // full value; API shortens unless permitted
-	ObservedAt      time.Time        `json:"observed_at"`
-	CompletedAt     *time.Time       `json:"completed_at,omitempty"` // set when post-run refinement lands
+	TaskID         string           `json:"task_id"`
+	Provider       string           `json:"provider"`
+	RuntimeID      string           `json:"runtime_id,omitempty"`
+	SessionReused  bool             `json:"session_reused"`  // a resume session id was handed to the provider
+	ResumeExpected bool             `json:"resume_expected"` // the run intended to resume a prior session
+	ResumeActual   string           `json:"resume_actual"`   // resumed | fresh | fallback | unknown
+	FallbackReason string           `json:"fallback_reason,omitempty"`
+	WorkdirReused  bool             `json:"workdir_reused"`
+	PromptBytes    int              `json:"prompt_bytes"`
+	InputTokens    int              `json:"input_tokens"`
+	TokenMode      string           `json:"token_mode"` // exact | estimated
+	Sections       []ContextSection `json:"sections"`
+	SessionID      string           `json:"session_id,omitempty"` // full value; API shortens unless permitted
+	ObservedAt     time.Time        `json:"observed_at"`
+	CompletedAt    *time.Time       `json:"completed_at,omitempty"` // set when post-run refinement lands
 }
 
 // observationParams carries the boundary values the builder needs, kept as
 // primitives so the observation module stays decoupled from the agent package
 // and is trivially testable. The daemon populates it from task/execOpts/env.
 type observationParams struct {
-	task             Task
-	provider         string
-	runtimeID        string
-	runtimeBrief     string // bytes written as AGENTS.md / CLAUDE.md by InjectRuntimeConfig
-	prompt           string // final assembled prompt from BuildPrompt
-	mcpConfig        json.RawMessage
-	resumeSessionID  string // execOpts.ResumeSessionID
-	inlineSystemPrompt bool  // execOpts.SystemPrompt != ""
-	resumeExpected   bool   // execOpts.ResumeExpected
-	workdirReused    bool
+	task               Task
+	provider           string
+	runtimeID          string
+	runtimeBrief       string // bytes written as AGENTS.md / CLAUDE.md by InjectRuntimeConfig
+	prompt             string // final assembled prompt from BuildPrompt
+	mcpConfig          json.RawMessage
+	resumeSessionID    string // execOpts.ResumeSessionID
+	inlineSystemPrompt bool   // execOpts.SystemPrompt != ""
+	resumeExpected     bool   // execOpts.ResumeExpected
+	workdirReused      bool
 }
 
 // buildContextObservation assembles the observation record from boundary values.
@@ -162,13 +162,27 @@ func refineContextObservation(obs *ContextObservation, sessionID string, freshRe
 	switch {
 	case freshRetryFired:
 		obs.ResumeActual = resumeActualFallback
-		obs.FallbackReason = fallbackReason
+		obs.FallbackReason = redactForObservation(fallbackReason)
 	case obs.SessionReused:
 		obs.ResumeActual = resumeActualResumed
 	default:
 		obs.ResumeActual = resumeActualFresh
 	}
 	obs.CompletedAt = &completedAt
+}
+
+// finalizeContextObservation folds the provider outcome into the boundary
+// snapshot. A backend start error is different from a fresh run: no provider
+// session existed, so resume_actual must stay honest as unknown while the
+// prompt assembled at the boundary remains available for inspection.
+func finalizeContextObservation(obs *ContextObservation, providerStarted bool, startupError, sessionID string, freshRetryFired bool, fallbackReason string, completedAt time.Time) {
+	if !providerStarted {
+		obs.ResumeActual = resumeActualUnknown
+		obs.FallbackReason = redactForObservation(startupError)
+		obs.CompletedAt = &completedAt
+		return
+	}
+	refineContextObservation(obs, sessionID, freshRetryFired, fallbackReason, completedAt)
 }
 
 func buildContextSections(p observationParams) []ContextSection {
@@ -408,7 +422,7 @@ func digestString(s string) string {
 // issue requires the observation to withhold them explicitly.
 
 var (
-	reEmail   = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	// reAbsPath matches any absolute-path token (a leading slash followed by a
 	// name char) regardless of what precedes it, so redaction survives the
 	// placeholder reshuffling redact.Text performs on the surrounding text.

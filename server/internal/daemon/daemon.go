@@ -8265,27 +8265,46 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		workdirReused:      envReused,
 	}, time.Now())
 
+	// Report the boundary record before starting the provider. This is the
+	// important distinction between an observation and a completion log: the
+	// UI must be able to inspect the prompt while a run is still active, and a
+	// provider that fails during startup must not erase the only record of what
+	// was assembled. Reporting is best-effort and has a short, independent
+	// deadline so a control-plane outage never delays the agent run materially.
+	reportContextObservation := func(obs ContextObservation) {
+		reportCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := d.client.ReportTaskContextObservation(reportCtx, task.ID, obs); err != nil {
+			taskLog.Warn("report context observation failed (non-fatal)", "error", err)
+		}
+	}
+	reportContextObservation(contextObs)
+
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
-	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
-	if err != nil {
-		return TaskResult{}, err
-	}
+	var result agent.Result
+	var tools int32
+	var providerStarted bool
+	var startupError string
+	var freshRetryFired bool
+	var fallbackReason string
+	result, tools, err = d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+	providerStarted = err == nil
 
 	// SIY-125: refine the context observation with the post-run outcome and
 	// report it. freshRetryFired / fallbackReason are set by the fresh-session
 	// retry path below; on the normal path the record keeps its boundary
 	// resume state and lands as resumed/fresh. Reporting is best-effort: a
 	// failure is logged and never blocks the run's own completion reporting.
-	var freshRetryFired bool
-	var fallbackReason string
 	defer func() {
-		refineContextObservation(&contextObs, result.SessionID, freshRetryFired, fallbackReason, time.Now())
-		if err := d.client.ReportTaskContextObservation(ctx, task.ID, contextObs); err != nil {
-			taskLog.Warn("report context observation failed (non-fatal)", "error", err)
-		}
+		finalizeContextObservation(&contextObs, providerStarted, startupError, result.SessionID, freshRetryFired, fallbackReason, time.Now())
+		reportContextObservation(contextObs)
 	}()
+	if err != nil {
+		startupError = err.Error()
+		return TaskResult{}, err
+	}
 
 	// retiredSessionID is the session this run was told to resume and then
 	// abandoned. Captured before the retry clears task.PriorSessionID, and
@@ -8340,6 +8359,27 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}
 		freshPrompt := BuildPrompt(task, provider, promptOptions...)
+
+		// The fresh retry has a different prompt and a file-based brief that no
+		// longer claims continuity. Replace the boundary snapshot before the
+		// retry starts so the on-demand raw view is the prompt actually handed to
+		// the successful/final provider attempt, while retaining the original
+		// resume intent for the Fallback badge.
+		initialResumeExpected := contextObs.ResumeExpected
+		contextObs = buildContextObservation(observationParams{
+			task:               task,
+			provider:           provider,
+			runtimeID:          task.RuntimeID,
+			runtimeBrief:       runtimeBrief,
+			prompt:             freshPrompt,
+			mcpConfig:          mcpConfig,
+			inlineSystemPrompt: execOpts.SystemPrompt != "",
+			resumeExpected:     initialResumeExpected,
+			workdirReused:      envReused,
+		}, time.Now())
+		contextObs.ResumeActual = resumeActualFallback
+		contextObs.FallbackReason = redactForObservation(fallbackReason)
+		reportContextObservation(contextObs)
 
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 		if retryErr != nil {
