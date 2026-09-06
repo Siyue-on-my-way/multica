@@ -760,8 +760,13 @@ function CommentRow({
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
-                    <MoreHorizontal className="h-4 w-4" />
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label={t(($) => $.comment.more_actions)}
+                  >
+                    <MoreHorizontal className="h-4 w-4" aria-hidden />
                   </Button>
                 }
               />
