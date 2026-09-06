@@ -60,7 +60,7 @@ export function ContextDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[calc(100vw-2rem)] !max-w-3xl max-h-[85svh] min-w-0 overflow-hidden">
+      <DialogContent className="!h-[calc(100svh-2rem)] !max-h-[calc(100svh-2rem)] !w-[calc(100vw-2rem)] !max-w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:!h-[80svh] sm:!max-h-[80svh] sm:!w-[80vw] sm:!max-w-[80vw]">
         <DialogHeader className="min-w-0">
           <DialogTitle>{t(($) => $.context.dialog_title)}</DialogTitle>
           <DialogDescription>{t(($) => $.context.dialog_subtitle)}</DialogDescription>
@@ -73,7 +73,7 @@ export function ContextDetailDialog({
         ) : noObservation ? (
           <p className="text-caption text-muted-foreground">{t(($) => $.context.no_data)}</p>
         ) : (
-          <Tabs defaultValue="overview" className="mt-2 min-h-0 min-w-0 max-w-full overflow-hidden">
+          <Tabs defaultValue="overview" className="mt-2 h-full min-h-0 min-w-0 max-w-full overflow-hidden">
             <TabsList className="max-w-full overflow-x-auto">
               <TabsTrigger value="overview">{t(($) => $.context.tab_overview)}</TabsTrigger>
               <TabsTrigger value="tokens">{t(($) => $.context.tab_tokens)}</TabsTrigger>
@@ -81,19 +81,19 @@ export function ContextDetailDialog({
             </TabsList>
             <TabsContent
               value="overview"
-              className="min-h-0 min-w-0 max-h-[calc(85svh-8rem)] max-w-full overflow-auto"
+              className="min-h-0 min-w-0 max-h-full max-w-full overflow-auto"
             >
               <OverviewLayer ctx={data} />
             </TabsContent>
             <TabsContent
               value="tokens"
-              className="min-h-0 min-w-0 max-h-[calc(85svh-8rem)] max-w-full overflow-auto"
+              className="min-h-0 min-w-0 max-h-full max-w-full overflow-auto"
             >
               <TokenBreakdownLayer ctx={data} />
             </TabsContent>
             <TabsContent
               value="sections"
-              className="min-h-0 min-w-0 max-h-[calc(85svh-8rem)] max-w-full overflow-auto"
+              className="min-h-0 min-w-0 max-h-full max-w-full overflow-auto"
             >
               <SectionsLayer taskId={taskId} ctx={data} />
             </TabsContent>
