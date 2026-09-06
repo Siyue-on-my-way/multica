@@ -143,6 +143,20 @@ func TestBusinessRegistryLoadsIndependentSubissueStages(t *testing.T) {
 business: subissue-suggest
 enabled: true
 stages:
+  recognize:
+    llm:
+      provider: openai-compatible
+      base_url: BASE_URL
+      api_key_env: MULTICA_TEST_STAGE_KEY
+      model: recognize-model
+      timeout_ms: 5000
+    prompt:
+      system: "recognize system"
+      user_template: "recognize {{comment_segment}} {{segment_index}} {{segment_total}} {{retry_feedback}}"
+    output:
+      format: json
+      json_schema:
+        type: object
   outline:
     llm:
       provider: openai-compatible
@@ -152,7 +166,7 @@ stages:
       timeout_ms: 5000
     prompt:
       system: "outline system"
-      user_template: "outline {{comment_text}} {{human_constraints}}"
+      user_template: "outline {{comment_text}} {{human_constraints}} {{identified_tasks}} {{retry_feedback}}"
     output:
       format: json
       json_schema:
@@ -166,7 +180,7 @@ stages:
       timeout_ms: 5000
     prompt:
       system: "detail system"
-      user_template: "detail {{approved_outline}}"
+      user_template: "detail {{approved_outline}} {{retry_feedback}}"
     output:
       format: json
       json_schema:
@@ -187,12 +201,15 @@ stages:
 	if _, err := outline.GenerateJSONTemplate(context.Background(), map[string]string{
 		"comment_text":      "comment",
 		"human_constraints": "keep together",
+		"identified_tasks":  "（无）",
+		"retry_feedback":    "（无）",
 	}, "", "", 0, 0); err != nil {
 		t.Fatalf("outline generation: %v", err)
 	}
 	detail := registry.Client(BusinessSubissueSuggest).Stage(BusinessStageDetail)
 	if _, err := detail.GenerateJSONTemplate(context.Background(), map[string]string{
 		"approved_outline": "outline",
+		"retry_feedback":   "（无）",
 	}, "", "", 0, 0); err != nil {
 		t.Fatalf("detail generation: %v", err)
 	}
@@ -218,10 +235,10 @@ func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse checked-in subissue config: %v", err)
 	}
-	if len(parsed.Stages) != 2 {
-		t.Fatalf("checked-in config stages = %d, want 2", len(parsed.Stages))
+	if len(parsed.Stages) != 3 {
+		t.Fatalf("checked-in config stages = %d, want 3", len(parsed.Stages))
 	}
-	for _, stage := range []string{BusinessStageOutline, BusinessStageDetail} {
+	for _, stage := range []string{BusinessStageRecognize, BusinessStageOutline, BusinessStageDetail} {
 		if parsed.Stages[stage] == nil {
 			t.Fatalf("checked-in config missing stage %q", stage)
 		}
@@ -230,13 +247,33 @@ func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
 	if !strings.Contains(outline.Prompt.System, "business") || !strings.Contains(outline.Prompt.System, "整体流程") {
 		t.Fatal("outline prompt must explicitly require a concrete business and reserve overall-flow fallback")
 	}
-	for _, variable := range []string{"{{issue_description}}", "{{ancestor_brief}}", "{{business_context}}"} {
+	if !strings.Contains(outline.Prompt.System, "identified_tasks") || !strings.Contains(outline.Prompt.System, "全量覆盖") {
+		t.Fatal("outline prompt must require the identified task list and the full-coverage first plan (SIY-147)")
+	}
+	for _, variable := range []string{"{{issue_description}}", "{{ancestor_brief}}", "{{business_context}}", "{{identified_tasks}}", "{{retry_feedback}}"} {
 		if !strings.Contains(outline.Prompt.UserTemplate, variable) {
 			t.Fatalf("outline prompt missing business context variable %q", variable)
 		}
 	}
+	// identified_tasks became a required schema key with the coverage gate.
 	if err := validateBusinessJSON(`{"plans":[{"name":"方案","items":[{"title":"任务","goal":"目标"}]}]}`, outline.Output.JSONSchema); err == nil {
-		t.Fatal("outline schema must require business")
+		t.Fatal("outline schema must require identified_tasks")
+	}
+	if err := validateBusinessJSON(`{"identified_tasks":[{"id":"t1","text":"任务"}],"plans":[{"name":"全量覆盖","items":[{"title":"任务","goal":"目标","business":"业务","source_task_ids":["t1"]}]}]}`, outline.Output.JSONSchema); err != nil {
+		t.Fatalf("outline schema must accept the coverage contract: %v", err)
+	}
+	recognize := parsed.Stages[BusinessStageRecognize]
+	for _, variable := range []string{"{{comment_segment}}", "{{segment_index}}", "{{segment_total}}", "{{retry_feedback}}"} {
+		if !strings.Contains(recognize.Prompt.UserTemplate, variable) {
+			t.Fatalf("recognize prompt missing variable %q", variable)
+		}
+	}
+	if err := validateBusinessJSON(`{"tasks":[{"id":"t1","text":"任务"}]}`, recognize.Output.JSONSchema); err != nil {
+		t.Fatalf("recognize schema must accept task lists: %v", err)
+	}
+	detail := parsed.Stages[BusinessStageDetail]
+	if !strings.Contains(detail.Prompt.UserTemplate, "{{retry_feedback}}") {
+		t.Fatal("detail prompt must carry retry feedback for coverage retries")
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 // ErrLLMNotConfigured is returned by SuggestSubissues when the deployment has
@@ -53,6 +55,35 @@ type SubissueSuggestConfiguredLLM interface {
 	GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error)
 }
 
+// SubissueSuggestUsageLLM is the optional capability seam for callers that log
+// per-attempt token/finish-reason stats (SIY-147). Stage clients from the
+// business registry implement it; the plain seam stays for tests and legacy
+// callers, and generateSubissueTemplateJSON degrades to zero stats.
+type SubissueSuggestUsageLLM interface {
+	SubissueSuggestConfiguredLLM
+	GenerateJSONTemplateDetailed(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, llm.GenerateStats, error)
+}
+
+// generateSubissueTemplateJSON runs one structured completion through the
+// configured seam, surfacing usage stats when the client supports them.
+func generateSubissueTemplateJSON(
+	ctx context.Context,
+	client SubissueSuggestConfiguredLLM,
+	variables map[string]string,
+	fallbackSystem, fallbackUserTemplate string,
+	fallbackTemperature float64,
+	fallbackMaxCompletionTokens int64,
+) (string, llm.GenerateStats, error) {
+	if detailed, ok := client.(SubissueSuggestUsageLLM); ok {
+		return detailed.GenerateJSONTemplateDetailed(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	}
+	raw, err := client.GenerateJSONTemplate(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	if err != nil {
+		return "", llm.GenerateStats{}, err
+	}
+	return raw, llm.GenerateStats{OutputChars: len([]rune(raw))}, nil
+}
+
 // LegacySubissueSuggestConfiguredLLM adapts the pre-registry global client to
 // the staged prompt seam. It is used only during migration when no business
 // YAML directory is enabled, and renders the supplied fallback template
@@ -73,8 +104,23 @@ func (c LegacySubissueSuggestConfiguredLLM) GenerateJSONTemplate(
 	temperature float64,
 	maxCompletionTokens int64,
 ) (string, error) {
+	raw, _, err := c.GenerateJSONTemplateDetailed(ctx, variables, fallbackSystem, fallbackUserTemplate, temperature, maxCompletionTokens)
+	return raw, err
+}
+
+// GenerateJSONTemplateDetailed renders the fallback templates locally, so it
+// can still report prompt/content char counts even though the legacy global
+// client seam cannot report upstream token usage.
+func (c LegacySubissueSuggestConfiguredLLM) GenerateJSONTemplateDetailed(
+	ctx context.Context,
+	variables map[string]string,
+	fallbackSystem string,
+	fallbackUserTemplate string,
+	temperature float64,
+	maxCompletionTokens int64,
+) (string, llm.GenerateStats, error) {
 	if !c.Enabled() {
-		return "", ErrLLMNotConfigured
+		return "", llm.GenerateStats{}, ErrLLMNotConfigured
 	}
 	render := func(template string) string {
 		for name, value := range variables {
@@ -82,7 +128,17 @@ func (c LegacySubissueSuggestConfiguredLLM) GenerateJSONTemplate(
 		}
 		return template
 	}
-	return c.Client.GenerateJSON(ctx, "", render(fallbackSystem), render(fallbackUserTemplate), temperature, maxCompletionTokens)
+	system := render(fallbackSystem)
+	user := render(fallbackUserTemplate)
+	stats := llm.GenerateStats{
+		InputChars: len([]rune(system)) + len([]rune(user)),
+	}
+	raw, err := c.Client.GenerateJSON(ctx, "", system, user, temperature, maxCompletionTokens)
+	if err != nil {
+		return "", stats, err
+	}
+	stats.OutputChars = len([]rune(raw))
+	return raw, stats, nil
 }
 
 // SubissueSuggestSourceIssue is the minimal shape the prompt needs for the

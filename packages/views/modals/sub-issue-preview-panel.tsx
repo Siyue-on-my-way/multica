@@ -133,7 +133,12 @@ export function SubIssuePreviewModal({
         });
       setPlans(response.plans);
       setAncestorContextRefs(response.ancestor_brief_refs ?? []);
-      setSelectedPlanId(response.plans[0]?.id ?? "");
+      // SIY-147: default to the backend-verified full-coverage plan so the
+      // panel never opens pre-selecting a partial decomposition. Reference
+      // plans stay one click away.
+      setSelectedPlanId(
+        (response.plans.find((plan) => plan.coverage === "full") ?? response.plans[0])?.id ?? "",
+      );
       setMergeSelection([]);
       setDetailError(false);
       setPhase("outline");
@@ -370,13 +375,24 @@ export function SubIssuePreviewModal({
                           setMergeSelection([]);
                         }}
                       >
-                        <div className="font-medium text-body">{plan.name}</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium text-body">{plan.name}</div>
+                          {plan.coverage === "full" && (
+                            <Badge variant="secondary">{t(($) => $.suggest_subissues.plan_full_badge)}</Badge>
+                          )}
+                        </div>
                         <div className="mt-1 text-caption text-muted-foreground">
                           {t(($) => $.suggest_subissues.plan_item_count, { count: plan.items.length })}
                         </div>
                       </button>
                     ))}
                   </div>
+
+                  {selectedPlan && selectedPlan.coverage !== "full" && (
+                    <div className="text-caption text-muted-foreground">
+                      {t(($) => $.suggest_subissues.plan_reference_hint)}
+                    </div>
+                  )}
 
                   {selectedPlan && (
                     <div className="rounded-lg border border-border/60 p-3">

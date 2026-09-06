@@ -2,10 +2,55 @@ version: 1
 business: subissue-suggest
 enabled: true
 
-# The two calls belong to this business but have independent prompts and
-# budgets. The outline pass is intentionally short; detail generation happens
-# only after the user approves or edits one of its plans.
+# The three calls belong to this business but have independent prompts and
+# budgets (SIY-147). The recognize pass identifies tasks in one segment of an
+# over-budget comment and runs once per segment; the outline pass is
+# intentionally longer because it must emit the identified task list plus
+# three plans, the first of which the backend coverage-checks against that
+# list; detail generation happens only after the user approves or edits one of
+# its plans. outline and detail budgets are raised separately — a shared
+# budget truncated the detail JSON and silently dropped sub-issues.
 stages:
+  recognize:
+    llm:
+      provider: openai-compatible
+      base_url: ${MULTICA_LLM_BASE_URL}
+      api_key_env: MULTICA_LLM_API_KEY
+      model: gemini-3.1-pro-preview
+      temperature: 0.2
+      max_completion_tokens: 4096
+      timeout_ms: 90000
+      max_retries: 2
+
+    prompt:
+      system: |-
+        你是任务识别助手。给你一段较长的 Multica issue 讨论的一个分段，请识别这个分段中所有明确提到的可执行任务、编号条目和工作方向。只依据分段原文，不要凭空添加，也不要把同一个任务重复输出。每项输出一个稳定 id（从 t1 开始连续编号）和原文表述 text。分段中没有可执行任务时输出空数组。严格只输出 JSON，不要输出 Markdown 或解释文字。
+        输出必须是一个 JSON 对象，结构固定为：
+        {"tasks":[{"id":"t1","text":"..."}]}
+      user_template: |-
+        分段原文（第 {{segment_index}}/{{segment_total}} 段）：
+        {{comment_segment}}
+
+        上一次输出的校验结果（若非“（无）”，必须先修正该问题再重新输出完整 JSON）：
+        {{retry_feedback}}
+
+        请输出该分段识别到的任务。
+
+    output:
+      format: json
+      json_schema:
+        type: object
+        required: [tasks]
+        properties:
+          tasks:
+            type: array
+            items:
+              type: object
+              required: [id, text]
+              properties:
+                id: {type: string}
+                text: {type: string}
+
   outline:
     llm:
       provider: openai-compatible
@@ -13,19 +58,21 @@ stages:
       api_key_env: MULTICA_LLM_API_KEY
       model: gemini-3.1-pro-preview
       temperature: 0.4
-      max_completion_tokens: 2048
-      timeout_ms: 60000
+      max_completion_tokens: 8192
+      timeout_ms: 120000
       max_retries: 2
 
     prompt:
       system: |-
-        你是一个任务拆分方案设计助手。请根据一段 Multica issue 讨论，生成三种不同粒度的候选拆分方案：
-        1. 上下文优先：尽量合并强相关内容，允许最终只有一个子issue，保证接手者拥有连贯上下文。
-        2. 平衡拆分：只拆出边界清晰且有独立价值的任务。
-        3. 并行优先：把确实可以独立并行处理的任务分开，但不要为了增加数量而拆散强相关工作。
-        每个方案只返回子issue的 title、goal 和 business，不要生成 description、stage、依赖、父issue或其他字段。business 必须是从原始评论、当前 issue 标题/description 和上级上下文中识别出的具体业务概念或产品能力，例如“生成子issue”“日报/周报/年报生成”“订单支付”，不能写成“任务”“功能”这类空泛词。提示中提供的“当前业务概念”是标题前缀的优先依据；只要上下文能识别出业务，就必须填写该业务，不能留空，也不能使用“整体流程”。只有确实没有任何可识别业务概念时，才允许使用“整体流程”。business 不要包含【】；title 只写任务名称，服务端会统一添加【business】前缀。方案必须来自原始讨论，不能凭空添加工作。严格只输出 JSON，不要输出 Markdown 或解释文字。
+        你是一个任务拆分方案设计助手。请根据一段 Multica issue 讨论，先识别原文的全部任务，再生成三种不同粒度的候选拆分方案。
+        第一步，识别任务清单：找出原文中所有明确提到的可执行任务、编号条目和工作方向（包括藏在段落里的独立工作项），逐条输出到 identified_tasks，每项一个稳定 id（从 t1 开始连续编号）和原文表述 text。不要遗漏、不要合并、也不要凭空添加原文没有的工作。
+        第二步，生成三个方案，第一个方案必须叫“全量覆盖”：
+        1. 全量覆盖（第一个方案）：必须覆盖 identified_tasks 中的每一个 id。强相关的任务可以合并到一个条目，但任何任务都不能丢。每个条目用 source_task_ids 标注它对应哪些任务 id。
+        2. 上下文优先：尽量合并强相关内容，允许最终只有一个子issue，保证接手者拥有连贯上下文（可选参考）。
+        3. 并行优先：把确实可以独立并行处理的任务分开，但不要为了增加数量而拆散强相关工作（可选参考）。
+        每个方案只返回子issue的 title、goal、business 和 source_task_ids。不要生成 description、stage、依赖、父issue或其他字段。business 必须是从原始评论、当前 issue 标题/description 和上级上下文中识别出的具体业务概念或产品能力，例如“生成子issue”“日报/周报/年报生成”“订单支付”，不能写成“任务”“功能”这类空泛词。提示中提供的“当前业务概念”是标题前缀的优先依据；只要上下文能识别出业务，就必须填写该业务，不能留空，也不能使用“整体流程”。只有确实没有任何可识别业务概念时，才允许使用“整体流程”。business 不要包含【】；title 只写任务名称，服务端会统一添加【business】前缀。方案必须来自原始讨论，不能凭空添加工作。系统会在每个包含至少两个条目的业务后自动补充汇总测试，因此不要自己生成汇总测试。严格只输出 JSON，不要输出 Markdown 或解释文字。
         输出必须是一个 JSON 对象，结构固定为：
-        {"plans":[{"name":"上下文优先|平衡拆分|并行优先","items":[{"title":"...","goal":"...","business":"..."}]}]}
+        {"identified_tasks":[{"id":"t1","text":"..."}],"plans":[{"name":"全量覆盖","items":[{"title":"...","goal":"...","business":"...","source_task_ids":["t1"]}]}]}
       user_template: |-
         原始评论内容：
         {{comment_text}}
@@ -37,6 +84,9 @@ stages:
 
         上级 issue 上下文：
         {{ancestor_brief}}
+
+        已识别的原文任务清单（若提供，这就是权威任务来源，source_task_ids 必须使用这里的 id）：
+        {{identified_tasks}}
 
         当前业务概念（优先用于每个条目的 business 和标题前缀；只有原始讨论明确包含多个不同业务时才分别使用不同概念）：
         {{business_context}}
@@ -50,14 +100,25 @@ stages:
         用户额外拆分要求：
         {{human_constraints}}
 
-        请输出 2～3 种拆分方案。
+        上一次输出的校验结果（若非“（无）”，必须先修正该问题再重新输出完整 JSON）：
+        {{retry_feedback}}
+
+        请输出 2～3 种拆分方案，第一个必须是“全量覆盖”。
 
     output:
       format: json
       json_schema:
         type: object
-        required: [plans]
+        required: [identified_tasks, plans]
         properties:
+          identified_tasks:
+            type: array
+            items:
+              type: object
+              required: [id, text]
+              properties:
+                id: {type: string}
+                text: {type: string}
           plans:
             type: array
             items:
@@ -74,6 +135,7 @@ stages:
                       title: {type: string}
                       goal: {type: string}
                       business: {type: string}
+                      source_task_ids: {type: array, items: {type: string}}
 
   detail:
     llm:
@@ -82,7 +144,7 @@ stages:
       api_key_env: MULTICA_LLM_API_KEY
       model: gemini-3.1-pro-preview
       temperature: 0.3
-      max_completion_tokens: 4096
+      max_completion_tokens: 16384
       timeout_ms: 180000
       max_retries: 2
 
@@ -118,6 +180,9 @@ stages:
 
         已确认的拆分草稿（这是不可变结构）：
         {{approved_outline}}
+
+        上一次输出的校验结果（若非“（无）”，必须先修正该问题再重新输出完整 JSON）：
+        {{retry_feedback}}
 
         请仅为已确认条目生成详细内容。
 

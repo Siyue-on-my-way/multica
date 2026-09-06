@@ -64,7 +64,7 @@ describe("SubIssuePreviewModal", () => {
     vi.clearAllMocks();
     mockSuggestPlans.mockResolvedValue({
       plans: [
-        { id: "plan-1", name: "Context first", items: [{ id: "plan-1-item-1", title: "Combined", goal: "Combined" }] },
+        { id: "plan-1", name: "Context first", coverage: "full" as const, items: [{ id: "plan-1-item-1", title: "Combined", goal: "Combined" }] },
         twoItemPlan,
       ],
     });
@@ -76,6 +76,27 @@ describe("SubIssuePreviewModal", () => {
       ],
     });
     mockCreateIssue.mockResolvedValue({ id: "created" });
+  });
+
+  it("preselects the full-coverage plan by default", async () => {
+    renderModal();
+
+    expect(await screen.findByText("Balanced split")).toBeInTheDocument();
+    // plan-1 is the coverage-verified plan; its outline must be the one shown
+    // without any click, and it carries the full-coverage badge.
+    expect(screen.getAllByDisplayValue("Combined").length).toBeGreaterThan(0);
+    expect(screen.getByText("Full coverage")).toBeInTheDocument();
+    expect(screen.queryByText("Reference granularity only")).not.toBeInTheDocument();
+  });
+
+  it("flags a reference plan when the user switches to it", async () => {
+    renderModal();
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("Balanced split")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("Combined").length).toBeGreaterThan(0);
+    await user.click(screen.getByText("Balanced split"));
+    expect(screen.getByText("Reference granularity only — it does not promise to cover every task in the original reply.")).toBeInTheDocument();
   });
 
   it("merges two approved draft items and sends the edited outline", async () => {

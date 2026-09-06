@@ -67,6 +67,8 @@
     "ancestor_context_hint": "默认开启：只携带祖先 Issue 的标题和描述，不包含讨论内容。",
     "outline_edit_hint": "勾选条目后可合并，也可以直接编辑标题和目标。",
     "plan_item_count": "{{count}} 个条目",
+    "plan_full_badge": "全量覆盖",
+    "plan_reference_hint": "该方案为可选参考粒度，不保证覆盖原文全部任务。",
     "summary_test_badge": "汇总测试",
     "business_label": "业务",
     "business_placeholder": "业务名称",

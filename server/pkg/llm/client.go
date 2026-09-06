@@ -375,6 +375,21 @@ func (c *Client) GenerateTextWithOptions(ctx context.Context, model, systemPromp
 	return completion.Choices[0].Message.Content, nil
 }
 
+// GenerateStats reports what one upstream completion actually cost and how it
+// ended. Structured callers (subissue plan generation, SIY-147) log these per
+// attempt so truncation ("length") and token exhaustion become observable
+// instead of surfacing only as a downstream parse failure. Char counts are
+// runes of the exact prompt bytes sent and content received; token counts are
+// the upstream-reported usage (zero when the gateway omits usage).
+type GenerateStats struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	FinishReason     string
+	InputChars       int
+	OutputChars      int
+}
+
 // GenerateJSON is GenerateText's structured sibling, for internal callers whose
 // reply has to be machine-readable (quick-action suggestions, ...). It requests
 // response_format=json_object and returns the assistant's raw text unparsed.
@@ -394,8 +409,17 @@ func (c *Client) GenerateTextWithOptions(ctx context.Context, model, systemPromp
 // maxCompletionTokens apply only when positive; zero leaves the corresponding
 // upstream default in place. Model empty -> the configured default.
 func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error) {
+	content, _, err := c.GenerateJSONDetailed(ctx, model, systemPrompt, userPrompt, temperature, maxCompletionTokens)
+	return content, err
+}
+
+// GenerateJSONDetailed is GenerateJSON with the upstream usage and finish
+// reason surfaced. The stats are returned even when the call fails: a
+// "length" finish reason is exactly the failure mode structured callers need
+// to log, and the empty-string error for it carries the reason only in stats.
+func (c *Client) GenerateJSONDetailed(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, GenerateStats, error) {
 	if !c.Enabled() {
-		return "", ErrNotConfigured
+		return "", GenerateStats{}, ErrNotConfigured
 	}
 
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, 2)
@@ -455,7 +479,7 @@ func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userProm
 			break
 		}
 		if compatibilityRetries >= 2 {
-			return "", err
+			return "", GenerateStats{}, err
 		}
 
 		switch {
@@ -465,20 +489,28 @@ func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userProm
 		case params.ReasoningEffort != "" && isUnsupportedParameter(err, "reasoning_effort"):
 			params.ReasoningEffort = ""
 		default:
-			return "", err
+			return "", GenerateStats{}, err
 		}
 	}
+	stats := GenerateStats{
+		PromptTokens:     completion.Usage.PromptTokens,
+		CompletionTokens: completion.Usage.CompletionTokens,
+		TotalTokens:      completion.Usage.TotalTokens,
+		InputChars:       len([]rune(systemPrompt)) + len([]rune(userPrompt)),
+	}
 	if len(completion.Choices) == 0 {
-		return "", errors.New("llm: upstream returned no choices")
+		return "", stats, errors.New("llm: upstream returned no choices")
 	}
 	choice := completion.Choices[0]
+	stats.FinishReason = choice.FinishReason
 	if choice.FinishReason == "length" {
-		return "", errors.New("llm: upstream reached the max completion token limit before producing complete JSON")
+		return "", stats, errors.New("llm: upstream reached the max completion token limit before producing complete JSON")
 	}
 	if strings.TrimSpace(choice.Message.Content) == "" {
-		return "", errors.New("llm: upstream returned empty JSON content")
+		return "", stats, errors.New("llm: upstream returned empty JSON content")
 	}
-	return choice.Message.Content, nil
+	stats.OutputChars = len([]rune(choice.Message.Content))
+	return choice.Message.Content, stats, nil
 }
 
 func isUnsupportedParameter(err error, parameter string) bool {

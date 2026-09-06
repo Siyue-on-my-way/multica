@@ -60,12 +60,16 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	plans, err := service.SuggestSubissuePlans(
 		ctx,
-		client,
+		service.SubissuePlanStages{
+			Plan:      client,
+			Recognize: h.subissuePlanLLM(llm.BusinessStageRecognize),
+		},
 		ctxData.sourceIssue,
 		ctxData.content,
 		ctxData.siblings,
 		ctxData.candidateParents,
 		req.HumanConstraints,
+		subissuePlanCommentID(req.CommentID),
 	)
 	if err != nil {
 		h.logSubissuePlanFailure("plan generation", uuidToString(issue.ID), err)
@@ -117,6 +121,7 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 		ctxData.candidateParents,
 		req.Plan,
 		req.HumanConstraints,
+		subissuePlanCommentID(req.CommentID),
 	)
 	if err != nil {
 		h.logSubissuePlanFailure("detail generation", uuidToString(issue.ID), err)
@@ -218,4 +223,13 @@ func (h *Handler) resolveSubissueSuggestionParents(suggestions []service.Subissu
 
 func (h *Handler) logSubissuePlanFailure(operation, issueID string, err error) {
 	slog.Warn("suggest subissue plans: generation failed", "operation", operation, "issue_id", issueID, "error", err)
+}
+
+// subissuePlanCommentID surfaces the triggering comment in service-level logs
+// so per-attempt token/coverage lines can be tied back to the source comment.
+func subissuePlanCommentID(commentID *string) string {
+	if commentID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*commentID)
 }

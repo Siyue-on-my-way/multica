@@ -115,11 +115,16 @@ export interface SubIssuePlanItem {
 	goal: string;
 	kind?: "implementation" | "summary_test";
 	business?: string;
+	/** Identified source task(s) this item covers — the coverage proof. */
+	source_task_ids?: string[];
 }
 
 export interface SubIssuePlan {
 	id: string;
 	name: string;
+	/** "full" on the plan the backend verified to cover every identified task;
+	 *  the panel defaults to it. Other plans are optional references. */
+	coverage?: "full" | "partial";
 	items: SubIssuePlanItem[];
 }
 

@@ -49,6 +49,7 @@ func TestExpandSubissuePlanRetainsOldestAncestorDescription(t *testing.T) {
 		nil,
 		plan,
 		"",
+		"",
 	)
 	if err != nil {
 		t.Fatalf("expand subissue plan: %v", err)

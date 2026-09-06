@@ -67,6 +67,8 @@
     "ancestor_context_hint": "On by default: includes only ancestor titles and descriptions, not discussion history.",
     "outline_edit_hint": "Select items to merge, or edit their titles and goals directly.",
     "plan_item_count": "{{count}} items",
+    "plan_full_badge": "Full coverage",
+    "plan_reference_hint": "Reference granularity only — it does not promise to cover every task in the original reply.",
     "summary_test_badge": "Integration test",
     "business_label": "Business",
     "business_placeholder": "Business name",

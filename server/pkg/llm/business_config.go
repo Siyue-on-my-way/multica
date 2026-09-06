@@ -35,8 +35,9 @@ const (
 )
 
 const (
-	BusinessStageOutline = "outline"
-	BusinessStageDetail  = "detail"
+	BusinessStageOutline   = "outline"
+	BusinessStageDetail    = "detail"
+	BusinessStageRecognize = "recognize"
 )
 
 const (
@@ -111,6 +112,17 @@ var businessDefinitions = map[Business]businessDefinition{
 					"siblings":          {},
 					"candidate_parents": {},
 					"human_constraints": {},
+					"identified_tasks":  {},
+					"retry_feedback":    {},
+				},
+			},
+			BusinessStageRecognize: {
+				expectedOutput: "json",
+				variables: map[string]struct{}{
+					"comment_segment": {},
+					"segment_index":   {},
+					"segment_total":   {},
+					"retry_feedback":  {},
 				},
 			},
 			BusinessStageDetail: {
@@ -126,6 +138,7 @@ var businessDefinitions = map[Business]businessDefinition{
 					"candidate_parents": {},
 					"human_constraints": {},
 					"approved_outline":  {},
+					"retry_feedback":    {},
 				},
 			},
 		},
@@ -1015,41 +1028,60 @@ func (c *BusinessClient) GenerateTextTemplate(ctx context.Context, variables map
 
 // GenerateJSONTemplate is the structured sibling of GenerateTextTemplate.
 func (c *BusinessClient) GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
+	raw, _, err := c.GenerateJSONTemplateDetailed(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	return raw, err
+}
+
+// GenerateJSONTemplateDetailed is GenerateJSONTemplate with the upstream
+// usage/finish-reason stats surfaced for per-attempt structured logging.
+func (c *BusinessClient) GenerateJSONTemplateDetailed(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, GenerateStats, error) {
 	snapshot, call, err := c.resolveCall()
 	if err != nil {
-		return "", err
+		return "", GenerateStats{}, err
 	}
-	return generateBusinessJSON(ctx, c.business, snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	return generateBusinessJSONDetailed(ctx, c.business, snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
 }
 
 // GenerateJSONTemplate renders the phase-specific prompt and makes a
 // structured completion. A legacy top-level YAML is used as a migration
 // fallback when it predates the stages map.
 func (c *BusinessStageClient) GenerateJSONTemplate(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
+	raw, _, err := c.GenerateJSONTemplateDetailed(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	return raw, err
+}
+
+// GenerateJSONTemplateDetailed is GenerateJSONTemplate with the upstream
+// usage/finish-reason stats surfaced for per-attempt structured logging.
+func (c *BusinessStageClient) GenerateJSONTemplateDetailed(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, GenerateStats, error) {
 	snapshot, call, err := c.resolveCall()
 	if err != nil {
-		return "", err
+		return "", GenerateStats{}, err
 	}
-	return generateBusinessJSON(ctx, c.parent.business+"/"+Business(c.stage), snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	return generateBusinessJSONDetailed(ctx, c.parent.business+"/"+Business(c.stage), snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
 }
 
 func generateBusinessJSON(ctx context.Context, name Business, snapshot *businessSnapshot, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {
+	raw, _, err := generateBusinessJSONDetailed(ctx, name, snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	return raw, err
+}
+
+func generateBusinessJSONDetailed(ctx context.Context, name Business, snapshot *businessSnapshot, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, GenerateStats, error) {
 	system, user, err := renderBusinessCall(name, call, variables, fallbackSystem, fallbackUserTemplate)
 	if err != nil {
-		return "", err
+		return "", GenerateStats{}, err
 	}
 	temperature, maxTokens := snapshotLimits(call, fallbackTemperature, fallbackMaxCompletionTokens)
 	ctx, cancel := withBusinessTimeout(ctx, call.timeout)
 	defer cancel()
-	raw, err := snapshot.clientFor(call).GenerateJSON(ctx, "", system, user, temperature, maxTokens)
+	raw, stats, err := snapshot.clientFor(call).GenerateJSONDetailed(ctx, "", system, user, temperature, maxTokens)
 	if err != nil {
-		return "", err
+		return "", stats, err
 	}
 	raw = StripJSONFence(raw)
 	if err := validateBusinessJSON(raw, call.jsonSchema); err != nil {
-		return "", fmt.Errorf("validate %s response: %w", name, err)
+		return "", stats, fmt.Errorf("validate %s response: %w", name, err)
 	}
-	return raw, nil
+	return raw, stats, nil
 }
 
 func renderBusinessCall(name Business, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string) (string, string, error) {
