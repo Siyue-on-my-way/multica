@@ -1661,26 +1661,29 @@ func acceptConventionalSkillDir(ctx context.Context, httpClient *http.Client, ra
 // phase well under the overall import deadline for a full (256-file) bundle.
 const treeDownloadConcurrency = 8
 
-// addSupportingFilesFromTree enumerates the supporting files under skillDir from
-// a single recursive git tree, enforces the per-file / count / total-byte caps
-// arithmetically from the tree metadata BEFORE downloading anything (so an
-// over-limit skill fails fast with a clear error instead of timing out), then
-// downloads the surviving files concurrently and appends them in a stable path
-// order. It replaces the legacy per-directory contents crawl (collectGitHubFiles).
-func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, result *importedSkill, tree []githubTreeEntry, rawPrefix, skillDir string) error {
+// zipballPreferredFileCount is the supporting-file count above which a GitHub
+// import switches from one raw fetch per file to a single whole-repo zipball
+// download. Per-file raw fetches each pay the link's round-trip latency, so
+// on a slow or jittery link dozens of them overrun the import deadline (193
+// files blew 45s where the 16MB zipball took 2s); one zip request pays it
+// once.
+const zipballPreferredFileCount = 12
+
+// treeFile is one supporting-file candidate selected from a git tree.
+type treeFile struct {
+	repoPath string
+	relPath  string
+	size     int64
+}
+
+// eligibleTreeFiles returns the supporting-file blobs under skillDir that the
+// import would carry, applying the shared filters: skip the skill's own
+// SKILL.md, LICENSE files, and dependency folders. Shared by the tree download
+// phase and the zipball-vs-raw route decision so both see the same file set.
+func eligibleTreeFiles(tree []githubTreeEntry, skillDir string) []treeFile {
 	basePath := ""
 	if skillDir != "" {
 		basePath = skillDir + "/"
-	}
-
-	// Select the eligible supporting-file blobs under skillDir, mirroring the
-	// filters the download loop / addFile applies: skip the skill's own SKILL.md
-	// and LICENSE files. Binary assets are retained and transported as base64,
-	// so they participate in the same cap arithmetic as text resources.
-	type treeFile struct {
-		repoPath string
-		relPath  string
-		size     int64
 	}
 	var eligible []treeFile
 	for _, entry := range tree {
@@ -1703,6 +1706,21 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		}
 		eligible = append(eligible, treeFile{repoPath: entry.Path, relPath: relPath, size: entry.size()})
 	}
+	return eligible
+}
+
+// addSupportingFilesFromTree enumerates the supporting files under skillDir from
+// a single recursive git tree, enforces the per-file / count / total-byte caps
+// arithmetically from the tree metadata BEFORE downloading anything (so an
+// over-limit skill fails fast with a clear error instead of timing out), then
+// downloads the surviving files concurrently and appends them in a stable path
+// order. It replaces the legacy per-directory contents crawl (collectGitHubFiles).
+func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, result *importedSkill, tree []githubTreeEntry, rawPrefix, skillDir string) error {
+	// Select the eligible supporting-file blobs under skillDir, mirroring the
+	// filters the download loop / addFile applies: skip the skill's own SKILL.md
+	// and LICENSE files. Binary assets are retained and transported as base64,
+	// so they participate in the same cap arithmetic as text resources.
+	eligible := eligibleTreeFiles(tree, skillDir)
 
 	// Stable order so imports are deterministic regardless of download timing.
 	sort.Slice(eligible, func(i, j int) bool { return eligible[i].relPath < eligible[j].relPath })
@@ -2301,6 +2319,19 @@ func fetchFromGitHub(ctx context.Context, httpClient *http.Client, rawURL string
 		tree, treeTruncated, treeErr = fetchGitHubTree(ctx, httpClient, spec.owner, spec.repo, spec.ref)
 	}
 	if treeErr == nil && !treeTruncated {
+		// Many supporting files make one raw fetch per file slower than the
+		// whole-repo zipball even on a good link, and fatal on a flaky one:
+		// 193 raw fetches blew a 45s deadline that the 16MB zipball cleared
+		// in 2s. Big imports take the zip; small ones keep precise per-file
+		// fetching. A zipball failure degrades to the tree path.
+		if len(eligibleTreeFiles(tree, spec.skillDir)) > zipballPreferredFileCount {
+			if zipResult, zipErr := importGitHubSkillFromZipball(ctx, httpClient, spec, rawURL); zipErr == nil {
+				return zipResult, nil
+			} else {
+				slog.Warn("github import: zipball route failed, falling back to raw downloads",
+					"owner", spec.owner, "repo", spec.repo, "error", zipErr)
+			}
+		}
 		if err := addSupportingFilesFromTree(ctx, httpClient, result, tree, rawPrefix, spec.skillDir); err != nil {
 			return nil, err
 		}

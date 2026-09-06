@@ -3,11 +3,13 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -125,22 +127,32 @@ func isTruthyFormValue(v string) bool {
 // directory (my-skill/SKILL.md, my-skill/scripts/...) — the layout produced by
 // Anthropic's package_skill. Both are accepted by rooting on the shallowest
 // SKILL.md found.
+func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
+	return parseSkillArchiveAt(data, filename, "")
+}
+
+// parseSkillArchiveAt is parseSkillArchive with an optional target directory.
+// wantSkillDir selects the SKILL.md whose directory ends with that path
+// segment-wise — a repo zipball wraps everything in "<repo>-<ref>/", so the
+// entry for skill dir "archify" is "archify-main/archify/SKILL.md". With an
+// empty wantSkillDir the shallowest SKILL.md wins, as before.
 //
 // Safety: every entry is validated against traversal / absolute paths
 // (zip-slip), the reserved SKILL.md supporting path is dropped, per-file size is
 // bounded while reading (so a lying zip header can't blow up memory), and the
 // shared addFile enforces the per-bundle byte and file-count caps.
-func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
+func parseSkillArchiveAt(data []byte, filename, wantSkillDir string) (*importedSkill, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("uploaded file is not a valid .skill/.zip archive")
 	}
 
-	// Locate the skill root: the directory of the shallowest SKILL.md. This
-	// accepts both a root-level SKILL.md and the common single-wrapper layout.
-	// The candidate path is validated up front (absolute / traversal entries are
-	// rejected) so a malicious archive cannot smuggle an unsafe path in as the
-	// primary content — keeping every accepted entry zip-slip-safe.
+	// Locate the skill root. With no target dir this is the directory of the
+	// shallowest SKILL.md, accepting both a root-level SKILL.md and the common
+	// single-wrapper layout. The candidate path is validated up front
+	// (absolute / traversal entries are rejected) so a malicious archive
+	// cannot smuggle an unsafe path in as the primary content — keeping every
+	// accepted entry zip-slip-safe.
 	var skillMd *zip.File
 	rootPrefix := ""
 	for _, f := range zr.File {
@@ -154,6 +166,12 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 		if !validateFilePath(clean) {
 			continue
 		}
+		if wantSkillDir != "" {
+			dir := strings.TrimSuffix(archiveEntryPrefix(clean), "/")
+			if !skillDirSuffixMatches(dir, wantSkillDir) {
+				continue
+			}
+		}
 		prefix := archiveEntryPrefix(clean)
 		if skillMd == nil || len(prefix) < len(rootPrefix) {
 			skillMd = f
@@ -161,6 +179,9 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 		}
 	}
 	if skillMd == nil {
+		if wantSkillDir != "" {
+			return nil, fmt.Errorf("archive does not contain a SKILL.md under %s", wantSkillDir)
+		}
 		return nil, fmt.Errorf("archive does not contain a SKILL.md")
 	}
 
@@ -242,6 +263,62 @@ func archiveEntryPrefix(cleanName string) string {
 		return ""
 	}
 	return dir + "/"
+}
+
+// skillDirSuffixMatches reports whether the directory holding a SKILL.md ends
+// with want at a path-segment boundary — "archify-main/archify" ends with
+// "archify", but "archify-main/archify-v2" does not. Comparison is
+// case-insensitive to match the rest of the root-picking logic.
+func skillDirSuffixMatches(dir, want string) bool {
+	dir = strings.ToLower(dir)
+	want = strings.ToLower(strings.Trim(want, "/"))
+	if want == "" {
+		return false
+	}
+	return dir == want || strings.HasSuffix(dir, "/"+want)
+}
+
+// importGitHubSkillFromZipball imports a skill by downloading the whole
+// repository zip in ONE request instead of one raw fetch per supporting file.
+// Each raw fetch pays the link's round-trip latency, so a repo with dozens of
+// support files overruns the import deadline on a slow link where a single
+// zip request (one latency, full throughput) finishes in seconds. The zip is
+// parsed with the same archive machinery as an uploaded bundle, rooted at
+// spec.skillDir when one is known. GitHub answers the zipball endpoint with a
+// redirect whose Location carries its own grant, and net/http drops the
+// Authorization header on the cross-host hop, so the token never leaks.
+func importGitHubSkillFromZipball(ctx context.Context, httpClient *http.Client, spec githubSpec, rawURL string) (*importedSkill, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/zipball/%s",
+		url.PathEscape(spec.owner), url.PathEscape(spec.repo), escapeRefPath(spec.ref))
+	resp, err := doGitHubAPIGet(ctx, httpClient, apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImportArchiveUploadSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxImportArchiveUploadSize {
+		return nil, fmt.Errorf("%w: repository zip exceeds %d byte limit", errImportCapExceeded, maxImportArchiveUploadSize)
+	}
+
+	imported, err := parseSkillArchiveAt(data, spec.repo+"-"+spec.ref+".zip", spec.skillDir)
+	if err != nil {
+		return nil, err
+	}
+	imported.origin = map[string]any{
+		"type":       "github",
+		"source_url": rawURL,
+		"owner":      spec.owner,
+		"repo":       spec.repo,
+		"ref":        spec.ref,
+		"path":       spec.skillDir,
+	}
+	return imported, nil
 }
 
 // skillNameFromArchive derives a fallback skill name when SKILL.md carries no

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -1445,6 +1447,152 @@ func TestFetchFromGitHub_AutoDetectAmbiguousErrorListsCandidates(t *testing.T) {
 		if !strings.Contains(err.Error(), candidate) {
 			t.Fatalf("error should list candidate %q, got %q", candidate, err.Error())
 		}
+	}
+}
+
+// A repo whose skill has many supporting files must switch to the single
+// zipball request: per-file raw fetches overrun the import deadline on slow
+// links (193 files blew 45s where the zip took 2s).
+func TestFetchFromGitHub_LargeImportUsesZipball(t *testing.T) {
+	// Build the zipball GitHub would serve: everything wrapped in
+	// "<repo>-<ref>/", the skill in the "archify" subdirectory.
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	skillFiles := map[string]string{
+		"SKILL.md":                    "---\nname: archify\ndescription: zipball skill\n---\nbody",
+		"scripts/run.js":              "console.log('run')",
+		"examples/demo.html":          "<html>demo</html>",
+		"assets/logo.png":             "\x89PNG fake binary bytes",
+	}
+	for _, p := range []string{"README.md"} {
+		zw.Create("archify-main/" + p)
+	}
+	paths := make([]string, 0, len(skillFiles))
+	for p := range skillFiles {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		w, err := zw.Create("archify-main/archify/" + p)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := w.Write([]byte(skillFiles[p])); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
+	}
+	// Push the file count over the zipball threshold with dummy files.
+	for i := 0; i < zipballPreferredFileCount; i++ {
+		w, _ := zw.Create(fmt.Sprintf("archify-main/archify/examples/gen-%02d.html", i))
+		w.Write([]byte("<html>x</html>"))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	zipBytes := zipBuf.Bytes()
+
+	client, requests := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Test-Original-Host") {
+		case "api.github.com":
+			switch r.URL.Path {
+			case "/repos/acme/archify":
+				writeJSON(w, http.StatusOK, map[string]any{"default_branch": "main"})
+			case "/repos/acme/archify/git/trees/main":
+				tree := []githubTreeEntry{
+					{Path: "archify/SKILL.md", Type: "blob", Size: 100},
+				}
+				for i := 0; i < zipballPreferredFileCount+2; i++ {
+					tree = append(tree, githubTreeEntry{
+						Path: fmt.Sprintf("archify/examples/gen-%02d.html", i), Type: "blob", Size: 14,
+					})
+				}
+				writeJSON(w, http.StatusOK, githubTreeResponse{Tree: tree})
+			case "/repos/acme/archify/zipball/main":
+				w.Write(zipBytes)
+			default:
+				http.NotFound(w, r)
+			}
+		case "raw.githubusercontent.com":
+			// The root probe and the auto-detected SKILL.md may hit raw;
+			// supporting files must all come from the zip.
+			if r.URL.Path == "/acme/archify/main/archify/SKILL.md" {
+				w.Write([]byte("---\nname: archify\ndescription: zipball skill\n---\nbody"))
+				return
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	result, err := fetchFromGitHub(t.Context(), client, "https://github.com/acme/archify")
+	if err != nil {
+		t.Fatalf("fetchFromGitHub: %v", err)
+	}
+	if result.name != "archify" {
+		t.Fatalf("name = %q, want archify", result.name)
+	}
+	if result.description != "zipball skill" {
+		t.Fatalf("description = %q, want zipball skill", result.description)
+	}
+	got := importedFilePaths(result.files)
+	if !containsString(got, "scripts/run.js") || !containsString(got, "examples/demo.html") ||
+		!containsString(got, "assets/logo.png") {
+		t.Fatalf("files = %v, want scripts/example/binary relative to the skill dir", got)
+	}
+	if len(got) != zipballPreferredFileCount+3 {
+		t.Fatalf("file count = %d, want %d (12 gen + 3 real, SKILL.md is primary content)", len(got), zipballPreferredFileCount+3)
+	}
+	if result.origin["path"] != "archify" {
+		t.Fatalf("origin path = %v, want archify", result.origin["path"])
+	}
+	// No supporting file may be fetched individually.
+	for _, req := range *requests {
+		if strings.Contains(req, "raw.githubusercontent.com /acme/archify/main/archify/") &&
+			!strings.Contains(req, "/archify/SKILL.md") {
+			t.Fatalf("supporting file fetched via raw despite zipball route: %s", req)
+		}
+	}
+	if !containsString(*requests, "api.github.com /repos/acme/archify/zipball/main") {
+		t.Fatalf("expected zipball request, got %v", *requests)
+	}
+}
+
+// parseSkillArchiveAt must root at the requested skill dir inside a repo
+// zipball wrapper, not the shallowest SKILL.md.
+func TestParseSkillArchiveAt_TargetsSkillDir(t *testing.T) {
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	for _, p := range []string{
+		"repo-main/other/SKILL.md",
+		"repo-main/other/a.txt",
+		"repo-main/archify/SKILL.md",
+		"repo-main/archify/b.txt",
+	} {
+		w, err := zw.Create(p)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		body := "frontmatter"
+		if strings.HasSuffix(p, "SKILL.md") {
+			body = "---\nname: " + strings.TrimSuffix(path.Base(path.Dir(p)), "") + "\n---\nbody"
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	zw.Close()
+
+	imported, err := parseSkillArchiveAt(zipBuf.Bytes(), "repo-main.zip", "archify")
+	if err != nil {
+		t.Fatalf("parseSkillArchiveAt: %v", err)
+	}
+	if got := importedFilePaths(imported.files); !equalStrings(got, []string{"b.txt"}) {
+		t.Fatalf("files = %v, want [b.txt] (only the targeted skill dir)", got)
+	}
+
+	if _, err := parseSkillArchiveAt(zipBuf.Bytes(), "repo-main.zip", "missing-dir"); err == nil {
+		t.Fatal("expected error for a missing target dir")
 	}
 }
 
