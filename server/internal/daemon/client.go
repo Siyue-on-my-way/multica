@@ -554,6 +554,16 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}, nil)
 }
 
+// ReportTaskContextObservation reports the context-observation record a run
+// captured at its assembly-complete / provider-startup boundary. It is
+// fire-and-forget relative to task completion: a failure to record never blocks
+// or alters the run, so existing task execution is unaffected. The payload is
+// already redacted (secrets/emails/absolute paths scrubbed) before it leaves the
+// daemon; MCP config raw is withheld entirely.
+func (c *Client) ReportTaskContextObservation(ctx context.Context, taskID string, obs ContextObservation) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/context-observation", taskID), obs, nil)
+}
+
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
 	body := map[string]any{"error": errMsg}
 	if sessionID != "" {

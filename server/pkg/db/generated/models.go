@@ -1388,6 +1388,13 @@ type SysCronExecution struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TaskContextObservation struct {
+	TaskID     pgtype.UUID        `json:"task_id"`
+	Payload    []byte             `json:"payload"`
+	ObservedAt pgtype.Timestamptz `json:"observed_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type TaskMessage struct {
 	ID        pgtype.UUID        `json:"id"`
 	TaskID    pgtype.UUID        `json:"task_id"`

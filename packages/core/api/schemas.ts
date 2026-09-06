@@ -2004,6 +2004,41 @@ export const AgentTaskSchema = z.object({
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
+// SIY-125: context observation (`GET /api/tasks/:id/context`). Every field
+// degrades to a safe default so a partially-upgraded server (no observation
+// row, or an older shape) cannot break the execution log — the badge falls
+// back to "unknown" rather than erroring.
+const TaskContextSectionSchema = z.object({
+  key: z.string().default(""),
+  source: z.string().default(""),
+  delivery: z.string().default(""),
+  injected: z.boolean().default(false),
+  bytes: z.number().default(0),
+  token_count: z.number().default(0),
+  truncated: z.boolean().default(false),
+  digest: z.string().default(""),
+  preview: z.string().default(""),
+  raw: z.string().optional().catch(undefined),
+}).loose();
+
+export const TaskContextSchema = z.object({
+  task_id: z.string().default(""),
+  provider: z.string().optional().catch(undefined),
+  runtime_id: z.string().optional().catch(undefined),
+  session_reused: z.boolean().default(false),
+  resume_expected: z.boolean().default(false),
+  resume_actual: z.string().default("unknown"),
+  fallback_reason: z.string().optional().catch(undefined),
+  workdir_reused: z.boolean().default(false),
+  prompt_bytes: z.number().default(0),
+  input_tokens: z.number().default(0),
+  token_mode: z.string().default("estimated"),
+  sections: z.array(TaskContextSectionSchema).default([]),
+  session_id: z.string().optional().catch(undefined),
+  observed_at: z.string().optional().catch(undefined),
+  completed_at: z.string().nullable().optional().catch(undefined),
+}).loose();
+
 // Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
 // chat recovery. Its optional message payload must be well-formed before the
 // UI deletes a message from cache or restores text into the input.

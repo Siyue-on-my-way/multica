@@ -177,6 +177,8 @@ export const issueKeys = {
   tasksAll: () => ["issues", "tasks"] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
+  /** SIY-125: per-task context observation (lazy-loaded by the Context badge). */
+  taskContext: (taskId: string) => ["issues", "task-context", taskId] as const,
   sourceContextPreview: (wsId: string, anchorCommentId: string) =>
     ["source-context", "preview", wsId, anchorCommentId] as const,
 };

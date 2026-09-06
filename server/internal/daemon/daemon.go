@@ -8246,6 +8246,25 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"idle_watchdog", execOpts.IdleWatchdogTimeout,
 	)
 
+	// SIY-125: capture the context-observation record at the assembly-complete
+	// / provider-startup boundary. This is observation-only — it reads in-scope
+	// values and never mutates task/prompt/execOpts, so Prompt assembly and
+	// session-resume behavior are unchanged. The record is refined with the
+	// post-run outcome (resume_actual, fallback reason, session id) and reported
+	// by the defer below; a report failure is non-fatal.
+	contextObs := buildContextObservation(observationParams{
+		task:               task,
+		provider:           provider,
+		runtimeID:          task.RuntimeID,
+		runtimeBrief:       runtimeBrief,
+		prompt:             prompt,
+		mcpConfig:          mcpConfig,
+		resumeSessionID:    execOpts.ResumeSessionID,
+		inlineSystemPrompt: execOpts.SystemPrompt != "",
+		resumeExpected:     execOpts.ResumeExpected,
+		workdirReused:      envReused,
+	}, time.Now())
+
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
@@ -8253,6 +8272,20 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, err
 	}
+
+	// SIY-125: refine the context observation with the post-run outcome and
+	// report it. freshRetryFired / fallbackReason are set by the fresh-session
+	// retry path below; on the normal path the record keeps its boundary
+	// resume state and lands as resumed/fresh. Reporting is best-effort: a
+	// failure is logged and never blocks the run's own completion reporting.
+	var freshRetryFired bool
+	var fallbackReason string
+	defer func() {
+		refineContextObservation(&contextObs, result.SessionID, freshRetryFired, fallbackReason, time.Now())
+		if err := d.client.ReportTaskContextObservation(ctx, task.ID, contextObs); err != nil {
+			taskLog.Warn("report context observation failed (non-fatal)", "error", err)
+		}
+	}()
 
 	// retiredSessionID is the session this run was told to resume and then
 	// abandoned. Captured before the retry clears task.PriorSessionID, and
@@ -8271,6 +8304,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			retiredSessionID = task.PriorSessionID
 		}
 		taskLog.Warn("session resume failed, retrying with fresh session", "error", result.Error)
+		// SIY-125: the fresh-retry path is the "Fallback" observation state.
+		freshRetryFired = true
+		fallbackReason = result.Error
 
 		// Rebuild cold-session context before the single retry. The prior
 		// provider transcript is gone (missing, account-mismatched, or —

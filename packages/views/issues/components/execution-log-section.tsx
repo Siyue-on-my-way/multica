@@ -27,6 +27,7 @@ import {
 } from "../../runtimes/utils";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 import { IssueUsageDialog } from "./issue-usage-dialog";
+import { ContextBadge } from "./context-badge";
 import { TaskStatusIcon } from "./task-status-icon";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 
@@ -368,6 +369,7 @@ export function ActiveTaskRow({
     <RowShell task={task}>
       <TriggerText text={trigger} />
       <TaskCommentCoverage task={task} />
+      <ContextBadge task={task} />
       <RowStatus title={label}>
         {task.status === "running" ? (
           <>
@@ -526,6 +528,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     <RowShell task={task} title={rowTitle}>
       <TriggerText text={trigger} />
       <TaskCommentCoverage task={task} />
+      <ContextBadge task={task} />
       <RowStatus title={statusTitle}>
         <TaskStatusIcon status={task.status} />
         <span className="sr-only">

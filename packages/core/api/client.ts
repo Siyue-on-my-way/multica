@@ -250,12 +250,14 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import type { TaskContext } from "../types/task-context";
 import {
   AgentTaskListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChatDraftRestoresResponseSchema,
   ChatMessageListSchema,
+  TaskContextSchema,
   ChatMessagesPageSchema,
   ChatPendingTaskSchema,
   ChatSessionListSchema,
@@ -2466,6 +2468,35 @@ export class ApiClient {
     return parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {
       endpoint: "GET /api/issues/:id/task-runs",
     });
+  }
+
+  // SIY-125: lazy-load a task's context observation. `raw` requests the full
+  // (still-redacted) section text behind the owner/admin gate; omit it for the
+  // default redacted summary used by the badge. A missing or malformed record
+  // degrades to an "unknown" empty context rather than throwing, so the
+  // execution log never breaks on a partially-upgraded server.
+  async getTaskContext(taskId: string, raw?: string): Promise<TaskContext> {
+    const path =
+      raw && raw.length > 0
+        ? `/api/tasks/${taskId}/context?raw=${encodeURIComponent(raw)}`
+        : `/api/tasks/${taskId}/context`;
+    const data = await this.fetch<unknown>(path);
+    return parseWithFallback<TaskContext>(
+      data,
+      TaskContextSchema,
+      {
+        task_id: taskId,
+        session_reused: false,
+        resume_expected: false,
+        resume_actual: "unknown",
+        workdir_reused: false,
+        prompt_bytes: 0,
+        input_tokens: 0,
+        token_mode: "estimated",
+        sections: [],
+      },
+      { endpoint: "GET /api/tasks/:id/context" },
+    );
   }
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
