@@ -19,9 +19,13 @@ import (
 // directory" — unbounded for a chat session, which stays "active" with no time
 // limit. See #6782, and #5654 for the original issue-path fix.
 //
-// sandboxBinRel is the exact managed subpath, spelled out here so a change to
-// ManagedReclaimableArtifactSubpaths has to face these tests.
-const sandboxBinRel = "codex-home/.sandbox-bin"
+// sandboxBinRel and codexTmpRel are the exact managed subpaths, spelled out
+// here so a change to ManagedReclaimableArtifactSubpaths has to face these
+// tests.
+const (
+	sandboxBinRel = "codex-home/.sandbox-bin"
+	codexTmpRel   = "codex-home/.tmp"
+)
 
 // chatGCMux serves a chat gc-check that reports the given status.
 func chatGCMux(chatID, status string) *http.ServeMux {
@@ -96,6 +100,77 @@ func TestManagedArtifact_IdleActiveChatReclaimsSandboxBin(t *testing.T) {
 	if got := stats.byPattern[managedArtifactPatternPrefix+sandboxBinRel]; got != 1 {
 		t.Fatalf("managed pattern count = %d, want 1", got)
 	}
+}
+
+// TestManagedArtifact_CodexTmpPluginCache pins the second managed cache:
+// codex-home/.tmp is the Codex CLI's per-session plugin staging copy (~98 MiB
+// per session, SIY-123) and used to sit outside the reclaimable list entirely,
+// so every finished task kept one. Same contract as .sandbox-bin: gone once
+// the task has been idle past GCArtifactTTL, untouched while a task is live on
+// the env root.
+func TestManagedArtifact_CodexTmpPluginCache(t *testing.T) {
+	t.Parallel()
+	chatID := "aaaaaaaa-0000-0000-0000-000000000008"
+	d := newGCTestDaemon(t, chatGCMux(chatID, "active"))
+
+	t.Run("idle past ttl is reclaimed", func(t *testing.T) {
+		taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "tmp-idle", &execenv.GCMeta{
+			Kind:          execenv.GCKindChat,
+			ChatSessionID: chatID,
+			WorkspaceID:   "ws",
+			CompletedAt:   time.Now().Add(-24 * time.Hour), // 2x the 12h artifact TTL
+		})
+		// Only .tmp is present — the fallback must notice the plugin cache on
+		// its own, not just in a task that also holds .sandbox-bin. Real
+		// content is a git clone of the plugin repo plus sync bookkeeping.
+		writeFile(t, filepath.Join(taskDir, codexTmpRel, "plugins/.git/HEAD"), 32)
+		writeFile(t, filepath.Join(taskDir, codexTmpRel, "plugins.sha"), 41)
+		writeFile(t, filepath.Join(taskDir, "codex-home/auth.json"), 32)
+
+		stats := &gcStats{byPattern: map[string]int{}}
+		action := d.shouldCleanTaskDir(context.Background(), taskDir)
+		if action != gcActionCleanManagedArtifacts {
+			t.Fatalf("want gcActionCleanManagedArtifacts, got %d", action)
+		}
+		d.applyGCAction(taskDir, action, stats)
+
+		assertGone(t, taskDir, codexTmpRel)
+		assertKept(t, taskDir, "codex-home/auth.json", ".gc_meta.json")
+		if got := stats.byPattern[managedArtifactPatternPrefix+codexTmpRel]; got != 1 {
+			t.Fatalf("managed pattern count = %d, want 1", got)
+		}
+	})
+
+	t.Run("active env root keeps it", func(t *testing.T) {
+		taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "tmp-active", &execenv.GCMeta{
+			Kind:          execenv.GCKindChat,
+			ChatSessionID: chatID,
+			WorkspaceID:   "ws",
+			CompletedAt:   time.Now().Add(-365 * 24 * time.Hour),
+		})
+		writeFile(t, filepath.Join(taskDir, codexTmpRel, "plugins/cache/pack.tar"), 4096)
+
+		d.markActiveEnvRoot(taskDir)
+		if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
+			t.Fatalf("want gcActionSkip for an active env root, got %d", got)
+		}
+		assertKept(t, taskDir, codexTmpRel+"/plugins/cache/pack.tar")
+	})
+
+	t.Run("fresh completion inside ttl keeps it", func(t *testing.T) {
+		taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "tmp-fresh", &execenv.GCMeta{
+			Kind:          execenv.GCKindChat,
+			ChatSessionID: chatID,
+			WorkspaceID:   "ws",
+			CompletedAt:   time.Now().Add(-1 * time.Hour), // well inside the 12h TTL
+		})
+		writeFile(t, filepath.Join(taskDir, codexTmpRel, "plugins.sha"), 41)
+
+		if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
+			t.Fatalf("want gcActionSkip inside the TTL, got %d", got)
+		}
+		assertKept(t, taskDir, codexTmpRel+"/plugins.sha")
+	})
 }
 
 // A chat session that completed recently keeps its cache — resuming inside the
@@ -425,6 +500,20 @@ func TestManagedArtifact_DirectRemovalMatchesTreeWalk(t *testing.T) {
 			writeFile(t, filepath.Join(dir, sandboxBinRel, ".git/objects/x"), 16)
 			writeFile(t, filepath.Join(dir, "workdir/repo/.git/objects/y"), 16)
 		},
+		"tmp mirrors the real plugin staging shape": func(t *testing.T, dir string) {
+			// .tmp/plugins is a git clone in production, so pin the equivalence
+			// against exactly that shape.
+			writeFile(t, filepath.Join(dir, codexTmpRel, "plugins/.git/objects/x"), 16)
+			writeFile(t, filepath.Join(dir, codexTmpRel, "plugins.sha"), 41)
+			writeFile(t, filepath.Join(dir, codexTmpRel, "plugins.sync.lock"), 0)
+		},
+		"user-owned .tmp in workdir only": func(t *testing.T, dir string) {
+			// .tmp is a far more common leaf name than .sandbox-bin — plenty of
+			// tools scatter .tmp directories through a repo. Only the exact
+			// codex-home/.tmp path is managed.
+			writeFile(t, filepath.Join(dir, "workdir/repo/.tmp/keep"), 16)
+			writeFile(t, filepath.Join(dir, "codex-home/auth.json"), 16)
+		},
 		"codex-home is a regular file": func(t *testing.T, dir string) {
 			writeFile(t, filepath.Join(dir, "codex-home"), 16)
 		},
@@ -445,6 +534,16 @@ func TestManagedArtifact_DirectRemovalMatchesTreeWalk(t *testing.T) {
 			outside := t.TempDir()
 			writeFile(t, filepath.Join(outside, ".sandbox-bin/x"), 16)
 			if err := os.Symlink(outside, filepath.Join(dir, "codex-home")); err != nil {
+				t.Skipf("symlink not supported: %v", err)
+			}
+		},
+		"tmp leaf symlink": func(t *testing.T, dir string) {
+			outside := t.TempDir()
+			writeFile(t, filepath.Join(outside, "plugins/x"), 16)
+			if err := os.MkdirAll(filepath.Join(dir, "codex-home"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(dir, codexTmpRel)); err != nil {
 				t.Skipf("symlink not supported: %v", err)
 			}
 		},

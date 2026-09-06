@@ -46,6 +46,11 @@ else
   echo -e "\n${GREEN}[1] 跳过缓存清理（保留分层缓存以加速构建）${NC}"
 fi
 
+# SIY-123 (2026-09-06): 任务完成 72h 后整环境回收（自托管默认 0 = 永不回收，磁盘无限增长）。
+# daemon 的 GC 只读环境变量；此导出对 restart.sh 内的 daemon 重启生效，
+# 手动启动 daemon 时由 /root/.bashrc 中的同名导出兜底。
+export MULTICA_GC_COMPLETED_TASK_TTL="${MULTICA_GC_COMPLETED_TASK_TTL:-72h}"
+
 if [[ "$SKIP_BUILD" == false ]]; then
   echo -e "\n${GREEN}[2] 重新构建镜像：${BUILD_TARGETS}...${NC}"
   docker-compose build $NO_CACHE $BUILD_TARGETS
@@ -56,6 +61,11 @@ if [[ "$SKIP_BUILD" == false ]]; then
 else
   echo -e "\n${GREEN}[2] 跳过构建${NC}"
 fi
+
+# SIY-123 (2026-09-06): 构建缓存封顶 —— 保留最近 4GB 分层缓存加速后续构建，超出部分清理。
+# 否则每次重建都累积缓存层（曾无上限积累到 18G+）。
+echo -e "\n${GREEN}[2.1] 构建缓存封顶清理（保留 4GB）...${NC}"
+docker builder prune -f --keep-storage 4GB >/dev/null 2>&1 || true
 
 # 当 backend 重建时，同步更新本机 daemon 二进制，确保 /api/daemon/binary 下发的版本与本机一致
 if [[ "$SKIP_BUILD" == false ]] && [[ "$BUILD_TARGETS" == *"multica-backend"* ]]; then
