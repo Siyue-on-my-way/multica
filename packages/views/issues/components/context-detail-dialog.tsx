@@ -60,8 +60,8 @@ export function ContextDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-3xl !w-[calc(100vw-4rem)]">
-        <DialogHeader>
+      <DialogContent className="!w-[calc(100vw-2rem)] !max-w-3xl max-h-[85svh] min-w-0 overflow-hidden">
+        <DialogHeader className="min-w-0">
           <DialogTitle>{t(($) => $.context.dialog_title)}</DialogTitle>
           <DialogDescription>{t(($) => $.context.dialog_subtitle)}</DialogDescription>
         </DialogHeader>
@@ -73,19 +73,28 @@ export function ContextDetailDialog({
         ) : noObservation ? (
           <p className="text-caption text-muted-foreground">{t(($) => $.context.no_data)}</p>
         ) : (
-          <Tabs defaultValue="overview" className="mt-2">
-            <TabsList>
+          <Tabs defaultValue="overview" className="mt-2 min-h-0 min-w-0 max-w-full overflow-hidden">
+            <TabsList className="max-w-full overflow-x-auto">
               <TabsTrigger value="overview">{t(($) => $.context.tab_overview)}</TabsTrigger>
               <TabsTrigger value="tokens">{t(($) => $.context.tab_tokens)}</TabsTrigger>
               <TabsTrigger value="sections">{t(($) => $.context.tab_sections)}</TabsTrigger>
             </TabsList>
-            <TabsContent value="overview">
+            <TabsContent
+              value="overview"
+              className="min-h-0 min-w-0 max-h-[calc(85svh-8rem)] max-w-full overflow-auto"
+            >
               <OverviewLayer ctx={data} />
             </TabsContent>
-            <TabsContent value="tokens">
+            <TabsContent
+              value="tokens"
+              className="min-h-0 min-w-0 max-h-[calc(85svh-8rem)] max-w-full overflow-auto"
+            >
               <TokenBreakdownLayer ctx={data} />
             </TabsContent>
-            <TabsContent value="sections">
+            <TabsContent
+              value="sections"
+              className="min-h-0 min-w-0 max-h-[calc(85svh-8rem)] max-w-full overflow-auto"
+            >
               <SectionsLayer taskId={taskId} ctx={data} />
             </TabsContent>
           </Tabs>
@@ -112,7 +121,7 @@ function OverviewLayer({ ctx }: { ctx: TaskContext }) {
     [t(($) => $.context.field_prompt_bytes), String(ctx.prompt_bytes)],
   ];
   return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-caption">
+    <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-caption">
       {rows
         .filter(([, v]) => v !== undefined && v !== "")
         .map(([k, v]) => (
@@ -152,24 +161,28 @@ function TokenBreakdownLayer({ ctx }: { ctx: TaskContext }) {
           })}
         </div>
       )}
-      <table className="w-full text-caption">
-        <thead>
-          <tr className="text-left text-muted-foreground">
-            <th className="py-1 font-medium">{t(($) => $.context.col_section)}</th>
-            <th className="py-1 font-medium">{t(($) => $.context.col_delivery)}</th>
-            <th className="py-1 text-right font-medium">{t(($) => $.context.col_tokens)}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ctx.sections.map((s) => (
-            <tr key={s.key} className="border-t border-border/60">
-              <td className="py-1 font-mono">{s.key}</td>
-              <td className="py-1 text-muted-foreground">{DELIVERY_LABEL[s.delivery] ?? s.delivery}</td>
-              <td className="py-1 text-right tabular-nums">{formatTokens(s.token_count)}</td>
+      <div className="min-w-0 max-w-full overflow-x-auto">
+        <table className="w-full text-caption">
+          <thead>
+            <tr className="text-left text-muted-foreground">
+              <th className="py-1 font-medium">{t(($) => $.context.col_section)}</th>
+              <th className="py-1 font-medium">{t(($) => $.context.col_delivery)}</th>
+              <th className="py-1 text-right font-medium">{t(($) => $.context.col_tokens)}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {ctx.sections.map((s) => (
+              <tr key={s.key} className="border-t border-border/60">
+                <td className="py-1 font-mono break-words">{s.key}</td>
+                <td className="py-1 break-words text-muted-foreground">
+                  {DELIVERY_LABEL[s.delivery] ?? s.delivery}
+                </td>
+                <td className="py-1 text-right tabular-nums">{formatTokens(s.token_count)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -190,10 +203,10 @@ function SectionsLayer({ taskId, ctx }: { taskId: string; ctx: TaskContext }) {
   );
 
   return (
-    <div className="space-y-1.5">
+    <div className="min-w-0 max-w-full space-y-1.5 pr-1">
       {ctx.sections.map((s) => (
-        <div key={s.key} className="rounded border border-border/60 p-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption">
+        <div key={s.key} className="min-w-0 max-w-full overflow-hidden rounded border border-border/60 p-2">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-caption">
             <span className="font-mono font-medium">{s.key}</span>
             <span className="text-muted-foreground">{DELIVERY_LABEL[s.delivery] ?? s.delivery}</span>
             {s.injected ? (
@@ -208,7 +221,9 @@ function SectionsLayer({ taskId, ctx }: { taskId: string; ctx: TaskContext }) {
               {formatTokens(s.token_count)} · {s.bytes}B
             </span>
             {s.preview && (
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{s.preview}</span>
+              <span className="min-w-0 max-w-full flex-1 truncate text-muted-foreground">
+                {s.preview}
+              </span>
             )}
           </div>
           <button
@@ -219,7 +234,7 @@ function SectionsLayer({ taskId, ctx }: { taskId: string; ctx: TaskContext }) {
             {expanded === s.key ? t(($) => $.context.hide_raw) : t(($) => $.context.view_raw)}
           </button>
           {expanded === s.key && (
-            <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/60 p-2 text-micro">
+            <pre className="mt-1 max-h-60 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-muted/60 p-2 text-micro">
               {isFetching
                 ? t(($) => $.context.loading)
                 : rawSection?.raw
