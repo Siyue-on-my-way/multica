@@ -58,6 +58,9 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 DOCKER_BUILD_LOCK_FILE="${DOCKER_BUILD_LOCK_FILE:-/tmp/multica-docker-build.lock}"
 DOCKER_HOUSEKEEPING_SCRIPT="${DOCKER_HOUSEKEEPING_SCRIPT:-$REPO_ROOT/scripts/docker-housekeeping.sh}"
 DISK_GUARD_SCRIPT="${DISK_GUARD_SCRIPT:-$REPO_ROOT/scripts/disk-guard.sh}"
+# SIY-153: 用户上传数据生命周期巡检。默认 dry-run 只报告，重启路径永不删除；
+# 设 UPLOADS_GC_REPORT_ON_RESTART=0 可关闭。
+UPLOADS_GC_SCRIPT="${UPLOADS_GC_SCRIPT:-$REPO_ROOT/scripts/uploads-gc.sh}"
 
 run_locked_build() {
   command -v flock >/dev/null 2>&1 || {
@@ -85,6 +88,19 @@ run_housekeeping() {
     "$DOCKER_HOUSEKEEPING_SCRIPT"
   else
     echo -e "${YELLOW}未找到统一 Docker 清理脚本，跳过清理：$DOCKER_HOUSEKEEPING_SCRIPT${NC}" >&2
+  fi
+}
+
+# 上传数据生命周期巡检：脚本默认 dry-run，只报告引用/孤儿/宽限期状态。
+# 数据库不可达时脚本自身会失败，这里只打警告，绝不影响重启。
+run_uploads_gc_report() {
+  if [[ "${UPLOADS_GC_REPORT_ON_RESTART:-1}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -x "$UPLOADS_GC_SCRIPT" ]]; then
+    "$UPLOADS_GC_SCRIPT" || echo -e "${YELLOW}[uploads-gc] 上传数据巡检未完成（不影响重启；重启路径永远不会自动删除上传数据）${NC}" >&2
+  else
+    echo -e "${YELLOW}未找到上传数据巡检脚本，跳过：$UPLOADS_GC_SCRIPT${NC}" >&2
   fi
 }
 
@@ -167,6 +183,9 @@ if [[ "$BUILD_PERFORMED" == true ]]; then
   echo -e "\n${GREEN}[5.2] 清理后磁盘快照（对比 [2.1] 可见本次回收效果）...${NC}"
   run_disk_guard report "清理后"
 fi
+
+echo -e "\n${GREEN}[5.3] 用户上传数据生命周期巡检（SIY-153，默认只报告不删除）...${NC}"
+run_uploads_gc_report
 
 echo -e "\n${GREEN}[6] 检查服务状态...${NC}"
 sleep 5
