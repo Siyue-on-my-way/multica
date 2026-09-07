@@ -772,7 +772,7 @@
   "context": {
     "tooltip": "本次运行的上下文观测——点击查看详情",
     "badge_resumed": "复用会话",
-    "badge_new_session": "新会话",
+    "badge_new_session": "新建会话",
     "badge_fallback": "降级重试",
     "badge_unknown": "未知",
     "summary_estimated_prefix": "约 ",

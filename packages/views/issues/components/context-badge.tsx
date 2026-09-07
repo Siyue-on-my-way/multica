@@ -8,7 +8,6 @@ import {
   type ContextBadgeState,
 } from "@multica/core/types/task-context";
 import { useT } from "../../i18n";
-import { formatTokens } from "../../runtimes/utils";
 import { ContextDetailDialog } from "./context-detail-dialog";
 
 // SIY-125: a compact Context badge on each execution-log run row. The daemon
@@ -51,20 +50,6 @@ export function ContextBadge({ task }: { task: AgentTask }) {
           ? t(($) => $.context.badge_fallback)
           : t(($) => $.context.badge_unknown);
 
-  // "Input 约 1.8k tokens · 6 sources · workdir reused" — estimated token
-  // counts carry the "约" prefix; exact ones (provider-reported) do not.
-  let summary: string | null = null;
-  if (data && data.resume_actual !== "unknown") {
-    const prefix =
-      data.token_mode === "exact" ? "" : t(($) => $.context.summary_estimated_prefix);
-    const tokens = formatTokens(data.input_tokens);
-    const sources = `${data.sections.length} ${t(($) => $.context.sources)}`;
-    const workdir = data.workdir_reused
-      ? t(($) => $.context.workdir_reused)
-      : t(($) => $.context.workdir_fresh);
-    summary = `${prefix}${tokens} ${t(($) => $.context.tokens_unit)} · ${sources} · ${workdir}`;
-  }
-
   return (
     <>
       <button
@@ -74,7 +59,6 @@ export function ContextBadge({ task }: { task: AgentTask }) {
         className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-micro font-medium transition-colors hover:opacity-80 ${STATE_CLASSES[state]}`}
       >
         {label}
-        {summary ? <span className="opacity-70"> · {summary}</span> : null}
       </button>
       <ContextDetailDialog taskId={task.id} open={open} onOpenChange={setOpen} />
     </>
