@@ -302,7 +302,7 @@ export function SubIssuePreviewModal({
           if (!open && !busy) onClose();
         }}
       >
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="flex flex-col sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {phase === "outline" ? t(($) => $.suggest_subissues.outline_title) : t(($) => $.suggest_subissues.details_title)}
@@ -315,7 +315,7 @@ export function SubIssuePreviewModal({
           </DialogHeader>
 
           {phase === "outline" && (
-            <>
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
               <div className="flex flex-col gap-1.5">
                 <label className="text-caption font-medium">{t(($) => $.suggest_subissues.constraints_label)}</label>
                 <Textarea
@@ -361,7 +361,7 @@ export function SubIssuePreviewModal({
               )}
 
               {!loadingPlans && !planError && plans.length > 0 && (
-                <div className="flex max-h-[58vh] flex-col gap-3 overflow-y-auto">
+                <div className="flex flex-col gap-3">
                   <div className="grid gap-2 sm:grid-cols-3">
                     {plans.map((plan) => (
                       <button
@@ -474,11 +474,11 @@ export function SubIssuePreviewModal({
                   )}
                 </div>
               )}
-            </>
+            </div>
           )}
 
           {phase === "details" && (
-            <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
               {loadingDetails && (
                 <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -556,7 +556,7 @@ export function SubIssuePreviewModal({
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             {phase === "outline" ? (
               <>
                 <Button variant="outline" onClick={onClose} disabled={busy}>

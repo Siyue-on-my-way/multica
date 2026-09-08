@@ -106,9 +106,12 @@ describe("SubIssuePreviewModal", () => {
     expect(await screen.findByText("Balanced split")).toBeInTheDocument();
     await user.click(screen.getByText("Balanced split"));
     expect(screen.getByText("Integration test")).toBeInTheDocument();
-    const checkboxes = screen.getAllByRole("checkbox");
-    await user.click(checkboxes[0]!);
-    await user.click(checkboxes[1]!);
+    // Name-based lookup: the outline also carries the ancestor-context
+    // checkbox above the plan list, so positional indexes select the wrong
+    // controls.
+    const mergeCheckboxes = screen.getAllByRole("checkbox", { name: "Select for merge" });
+    await user.click(mergeCheckboxes[0]!);
+    await user.click(mergeCheckboxes[1]!);
     await user.click(screen.getByRole("button", { name: "Merge selected" }));
 
     expect(screen.getByDisplayValue("【Billing】First task + Second task")).toBeInTheDocument();
