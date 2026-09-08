@@ -496,9 +496,9 @@ type AgentTaskResponse struct {
 	// task when compression ran (and by GET endpoints that resolve the issue
 	// row), so the UI can distinguish a manual checkpoint from a fresh or
 	// stale derived digest without guessing from the opaque summary bytes.
-	CompressionStatus         string `json:"compression_status,omitempty"`          // manual | fresh | stale | none
-	CompressionSourceRevision int64  `json:"compression_source_revision,omitempty"` // issue revision the derived summary was built from
-	CompressionLatencyMs      int32  `json:"compression_latency_ms,omitempty"`      // wall-clock duration of the last compression attempt
+	CompressionStatus string `json:"compression_status,omitempty"` // manual | fresh | stale | none
+	SourceRevision    int64  `json:"source_revision,omitempty"`    // issue revision the derived summary was built from
+	Latency           int32  `json:"latency,omitempty"`            // wall-clock duration in milliseconds of the last compression attempt
 	// ContextManifest is the SIY-167 claim-time audit record: which issue
 	// revision and handoff state this context was assembled from, which
 	// comments were delivered, and which known ids were omitted. The daemon

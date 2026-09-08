@@ -3032,14 +3032,15 @@ func TestClaimTask_ManualRetryReusesWorkdir(t *testing.T) {
 			"session_id":     session,
 			"work_dir":       workdir,
 		})
-		// force_fresh_session is always true on a rerun row (rollback-safe); the
-		// new claim handler resumes from the source task regardless.
+		// Keep the explicit retry mode on the row: only that mode may restore the
+		// source Provider session. force_fresh_session remains true here to verify
+		// the mode, rather than the legacy compatibility flag, is authoritative.
 		dbfx.Exec(t, `
 			INSERT INTO agent_task_queue (
 				agent_id, runtime_id, issue_id, status, priority,
-				rerun_of_task_id, force_fresh_session
+				rerun_of_task_id, force_fresh_session, rerun_mode
 			)
-			VALUES ($1, $2, $3, 'queued', 0, $4, TRUE)
+			VALUES ($1, $2, $3, 'queued', 0, $4, TRUE, 'retry')
 		`, agentID, runtimeID, issueID, sourceID)
 		return claimTaskForRuntimeGuard(t, runtimeID, daemonID)
 	}
@@ -3105,9 +3106,9 @@ func TestClaimTask_ManualRetryReusesWorkdir(t *testing.T) {
 		dbfx.Exec(t, `
 			INSERT INTO agent_task_queue (
 				agent_id, runtime_id, issue_id, status, priority,
-				rerun_of_task_id, force_fresh_session
+				rerun_of_task_id, force_fresh_session, rerun_mode
 			)
-			VALUES ($1, $2, $3, 'queued', 0, $4, TRUE)
+			VALUES ($1, $2, $3, 'queued', 0, $4, TRUE, 'retry')
 		`, agentID, runtimeID, issueID, sourceID)
 
 		task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)

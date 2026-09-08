@@ -2115,6 +2115,22 @@ func rerunSourceMatchesTaskScope(task, source db.AgentTaskQueue) bool {
 	return false
 }
 
+// rerunAllowsSourceSession is deliberately narrower than the source-workdir
+// reuse rule. A new_session rerun reuses the workdir so uncommitted artifacts
+// remain available, but it must start a new Provider session. Only the
+// explicit retry action is allowed to restore the source session; the legacy
+// empty mode is accepted only for an old row that explicitly opted out of a
+// fresh session.
+func rerunAllowsSourceSession(task db.AgentTaskQueue) bool {
+	if !task.RerunOfTaskID.Valid {
+		return false
+	}
+	if task.RerunMode == RerunActionRetry {
+		return true
+	}
+	return task.RerunMode == "" && !task.ForceFreshSession
+}
+
 func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 	return resp.AgentID != "" && resp.Agent != nil && resp.Agent.ID == resp.AgentID
 }
@@ -2702,10 +2718,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// resumed only when the source failure did not poison the
 			// conversation AND the source ran on this runtime.
 			//
-			// Resume-safety is computed HERE from the source task, not read off
-			// task.ForceFreshSession: RerunIssue pins that flag to true so an OLD
-			// claim handler mid rolling-deploy degrades to a clean start instead
-			// of resuming a different execution via the (agent, issue) lookup.
+			// Resume-safety is computed HERE from the source task and the explicit
+			// rerun mode. RerunIssue keeps force_fresh_session as a rollback-safe
+			// signal for old claim handlers, while this handler only permits the
+			// exact source session for the explicit retry mode.
 			// service.ResumeUnsafeFailure mirrors GetLastTaskSession, including
 			// its 400/invalid_request_error text defense for legacy /
 			// mis-classified rows that the exact-source path would otherwise miss.
@@ -2718,17 +2734,18 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// mount may still resolve it); only the per-cwd session is
 			// runtime-gated.
 			if src, err := h.Queries.GetAgentTask(r.Context(), task.RerunOfTaskID); err == nil && rerunSourceMatchesTaskScope(*task, src) {
+				allowSourceSession := rerunAllowsSourceSession(*task)
 				if src.WorkDir.Valid {
 					resp.PriorWorkDir = src.WorkDir.String
 				}
-				if !service.ResumeUnsafeFailure(src.FailureReason.String, src.Error.String) &&
+				if allowSourceSession && !service.ResumeUnsafeFailure(src.FailureReason.String, src.Error.String) &&
 					src.SessionID.Valid && src.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = src.SessionID.String
 				}
 				// MUL-5305: if the source task withheld its Codex session because
 				// the rollout was missing, this rerun has nothing resumable from it
 				// — disclose the gap rather than silently starting fresh.
-				if src.SessionRolloutMissing {
+				if allowSourceSession && src.SessionRolloutMissing {
 					resp.PriorSessionResumeUnavailable = true
 				}
 			} else if err == nil {
@@ -2740,7 +2757,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					"source_agent_id", uuidToString(src.AgentID),
 					"source_issue_id", uuidToString(src.IssueID),
 				)
-				resp.PriorSessionResumeUnavailable = true
+				if rerunAllowsSourceSession(*task) {
+					resp.PriorSessionResumeUnavailable = true
+				}
 			}
 		} else if !task.ForceFreshSession {
 			// Non-rerun follow-up on the same issue: resume the most recent

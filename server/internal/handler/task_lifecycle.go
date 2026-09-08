@@ -223,6 +223,10 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	if action == "" {
 		action = RerunActionLegacy
 	}
+	if action != RerunActionLegacy && action != RerunActionRefreshSummary && action != RerunActionNewSession && action != RerunActionRetry {
+		writeError(w, http.StatusBadRequest, "unsupported rerun action: "+action)
+		return
+	}
 	h.Metrics.RecordIssueRerunAction(action)
 
 	forceCompress := action == RerunActionRefreshSummary
@@ -246,19 +250,7 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	// can show it without a second read.
 	if action == RerunActionRefreshSummary {
 		result := h.compressHandoffContext(r.Context(), issue, true, "")
-		if !result.Written {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"compression_status": result.Status,
-				"skipped_reason":     result.SkippedReason,
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"compression_status":          result.Status,
-			"compression_source_revision": result.SourceRevision,
-			"compression_latency_ms":      result.LatencyMs,
-			"written":                     true,
-		})
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 
@@ -309,8 +301,8 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	// asked for a compressed rerun sees the state the run will start from.
 	if compressResult != nil {
 		resp.CompressionStatus = compressResult.Status
-		resp.CompressionSourceRevision = compressResult.SourceRevision
-		resp.CompressionLatencyMs = compressResult.LatencyMs
+		resp.SourceRevision = compressResult.SourceRevision
+		resp.Latency = compressResult.Latency
 	}
 	writeJSON(w, http.StatusAccepted, resp)
 }

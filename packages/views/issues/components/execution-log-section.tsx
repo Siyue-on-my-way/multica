@@ -486,7 +486,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     if (retrying) return;
     setRetrying(true);
     try {
-      await api.rerunIssue(issueId, task.id);
+		await api.rerunIssue(issueId, task.id, false, "retry");
     } catch (e) {
       // A rerun is now re-gated on the operator's invoke permission (MUL-4525):
       // a structured 403 means the agent can't be triggered, not a transient
@@ -510,7 +510,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     if (freshRetrying) return;
     setFreshRetrying(true);
     try {
-      await api.rerunIssue(issueId, task.id, true);
+		await api.rerunIssue(issueId, task.id, true, "new_session");
     } catch (e) {
       toast.error(
         dispatchReasonCode(e) === "invocation_not_allowed"

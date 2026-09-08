@@ -145,7 +145,7 @@ func fullyPopulatedIssue(t *testing.T) db.Issue {
 		AgentStatus:    pgtype.Text{String: "working", Valid: true},
 		HandoffSummary: []byte(`{"summary":"details"}`),
 		// SIY-167 compression state: set the derived fields so both renderings
-		// must agree on compression_status / source_revision / latency_ms with
+		// must agree on compression_status / source_revision / latency with
 		// non-zero values, not just coincidentally-equal zeros.
 		ManualCheckpoint:             []byte(`{"checkpoint":true}`),
 		DerivedSummarySourceRevision: pgtype.Int8{Int64: 7, Valid: true},

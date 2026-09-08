@@ -1309,7 +1309,7 @@ describe("IssueDetail (shared)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry run" }));
 
     await waitFor(() => {
-      expect(mockApiObj.rerunIssue).toHaveBeenCalledWith("issue-1", "task-failed");
+		expect(mockApiObj.rerunIssue).toHaveBeenCalledWith("issue-1", "task-failed", false, "retry");
     });
   });
 

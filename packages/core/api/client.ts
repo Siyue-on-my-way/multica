@@ -328,6 +328,8 @@ import {
   ListIssuesResponseSchema,
   CreateIssueResponseSchema,
   AgentTaskSchema,
+  RerunIssueResponseSchema,
+  type HandoffCompressionResponse,
   SourceContextPreviewSchema,
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
@@ -512,6 +514,8 @@ export interface ClientUsageRequest {
 // session when safe, "refresh_summary" only regenerates the LLM context
 // summary (no run enqueued, nothing cancelled).
 export type RerunAction = "new_session" | "retry" | "refresh_summary";
+
+export type RerunIssueResponse = AgentTask | HandoffCompressionResponse;
 
 export interface LoginResponse {
   token: string;
@@ -2515,7 +2519,7 @@ export class ApiClient {
     });
   }
 
-  async rerunIssue(issueId: string, taskId?: string, withContextCompress?: boolean, action?: RerunAction): Promise<AgentTask | Record<string, unknown>> {
+  async rerunIssue(issueId: string, taskId?: string, withContextCompress?: boolean, action?: RerunAction): Promise<RerunIssueResponse> {
     const body: Record<string, unknown> = {};
     if (taskId) body.task_id = taskId;
     if (withContextCompress) body.with_context_compress = true;
@@ -2523,10 +2527,15 @@ export class ApiClient {
     // action takes precedence over the legacy with_context_compress flag.
     // "refresh_summary" resolves to a compression report, not an AgentTask.
     if (action) body.action = action;
-    return this.fetch<AgentTask | Record<string, unknown>>(`/api/issues/${issueId}/rerun`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/rerun`, {
       method: "POST",
       body: JSON.stringify(body),
     });
+    const response = parseWithFallback<RerunIssueResponse | null>(raw, RerunIssueResponseSchema, null, {
+      endpoint: "POST /api/issues/:id/rerun",
+    });
+    if (!response) throw new Error("Invalid rerun response");
+    return response;
   }
 
   // Stop the ONE active run on an issue — the explicit cancel the rerun API

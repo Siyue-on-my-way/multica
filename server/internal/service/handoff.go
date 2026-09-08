@@ -106,12 +106,15 @@ type ContextManifest struct {
 
 // ContextManifestHandoff is the manifest's view of the handoff record.
 type ContextManifestHandoff struct {
-	Status           string `json:"status"`
-	Version          int64  `json:"version"`
-	SourceRevision   int64  `json:"source_revision,omitempty"`
-	SourceCommentID  string `json:"source_comment_id,omitempty"`
-	SourceTaskID     string `json:"source_task_id,omitempty"`
-	LatencyMs        int32  `json:"latency_ms,omitempty"`
+	Status          string `json:"status"`
+	Version         int64  `json:"version"`
+	SourceRevision  int64  `json:"source_revision,omitempty"`
+	SourceCommentID string `json:"source_comment_id,omitempty"`
+	SourceTaskID    string `json:"source_task_id,omitempty"`
+	// Latency is measured in milliseconds. Keep the JSON contract aligned with
+	// issue and rerun responses; the persisted database column is still named
+	// derived_summary_latency_ms.
+	LatencyMs        int32  `json:"latency,omitempty"`
 	ManualUpdatedAt  string `json:"manual_updated_at,omitempty"`
 	DerivedUpdatedAt string `json:"derived_updated_at,omitempty"`
 }

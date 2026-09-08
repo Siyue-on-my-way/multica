@@ -103,9 +103,11 @@ type CompressHandoffResult struct {
 	// SourceRevision is the issue revision the derived summary was written
 	// against. Zero when no derived summary exists.
 	SourceRevision int64 `json:"source_revision,omitempty"`
-	// LatencyMs is the wall-clock duration of the attempt, persisted with the
-	// summary and surfaced for latency dashboards.
-	LatencyMs int32 `json:"latency_ms,omitempty"`
+	// Latency is the wall-clock duration in milliseconds of the last attempt,
+	// persisted with the summary and surfaced for latency dashboards. The API
+	// deliberately uses the short, handoff-specific name shared by issue and
+	// rerun responses; the database column retains its _ms suffix.
+	Latency int32 `json:"latency,omitempty"`
 	// Written is true when a fresh derived summary landed.
 	Written bool `json:"written,omitempty"`
 	// SkippedReason explains a no-op (manual_present, fresh, no_comments,
@@ -139,12 +141,22 @@ func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, fo
 // compressHandoffAttempt is compressHandoffContext without the metric
 // recording. It returns the metric outcome bucket alongside the result.
 func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, force bool, sourceTaskID string, started time.Time) (string, *CompressHandoffResult) {
-	baseline := func() *CompressHandoffResult {
-		return &CompressHandoffResult{Status: service.CompressionStatus(issue)}
+	baseline := func(reason string) *CompressHandoffResult {
+		result := &CompressHandoffResult{
+			Status:        service.CompressionStatus(issue),
+			SkippedReason: reason,
+		}
+		if issue.DerivedSummarySourceRevision.Valid {
+			result.SourceRevision = issue.DerivedSummarySourceRevision.Int64
+		}
+		if issue.DerivedSummaryLatencyMs.Valid {
+			result.Latency = issue.DerivedSummaryLatencyMs.Int32
+		}
+		return result
 	}
 
 	if !h.handoffLLMEnabled() {
-		return "not_configured", baseline()
+		return "not_configured", baseline("llm_not_configured")
 	}
 
 	// Freshness gate. A manual checkpoint is reported as-is: the authored
@@ -155,9 +167,9 @@ func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, fo
 	if !force {
 		switch service.CompressionStatus(issue) {
 		case service.HandoffStatusManual:
-			return "skipped_manual", baseline()
+			return "skipped_manual", baseline("manual_present")
 		case service.HandoffStatusFresh:
-			return "skipped_fresh", baseline()
+			return "skipped_fresh", baseline("fresh")
 		}
 	}
 
@@ -169,10 +181,10 @@ func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, fo
 	if err != nil {
 		slog.Warn("handoff compress: failed to load comments",
 			"issue_id", util.UUIDToString(issue.ID), "error", err)
-		return "db_error", baseline()
+		return "db_error", baseline("comments_read_failed")
 	}
 	if len(comments) == 0 {
-		return "skipped_no_comments", baseline()
+		return "skipped_no_comments", baseline("no_comments")
 	}
 
 	// Coverage: how much of the issue's comment history the input carries.
@@ -211,11 +223,11 @@ func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, fo
 	if err != nil {
 		if errors.Is(err, errLLMNotConfigured) {
 			slog.Debug("handoff compress: LLM not configured, skipping")
-			return "not_configured", baseline()
+			return "not_configured", baseline("llm_not_configured")
 		}
 		slog.Warn("handoff compress: LLM call failed",
 			"issue_id", util.UUIDToString(issue.ID), "error", err)
-		return "llm_error", baseline()
+		return "llm_error", baseline("llm_error")
 	}
 
 	latencyMs := int32(time.Since(started).Milliseconds())
@@ -238,12 +250,12 @@ func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, fo
 		slog.Info("handoff compress: CAS conflict, summary not written",
 			"issue_id", util.UUIDToString(issue.ID),
 			"source_revision", issue.Revision)
-		return "cas_conflict", baseline()
+		return "cas_conflict", baseline("conflict")
 	}
 	if err != nil {
 		slog.Warn("handoff compress: failed to write derived summary",
 			"issue_id", util.UUIDToString(issue.ID), "error", err)
-		return "db_error", baseline()
+		return "db_error", baseline("write_failed")
 	}
 
 	slog.Info("handoff compress: derived summary written",
@@ -254,7 +266,7 @@ func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, fo
 	return "written", &CompressHandoffResult{
 		Status:         service.CompressionStatus(updated),
 		SourceRevision: issue.Revision,
-		LatencyMs:      latencyMs,
+		Latency:        latencyMs,
 		Written:        true,
 	}
 }

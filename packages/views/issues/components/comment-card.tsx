@@ -286,7 +286,7 @@ function TaskCommentRetryButton({
     if (retrying) return;
     setRetrying(true);
     try {
-      await api.rerunIssue(issueId, taskId);
+		await api.rerunIssue(issueId, taskId, false, "retry");
     } catch (e) {
       // Rerun re-checks the operator's invoke permission (MUL-4525); a
       // structured 403 is a permission block, not a transient failure.
@@ -306,7 +306,7 @@ function TaskCommentRetryButton({
     if (compacting) return;
     setCompacting(true);
     try {
-      await api.rerunIssue(issueId, undefined, true);
+		await api.rerunIssue(issueId, undefined, false, "refresh_summary");
       toast.success(t(($) => $.actions.compact_context_success));
     } catch (e) {
       toast.error(

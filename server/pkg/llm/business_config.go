@@ -146,9 +146,20 @@ var businessDefinitions = map[Business]businessDefinition{
 	BusinessHandoffCompress: {
 		fileName:       "handoff-compress.yaml",
 		expectedOutput: "json",
+		// SIY-167: compression input carries the full issue context, not just
+		// a comment transcript. The optional sections render empty when their
+		// source is absent, so old templates that only use issue_title and
+		// comments stay valid.
 		variables: map[string]struct{}{
-			"issue_title": {},
-			"comments":    {},
+			"issue_title":         {},
+			"issue_description":   {},
+			"acceptance_criteria": {},
+			"issue_metadata":      {},
+			"ancestor_context":    {},
+			"branch_state":        {},
+			"last_execution":      {},
+			"attachments":         {},
+			"comments":            {},
 		},
 	},
 	BusinessChatQuickActions: {
@@ -267,6 +278,7 @@ type businessFileLLM struct {
 	APIKey              *string `yaml:"api_key"`
 	APIKeyEnv           *string `yaml:"api_key_env"`
 	Model               string  `yaml:"model"`
+	ReasoningEffort     string  `yaml:"reasoning_effort"`
 	Temperature         float64 `yaml:"temperature"`
 	MaxCompletionTokens int64   `yaml:"max_completion_tokens"`
 	TimeoutMS           int64   `yaml:"timeout_ms"`
@@ -650,11 +662,12 @@ func (r *BusinessRegistry) callSnapshotFromFile(
 		return nil, err
 	}
 	clientConfig := Config{
-		APIKey:       apiKey,
-		BaseURL:      strings.TrimSpace(llmFile.BaseURL),
-		DefaultModel: strings.TrimSpace(llmFile.Model),
-		MaxRetries:   retries,
-		HTTPClient:   r.httpClient,
+		APIKey:          apiKey,
+		BaseURL:         strings.TrimSpace(llmFile.BaseURL),
+		DefaultModel:    strings.TrimSpace(llmFile.Model),
+		ReasoningEffort: strings.TrimSpace(llmFile.ReasoningEffort),
+		MaxRetries:      retries,
+		HTTPClient:      r.httpClient,
 	}
 	return &businessCallSnapshot{
 		source:              "file",
@@ -782,6 +795,11 @@ func validateBusinessCallConfig(fileName, label string, definition businessStage
 	}
 	if config.LLM.Temperature < 0 || config.LLM.Temperature > 2 {
 		return fmt.Errorf("%s: llm.temperature must be between 0 and 2", prefix)
+	}
+	switch strings.ToLower(strings.TrimSpace(config.LLM.ReasoningEffort)) {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh":
+	default:
+		return fmt.Errorf("%s: llm.reasoning_effort must be one of none, minimal, low, medium, high, xhigh", prefix)
 	}
 	if config.LLM.MaxCompletionTokens < 0 || config.LLM.TimeoutMS < 0 || config.LLM.MaxRetries < 0 {
 		return fmt.Errorf("%s: llm numeric limits cannot be negative", prefix)

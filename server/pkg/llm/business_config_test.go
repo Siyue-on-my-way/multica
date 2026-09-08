@@ -445,6 +445,82 @@ func TestBusinessConfigRequiresExactlyOneAPIKeySource(t *testing.T) {
 	}
 }
 
+func TestBusinessConfigValidatesReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name    string
+		effort  string
+		wantErr bool
+	}{
+		{name: "empty", effort: ""},
+		{name: "high", effort: "high"},
+		{name: "none", effort: "none"},
+		{name: "invalid", effort: "maximum", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			yaml := validBusinessYAML("chat-title", "text", "system", "user")
+			if test.effort != "" {
+				yaml = strings.Replace(yaml, "  model: test-model\n", "  model: test-model\n  reasoning_effort: "+test.effort+"\n", 1)
+			}
+			_, err := parseBusinessFile(BusinessChatTitle, businessDefinitions[BusinessChatTitle], []byte(yaml))
+			if test.wantErr != (err != nil) {
+				t.Fatalf("parseBusinessFile error = %v, wantErr %v", err, test.wantErr)
+			}
+			if test.wantErr && !strings.Contains(err.Error(), "llm.reasoning_effort must be one of") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestBusinessRegistrySendsConfiguredReasoningEffort(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","created":1,"model":"configured-model","choices":[{"index":0,"message":{"role":"assistant","content":"Configured title"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("MULTICA_TEST_TITLE_KEY", "test-secret")
+	directory := t.TempDir()
+	writeBusinessFile(t, directory, "chat-title.yaml", strings.ReplaceAll(`version: 1
+business: chat-title
+enabled: true
+llm:
+  provider: openai-compatible
+  base_url: BASE_URL
+  api_key_env: MULTICA_TEST_TITLE_KEY
+  model: gemini-3.8-flash
+  reasoning_effort: high
+  temperature: 0.2
+prompt:
+  system: "System {{source_text}}"
+  user_template: "{{source_text}}"
+output:
+  format: text
+`, "BASE_URL", server.URL+"/"))
+
+	registry := NewBusinessRegistry(BusinessRegistryConfig{
+		Directory:  directory,
+		HTTPClient: server.Client(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if _, err := registry.Client(BusinessChatTitle).GenerateTextTemplate(
+		context.Background(), map[string]string{"source_text": "hello"}, "", "", 0, 0,
+	); err != nil {
+		t.Fatalf("generate configured title: %v", err)
+	}
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", gotBody["reasoning_effort"])
+	}
+	if gotBody["temperature"] != 0.2 {
+		t.Fatalf("temperature = %#v, want 0.2", gotBody["temperature"])
+	}
+}
+
 func TestDockerBusinessConfigTemplatesMatchRegistry(t *testing.T) {
 	for _, business := range SupportedBusinesses() {
 		definition := businessDefinitions[business]

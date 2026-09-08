@@ -1268,6 +1268,11 @@ export const IssueSchema = z.object({
   // Optional for compatibility with older self-hosted backends; a current
   // backend emits null until its historical backfill reaches the issue.
   last_activity_at: z.string().nullable().optional(),
+  // SIY-167 handoff state. These fields are additive so an older backend can
+  // still be consumed; `latency` is measured in milliseconds.
+  compression_status: z.string().optional(),
+  source_revision: z.number().int().optional(),
+  latency: z.number().int().optional(),
   // Detail-only and potentially large. A malformed additive field must not
   // erase an otherwise usable issue returned by a mixed-version server.
   source_context: IssueSourceContextSchema.optional().catch(undefined),
@@ -1993,6 +1998,11 @@ export const AgentTaskSchema = z.object({
   durable_work_dir: z.string().optional().catch(undefined),
   relative_durable_work_dir: z.string().optional().catch(undefined),
   branch_name: z.string().optional().catch(undefined),
+  // SIY-167 compression result fields are present on a rerun response when a
+  // summary was refreshed before enqueueing the task. `latency` is in ms.
+  compression_status: z.string().optional(),
+  source_revision: z.number().int().optional(),
+  latency: z.number().int().optional(),
   attribution: TaskAttributionSchema.optional(),
   // Per-run token usage. Same independent-degradation rule as the coverage
   // arrays above: usage is additive display metadata, so one malformed entry
@@ -2003,6 +2013,25 @@ export const AgentTaskSchema = z.object({
 }).loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
+
+// `refresh_summary` returns this report instead of an AgentTask because it
+// intentionally does not enqueue a run. Keep it separate from AgentTask so a
+// client cannot accidentally treat a successful summary refresh as a queued
+// execution.
+export const HandoffCompressionResponseSchema = z.object({
+  compression_status: z.string().default("none"),
+  source_revision: z.number().int().default(0),
+  latency: z.number().int().default(0),
+  written: z.boolean().default(false),
+  skipped_reason: z.string().optional(),
+}).loose();
+
+export const RerunIssueResponseSchema = z.union([
+  AgentTaskSchema,
+  HandoffCompressionResponseSchema,
+]);
+
+export type HandoffCompressionResponse = z.infer<typeof HandoffCompressionResponseSchema>;
 
 // SIY-125: context observation (`GET /api/tasks/:id/context`). Every field
 // degrades to a safe default so a partially-upgraded server (no observation

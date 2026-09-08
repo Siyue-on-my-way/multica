@@ -7471,7 +7471,7 @@ func IssueToMap(issue db.Issue, issuePrefix string) map[string]any {
 		m["source_revision"] = issue.DerivedSummarySourceRevision.Int64
 	}
 	if issue.DerivedSummaryLatencyMs.Valid && issue.DerivedSummaryLatencyMs.Int32 != 0 {
-		m["latency_ms"] = issue.DerivedSummaryLatencyMs.Int32
+		m["latency"] = issue.DerivedSummaryLatencyMs.Int32
 	}
 	return m
 }

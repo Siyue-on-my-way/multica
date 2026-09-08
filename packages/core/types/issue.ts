@@ -230,6 +230,12 @@ export interface Issue {
   updated_at: string;
   /** Monotonic server revision; absent when connected to an older backend. */
   revision?: number;
+  /** SIY-167 handoff classification: manual, fresh, stale, or none. */
+  compression_status?: string;
+  /** Issue revision used to build the derived handoff summary. */
+  source_revision?: number;
+  /** Last handoff compression latency in milliseconds. */
+  latency?: number;
   /**
    * Null until the server's historical activity backfill reaches this row.
    * This RFC3339 timestamp may include sub-second precision while legacy

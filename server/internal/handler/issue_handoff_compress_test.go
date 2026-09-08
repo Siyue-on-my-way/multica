@@ -3,6 +3,9 @@ package handler
 import (
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // The refresh_summary / new_session / retry split only decouples behaviour if
@@ -24,6 +27,28 @@ func TestRerunModeFor(t *testing.T) {
 		if got := rerunModeFor(tc.action); got != tc.want {
 			t.Errorf("rerunModeFor(%q) = %q, want %q", tc.action, got, tc.want)
 		}
+	}
+}
+
+func TestRerunAllowsSourceSession(t *testing.T) {
+	withSource := db.AgentTaskQueue{RerunOfTaskID: pgtype.UUID{Valid: true}}
+	tests := []struct {
+		name string
+		task db.AgentTaskQueue
+		want bool
+	}{
+		{"retry mode", db.AgentTaskQueue{RerunOfTaskID: withSource.RerunOfTaskID, RerunMode: RerunActionRetry, ForceFreshSession: true}, true},
+		{"new session mode", db.AgentTaskQueue{RerunOfTaskID: withSource.RerunOfTaskID, RerunMode: RerunActionNewSession}, false},
+		{"legacy fresh row", db.AgentTaskQueue{RerunOfTaskID: withSource.RerunOfTaskID, ForceFreshSession: true}, false},
+		{"legacy resume row", db.AgentTaskQueue{RerunOfTaskID: withSource.RerunOfTaskID}, true},
+		{"not a rerun", db.AgentTaskQueue{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rerunAllowsSourceSession(tc.task); got != tc.want {
+				t.Errorf("rerunAllowsSourceSession() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -145,6 +145,36 @@ func TestGenerateText(t *testing.T) {
 	}
 }
 
+func TestConfiguredReasoningEffortOverridesFamilyDefault(t *testing.T) {
+	var gotBody map[string]any
+	srv := stubUpstream(t, func(w http.ResponseWriter, body map[string]any) {
+		gotBody = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{\"actions\":[]}"},"finish_reason":"stop"}]}`)
+	})
+
+	c := New(Config{APIKey: "k", BaseURL: srv.URL, DefaultModel: "gemini-3.8-flash", ReasoningEffort: "High"})
+	if _, err := c.GenerateJSON(context.Background(), "", "Return JSON.", "Generate actions.", 0.3, 2048); err != nil {
+		t.Fatalf("GenerateJSON failed: %v", err)
+	}
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("expected reasoning_effort=high, got body %#v", gotBody["reasoning_effort"])
+	}
+	// A config that sets both reasoning_effort and temperature chose both;
+	// the reasoning-model temperature omission only applies to the built-in
+	// GPT-5.6 handling.
+	if gotBody["temperature"] != 0.3 {
+		t.Fatalf("expected temperature=0.3 preserved, got body %#v", gotBody["temperature"])
+	}
+
+	if _, err := c.GenerateText(context.Background(), "", "system", "make a title"); err != nil {
+		t.Fatalf("GenerateText failed: %v", err)
+	}
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("GenerateText expected reasoning_effort=high, got body %#v", gotBody["reasoning_effort"])
+	}
+}
+
 func TestGenerateJSONUsesGPT56CompatibleParameters(t *testing.T) {
 	var gotBody map[string]any
 	srv := stubUpstream(t, func(w http.ResponseWriter, body map[string]any) {

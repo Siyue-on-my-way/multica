@@ -90,10 +90,11 @@ type IssueResponse struct {
 	// to be. "manual" means an authored checkpoint wins; "fresh"/"stale"
 	// describe a derived digest against the issue's current revision; "none"
 	// means no resume state. SourceRevision is the revision the derived
-	// digest was built from; LatencyMs the duration of that compression.
+	// digest was built from; Latency is the duration in milliseconds of that
+	// compression.
 	CompressionStatus string `json:"compression_status,omitempty"`
 	SourceRevision    int64  `json:"source_revision,omitempty"`
-	LatencyMs         int32  `json:"latency_ms,omitempty"`
+	Latency           int32  `json:"latency,omitempty"`
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
@@ -346,7 +347,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		HandoffSummary:       json.RawMessage(i.HandoffSummary),
 		CompressionStatus:    service.CompressionStatus(i),
 		SourceRevision:       derivedSourceRevision(i),
-		LatencyMs:            derivedLatencyMs(i),
+		Latency:              derivedLatencyMs(i),
 		ManualPositionLocked: i.ManualPositionLocked,
 		AgentResultAt:        timestampToPtr(i.AgentResultAt),
 	}

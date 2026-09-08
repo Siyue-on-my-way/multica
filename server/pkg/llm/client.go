@@ -115,6 +115,14 @@ type Config struct {
 	// DefaultModel is used when a request omits the model. Maps to
 	// MULTICA_LLM_DEFAULT_MODEL. When empty, FallbackModel is used.
 	DefaultModel string
+	// ReasoningEffort, when non-empty, is sent as reasoning_effort on every
+	// request built by the Generate* helpers; Chat and ChatStream pass params
+	// verbatim and are unaffected. It overrides the built-in GPT-5.6 family
+	// handling and, unlike it, keeps a positive temperature: the config set
+	// both values deliberately, and gateways such as Gemini's
+	// OpenAI-compatible endpoint honor sampling controls alongside reasoning.
+	// Maps to llm.reasoning_effort in the business config files.
+	ReasoningEffort string
 	// MaxRetries is the transport-level retry budget applied to every request
 	// this client makes. Maps to MULTICA_LLM_MAX_RETRIES. Build one with
 	// Retries; nil means unset, and DefaultMaxRetries applies.
@@ -219,6 +227,7 @@ type Client struct {
 	defaultModel string
 	enabled      bool
 	retry        RetryBudget
+	reasoning    string
 }
 
 // New builds a Client from cfg. It never returns an error: an unconfigured
@@ -262,8 +271,9 @@ func New(cfg Config) *Client {
 		defaultModel: defaultModel,
 		// A deployment is "configured" if it gave us either a key or a base
 		// URL. A bare base URL (no key) is valid for keyless local gateways.
-		enabled: strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.BaseURL) != "",
-		retry:   retry,
+		enabled:   strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.BaseURL) != "",
+		retry:     retry,
+		reasoning: strings.ToLower(strings.TrimSpace(cfg.ReasoningEffort)),
 	}
 }
 
@@ -326,6 +336,27 @@ func (c *Client) ChatStream(ctx context.Context, params openai.ChatCompletionNew
 	return c.sdk.Chat.Completions.NewStreaming(ctx, params), nil
 }
 
+// applyReasoning sets reasoning_effort on a generated request. An explicit
+// Config.ReasoningEffort wins over the built-in family handling and keeps a
+// positive temperature, because a config that sets both chose both; OpenAI-
+// compatible gateways such as Gemini honor sampling controls alongside
+// reasoning. Without an override the GPT-5.6 family keeps its latency-honoring
+// built-in handling below.
+func (c *Client) applyReasoning(params *openai.ChatCompletionNewParams, model string, temperature float64) {
+	if c.reasoning != "" {
+		params.ReasoningEffort = shared.ReasoningEffort(c.reasoning)
+		if temperature > 0 {
+			params.Temperature = openai.Float(temperature)
+		}
+		return
+	}
+	if isGPT56Family(model) {
+		params.ReasoningEffort = shared.ReasoningEffortNone
+	} else if temperature > 0 {
+		params.Temperature = openai.Float(temperature)
+	}
+}
+
 // GenerateText is a convenience for simple internal one-shot completions (chat
 // titles, quick-create drafts, ...). It sends an optional system prompt plus a
 // single user prompt and returns the assistant's text content. Model empty ->
@@ -356,11 +387,7 @@ func (c *Client) GenerateTextWithOptions(ctx context.Context, model, systemPromp
 	if effectiveModel == "" {
 		effectiveModel = c.defaultModel
 	}
-	if isGPT56Family(effectiveModel) {
-		params.ReasoningEffort = shared.ReasoningEffortNone
-	} else if temperature > 0 {
-		params.Temperature = openai.Float(temperature)
-	}
+	c.applyReasoning(&params, effectiveModel, temperature)
 	if maxCompletionTokens > 0 {
 		params.MaxCompletionTokens = openai.Int(maxCompletionTokens)
 	}
@@ -404,7 +431,10 @@ type GenerateStats struct {
 // family it explicitly disables reasoning and leaves sampling controls at the
 // model default. That keeps maxCompletionTokens available to the visible JSON
 // instead of spending it on reasoning, and avoids sampling parameters that
-// those models may reject. Other models keep the caller's temperature so a
+// those models may reject. An explicit Config.ReasoningEffort overrides that
+// family handling and keeps a positive temperature — a business config that
+// sets reasoning_effort opts into the upstream's reasoning behavior
+// deliberately. Other models keep the caller's temperature so a
 // configurable deployment does not change behavior. temperature and
 // maxCompletionTokens apply only when positive; zero leaves the corresponding
 // upstream default in place. Model empty -> the configured default.
@@ -439,14 +469,7 @@ func (c *Client) GenerateJSONDetailed(ctx context.Context, model, systemPrompt, 
 	if effectiveModel == "" {
 		effectiveModel = c.defaultModel
 	}
-	if isGPT56Family(effectiveModel) {
-		// GPT-5.6 defaults to medium reasoning. This path generates a tiny JSON
-		// object under a strict wall-clock budget, so reasoning would add latency
-		// and consume the completion-token limit without improving the contract.
-		params.ReasoningEffort = shared.ReasoningEffortNone
-	} else if temperature > 0 {
-		params.Temperature = openai.Float(temperature)
-	}
+	c.applyReasoning(&params, effectiveModel, temperature)
 	if maxCompletionTokens > 0 {
 		// max_tokens is deprecated and rejected by current reasoning models,
 		// including the GPT-5.6 family. Prefer the replacement field for every

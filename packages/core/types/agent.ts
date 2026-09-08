@@ -397,8 +397,14 @@ export interface AgentTask {
    * something worth finding. Unlike `work_dir` this is safe to render
    * verbatim; it is a ref inside the user's own repo, not a filesystem path.
    * Older backends omit it — render conditionally.
-   */
+  */
   branch_name?: string;
+  /** Handoff compression state included on rerun responses when applicable. */
+  compression_status?: string;
+  /** Issue revision used to build the derived handoff summary. */
+  source_revision?: number;
+  /** Handoff compression latency in milliseconds. */
+  latency?: number;
   /**
    * Resolved accountable-human provenance of this run (MUL-4302 §9): who it ran
    * "on behalf of", how that was resolved, and the evidence/lineage. Present on
