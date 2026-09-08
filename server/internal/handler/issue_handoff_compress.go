@@ -7,9 +7,23 @@ package handler
 // everything, this module calls the configured LLM to produce a structured
 // HandoffSummary that is written to the issue before the new task is enqueued.
 //
-// This is triggered synchronously inside dispatchIssueRun so the summary is
-// already present on the issue when the new task is claimed and injected into
-// issue_context.md.
+// SIY-167 reworked the mechanism around the split storage (migration 452):
+//
+//   - The result is a DERIVED summary. It never touches an agent's authored
+//     manual checkpoint, so even a forced compression cannot clobber
+//     hand-written resume state (the effective handoff_summary mirror prefers
+//     the manual checkpoint).
+//   - A freshness gate skips the LLM call when a derived summary was built
+//     from the issue's current revision (non-force paths). A summary that is
+//     already fresh gains nothing from being regenerated; one built from an
+//     older revision is stale and worth refreshing.
+//   - The write is a compare-and-swap on (revision, handoff_version). A slow
+//     LLM response that lands after a user edit — or after another writer —
+//     is refused instead of overwriting fresher state.
+//   - The LLM input carries the full issue context, not just a comment
+//     transcript: description, acceptance criteria, metadata, ancestors,
+//     branch/progress state, the last execution outcome, attachments, and the
+//     threads (parent links) of the included comments.
 
 import (
 	"context"
@@ -20,17 +34,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 // maxCommentsForCompression caps how many of the most-recent comments we feed
 // to the LLM. Long issues can have hundreds of comments; we take the newest
-// ones because they contain the most recent work state.
+// ones because they contain the most recent work state. The Context Manifest
+// tells the agent which older comments were omitted so nothing is silently
+// lost — it is reachable on demand.
 const maxCommentsForCompression = 80
 
+// maxHandoffSectionChars bounds each free-form section (description, task
+// result, …) of the compression input so one huge description cannot crowd
+// the comment transcript out of the prompt. The ancestor brief applies its
+// own budget; it is not re-truncated here.
+const maxHandoffSectionChars = 6000
+
 const handoffSystemPrompt = `You are a technical project assistant. Your only job is to produce a concise handoff summary for an AI coding agent that is taking over an issue.
+
+You receive the issue itself (description, acceptance criteria, metadata, ancestor context), the branch/progress state, the last execution outcome, attachments, and the recent comment history. Ground the summary in ALL of it: details that decide the direction or quality of the task must survive, especially decisions, constraints, and open questions stated in comments.
 
 Output EXACTLY this JSON object and nothing else. The word "JSON" appears in this instruction to satisfy API requirements:
 {
@@ -41,42 +67,138 @@ Output EXACTLY this JSON object and nothing else. The word "JSON" appears in thi
 
 const handoffUserTemplate = `Issue title: {{issue_title}}
 
-Recent comment history (oldest first, newest last):
+## Issue description
+{{issue_description}}
 
+## Acceptance criteria
+{{acceptance_criteria}}
+
+## Issue metadata
+{{issue_metadata}}
+
+## Ancestor context
+{{ancestor_context}}
+
+## Branch / progress state
+{{branch_state}}
+
+## Last execution outcome
+{{last_execution}}
+
+## Attachments
+{{attachments}}
+
+## Recent comment history (oldest first, newest last; "[reply to <id>]" marks a thread reply)
 {{comments}}
 
 Write the handoff summary JSON.`
 
-// compressHandoffContext calls the LLM to summarise the issue's recent comment
-// history and writes the result into issue.handoff_summary. It is a best-effort
-// operation: any error is logged and silently swallowed so the caller's main
-// enqueue path is never blocked.
+// CompressHandoffResult reports what one compression attempt did. The rerun
+// API's refresh-summary action returns it so the UI can show the new state
+// without a second read; fire-and-forget callers ignore it.
+type CompressHandoffResult struct {
+	// Status is the issue's handoff classification AFTER the attempt
+	// (manual | fresh | stale | none — service.HandoffStatus*).
+	Status string `json:"compression_status"`
+	// SourceRevision is the issue revision the derived summary was written
+	// against. Zero when no derived summary exists.
+	SourceRevision int64 `json:"source_revision,omitempty"`
+	// LatencyMs is the wall-clock duration of the attempt, persisted with the
+	// summary and surfaced for latency dashboards.
+	LatencyMs int32 `json:"latency_ms,omitempty"`
+	// Written is true when a fresh derived summary landed.
+	Written bool `json:"written,omitempty"`
+	// SkippedReason explains a no-op (manual_present, fresh, no_comments,
+	// llm_not_configured, conflict). Empty when written.
+	SkippedReason string `json:"skipped_reason,omitempty"`
+}
+
+// compressHandoffContext runs one best-effort compression attempt and records
+// its outcome in metrics. Errors are logged and swallowed so the caller's
+// enqueue path is never blocked; the returned result describes what happened.
 //
-// Returns early (no-op) when:
-//   - The LLM client is not configured.
-//   - The issue already has a handoff_summary AND force is false (a previous
-//     agent wrote one explicitly, or an earlier compression already ran;
-//     respect it instead of overwriting).
-//   - There are no comments to summarise.
-//
-// force=true is for a user-initiated "compact context now" request (the manual
-// standalone rerun path, distinct from a task_id-targeted retry): the whole
-// point of that action is to refresh the checkpoint from the latest comments,
-// so any existing summary — however it got there — must not block it.
-func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, force bool) {
-	businessLLM := h.businessLLM(llm.BusinessHandoffCompress)
-	if businessLLM != nil {
-		if !businessLLM.Enabled() {
-			return
+// force=true is for a user-initiated "compact context now" request: it skips
+// the freshness gate and regenerates the derived summary even when a current
+// one exists. It still never overwrites a manual checkpoint — the CAS write
+// keeps them separate, which is the whole point of the split.
+func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, force bool, sourceTaskID string) *CompressHandoffResult {
+	started := time.Now()
+	outcome, result := h.compressHandoffAttempt(ctx, issue, force, sourceTaskID, started)
+
+	h.Metrics.RecordHandoffCompression(outcome)
+	switch outcome {
+	case "written", "llm_error", "cas_conflict":
+		h.Metrics.RecordHandoffCompressionLatency(time.Since(started).Seconds())
+	}
+	if result == nil {
+		result = &CompressHandoffResult{Status: service.CompressionStatus(issue)}
+	}
+	return result
+}
+
+// compressHandoffAttempt is compressHandoffContext without the metric
+// recording. It returns the metric outcome bucket alongside the result.
+func (h *Handler) compressHandoffAttempt(ctx context.Context, issue db.Issue, force bool, sourceTaskID string, started time.Time) (string, *CompressHandoffResult) {
+	baseline := func() *CompressHandoffResult {
+		return &CompressHandoffResult{Status: service.CompressionStatus(issue)}
+	}
+
+	if !h.handoffLLMEnabled() {
+		return "not_configured", baseline()
+	}
+
+	// Freshness gate. A manual checkpoint is reported as-is: the authored
+	// state is the effective record and a digest would not improve it. A
+	// fresh derived summary (built from the current revision) is not worth
+	// another LLM call. Only a stale or missing summary needs compression —
+	// and any caller may bypass that with force.
+	if !force {
+		switch service.CompressionStatus(issue) {
+		case service.HandoffStatusManual:
+			return "skipped_manual", baseline()
+		case service.HandoffStatusFresh:
+			return "skipped_fresh", baseline()
 		}
-	} else if h.LLM == nil || !h.LLM.Enabled() {
-		return
 	}
-	// Respect an explicitly written checkpoint: the previous agent's structured
-	// summary is more precise than anything the LLM can infer from comments.
-	if len(issue.HandoffSummary) > 0 && !force {
-		return
+
+	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       maxCommentsForCompression,
+	})
+	if err != nil {
+		slog.Warn("handoff compress: failed to load comments",
+			"issue_id", util.UUIDToString(issue.ID), "error", err)
+		return "db_error", baseline()
 	}
+	if len(comments) == 0 {
+		return "skipped_no_comments", baseline()
+	}
+
+	// Coverage: how much of the issue's comment history the input carries.
+	// The scan window caps the denominator (ManifestCommentScanLimit); the
+	// ratio only ever understates coverage for very long issues, never
+	// overstates it.
+	var latestCommentID string
+	if latest, err := h.Queries.GetLatestCommentForIssue(ctx, db.GetLatestCommentForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err == nil {
+		latestCommentID = util.UUIDToString(latest.ID)
+	}
+	scannedIDs, err := h.Queries.ListCommentIDsForIssue(ctx, db.ListCommentIDsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		RowLimit:    service.ManifestCommentScanLimit,
+	})
+	if err != nil {
+		slog.Debug("handoff compress: comment id scan failed; coverage not recorded",
+			"issue_id", util.UUIDToString(issue.ID), "error", err)
+	} else if total := len(scannedIDs); total > 0 {
+		h.Metrics.RecordHandoffCoverage(float64(len(comments)) / float64(total))
+	}
+
+	input := h.buildHandoffCompressionInput(ctx, issue, comments)
 
 	// Give the LLM call a tight deadline so a slow upstream never delays the
 	// agent enqueue. We do NOT propagate the request context's cancellation:
@@ -85,68 +207,182 @@ func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, fo
 	llmCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	comments, err := h.Queries.ListCommentsForIssue(llmCtx, db.ListCommentsForIssueParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		Limit:       maxCommentsForCompression,
-	})
+	raw, err := h.callLLMForHandoffSummary(llmCtx, input)
 	if err != nil {
-		slog.Warn("handoff compress: failed to load comments",
-			"issue_id", uuidToString(issue.ID), "error", err)
-		return
-	}
-	if len(comments) == 0 {
-		return
-	}
-
-	raw, err := h.callLLMForHandoffSummary(llmCtx, issue, comments)
-	if err != nil {
-		// ErrNotConfigured just means the deployment has no LLM key; log at
-		// debug so routine self-hosted deployments are not noisy.
 		if errors.Is(err, errLLMNotConfigured) {
 			slog.Debug("handoff compress: LLM not configured, skipping")
-		} else {
-			slog.Warn("handoff compress: LLM call failed",
-				"issue_id", uuidToString(issue.ID), "error", err)
+			return "not_configured", baseline()
 		}
-		return
+		slog.Warn("handoff compress: LLM call failed",
+			"issue_id", util.UUIDToString(issue.ID), "error", err)
+		return "llm_error", baseline()
 	}
 
-	// Write the summary back to the issue without touching any other field.
-	// We re-read the current issue state as UpdateIssue is a full-row COALESCE
-	// update that needs every field pre-populated to avoid clearing them.
-	current, err := h.Queries.GetIssue(llmCtx, issue.ID)
+	latencyMs := int32(time.Since(started).Milliseconds())
+	updated, err := h.Queries.SetIssueDerivedSummaryCAS(ctx, db.SetIssueDerivedSummaryCASParams{
+		Summary:                raw,
+		Source:                 "llm",
+		SourceRevision:         issue.Revision,
+		SourceCommentID:        latestCommentID,
+		SourceTaskID:           sourceTaskID,
+		LatencyMs:              latencyMs,
+		ID:                     issue.ID,
+		WorkspaceID:            issue.WorkspaceID,
+		ExpectedHandoffVersion: issue.HandoffVersion,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The issue moved while the LLM was thinking (a comment landed, an
+		// edit bumped the revision, or another writer took the handoff
+		// version). Refusing to land a summary built from a stale snapshot is
+		// the CAS doing its job; the next non-force pass re-compresses.
+		slog.Info("handoff compress: CAS conflict, summary not written",
+			"issue_id", util.UUIDToString(issue.ID),
+			"source_revision", issue.Revision)
+		return "cas_conflict", baseline()
+	}
 	if err != nil {
-		slog.Warn("handoff compress: failed to re-read issue before update",
-			"issue_id", uuidToString(issue.ID), "error", err)
-		return
+		slog.Warn("handoff compress: failed to write derived summary",
+			"issue_id", util.UUIDToString(issue.ID), "error", err)
+		return "db_error", baseline()
 	}
-	params := db.UpdateIssueParams{
-		ID:             current.ID,
-		Title:          pgtype.Text{String: current.Title, Valid: true},
-		Description:    current.Description,
-		Status:         pgtype.Text{String: current.Status, Valid: true},
-		Priority:       pgtype.Text{String: current.Priority, Valid: true},
-		AssigneeType:   current.AssigneeType,
-		AssigneeID:     current.AssigneeID,
-		Position:       pgtype.Float8{Float64: current.Position, Valid: true},
-		StartDate:      current.StartDate,
-		DueDate:        current.DueDate,
-		ParentIssueID:  current.ParentIssueID,
-		ProjectID:      current.ProjectID,
-		Stage:          current.Stage,
-		WorkingBranch:  current.WorkingBranch,
-		AgentStatus:    current.AgentStatus,
-		HandoffSummary: raw,
+
+	slog.Info("handoff compress: derived summary written",
+		"issue_id", util.UUIDToString(issue.ID),
+		"comment_count", len(comments),
+		"source_revision", issue.Revision,
+		"latency_ms", latencyMs)
+	return "written", &CompressHandoffResult{
+		Status:         service.CompressionStatus(updated),
+		SourceRevision: issue.Revision,
+		LatencyMs:      latencyMs,
+		Written:        true,
 	}
-	if _, err := h.Queries.UpdateIssue(llmCtx, params); err != nil {
-		slog.Warn("handoff compress: failed to write handoff_summary",
-			"issue_id", uuidToString(issue.ID), "error", err)
-		return
+}
+
+// handoffLLMEnabled reports whether any LLM path can serve the compression.
+func (h *Handler) handoffLLMEnabled() bool {
+	businessLLM := h.businessLLM(llm.BusinessHandoffCompress)
+	if businessLLM != nil {
+		return businessLLM.Enabled()
 	}
-	slog.Info("handoff compress: summary written",
-		"issue_id", uuidToString(issue.ID),
-		"comment_count", len(comments))
+	return h.LLM != nil && h.LLM.Enabled()
+}
+
+// handoffCompressionInput is everything rendered into the LLM user prompt.
+// It is a plain struct so the builder stays testable without an LLM client.
+type handoffCompressionInput struct {
+	IssueTitle        string
+	IssueDescription  string
+	Acceptance        string
+	IssueMetadata     string
+	AncestorContext   string
+	BranchState       string
+	LastExecution     string
+	Attachments       string
+	CommentTranscript string
+}
+
+// buildHandoffCompressionInput gathers the full issue context around the
+// comment transcript. Every section degrades to "" when its source is empty
+// or its read fails — compression is best-effort, and a failed optional read
+// must not block the summary.
+func (h *Handler) buildHandoffCompressionInput(ctx context.Context, issue db.Issue, comments []db.Comment) handoffCompressionInput {
+	in := handoffCompressionInput{
+		IssueTitle:       issue.Title,
+		IssueDescription: truncateHandoffSection(issue.Description.String),
+	}
+
+	// Acceptance criteria are a JSON array on the issue row; render one
+	// criterion per line so the LLM sees them as a checklist, not JSON syntax.
+	var criteria []string
+	if len(issue.AcceptanceCriteria) > 0 && json.Unmarshal(issue.AcceptanceCriteria, &criteria) == nil {
+		in.Acceptance = truncateHandoffSection(strings.Join(nonEmpty(criteria), "\n- "))
+		if in.Acceptance != "" {
+			in.Acceptance = "- " + in.Acceptance
+		}
+	}
+
+	if m := util.JSONObjectOrEmpty(issue.Metadata); len(m) > 0 {
+		if b, err := json.Marshal(m); err == nil {
+			in.IssueMetadata = truncateHandoffSection(string(b))
+		}
+	}
+
+	// Ancestor background: the same bounded brief the claim payload delivers,
+	// so the digest and the manifest describe the same material.
+	ancestorBrief := service.BuildAncestorBrief(ctx, h.Queries, issue)
+	in.AncestorContext = ancestorBrief.Text
+
+	var branch []string
+	if issue.WorkingBranch.Valid && issue.WorkingBranch.String != "" {
+		branch = append(branch, "Working branch: "+issue.WorkingBranch.String)
+	}
+	if issue.AgentStatus.Valid && issue.AgentStatus.String != "" {
+		branch = append(branch, "Progress stage: "+issue.AgentStatus.String)
+	}
+	in.BranchState = strings.Join(branch, "\n")
+
+	if last, err := h.Queries.GetLastTerminalTaskForIssue(ctx, issue.ID); err == nil {
+		var parts []string
+		parts = append(parts, fmt.Sprintf("Last task %s (status %s)", util.UUIDToString(last.ID), last.Status))
+		if last.FailureReason.Valid && last.FailureReason.String != "" {
+			parts = append(parts, "failure_reason: "+last.FailureReason.String)
+		}
+		if last.Error.Valid && last.Error.String != "" {
+			parts = append(parts, "error: "+truncateHandoffSection(last.Error.String))
+		}
+		if len(last.Result) > 0 && string(last.Result) != "null" {
+			parts = append(parts, "result: "+truncateHandoffSection(string(last.Result)))
+		}
+		in.LastExecution = strings.Join(parts, "\n")
+	}
+
+	var atts []string
+	if attachments, err := h.Queries.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err == nil {
+		for _, a := range attachments {
+			atts = append(atts, fmt.Sprintf("%s (%s, %d bytes, id %s)",
+				a.Filename, a.ContentType, a.SizeBytes, util.UUIDToString(a.ID)))
+		}
+	}
+	in.Attachments = strings.Join(atts, "\n")
+
+	in.CommentTranscript = renderHandoffCommentTranscript(comments)
+	return in
+}
+
+// renderHandoffCommentTranscript formats the comment window for the LLM.
+// Thread replies are annotated with the parent id so reply relations survive
+// the flattening — a "done, see above" reply means nothing without its root.
+func renderHandoffCommentTranscript(comments []db.Comment) string {
+	var sb strings.Builder
+	for _, c := range comments {
+		ts := c.CreatedAt.Time.UTC().Format("2006-01-02 15:04")
+		sb.WriteString(fmt.Sprintf("[%s] %s (%s): %s\n", ts, c.AuthorType, util.UUIDToString(c.ID), c.Content))
+		if c.ParentID.Valid {
+			sb.WriteString(fmt.Sprintf("  [reply to %s]\n", util.UUIDToString(c.ParentID)))
+		}
+	}
+	return sb.String()
+}
+
+func truncateHandoffSection(s string) string {
+	if len(s) <= maxHandoffSectionChars {
+		return s
+	}
+	return s[:maxHandoffSectionChars] + "\n…[truncated]"
+}
+
+func nonEmpty(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // errLLMNotConfigured is a sentinel returned by callLLMForHandoffSummary when
@@ -154,9 +390,9 @@ func (h *Handler) compressHandoffContext(ctx context.Context, issue db.Issue, fo
 // call errors so the caller can log at the appropriate level.
 var errLLMNotConfigured = errors.New("llm not configured")
 
-// callLLMForHandoffSummary builds the prompt, calls GenerateJSON, and returns
-// validated JSON bytes for the handoff_summary column.
-func (h *Handler) callLLMForHandoffSummary(ctx context.Context, issue db.Issue, comments []db.Comment) ([]byte, error) {
+// callLLMForHandoffSummary renders the enriched input into the prompt, calls
+// GenerateJSON, and returns validated JSON bytes for the derived summary.
+func (h *Handler) callLLMForHandoffSummary(ctx context.Context, in handoffCompressionInput) ([]byte, error) {
 	businessLLM := h.businessLLM(llm.BusinessHandoffCompress)
 	if businessLLM != nil {
 		if !businessLLM.Enabled() {
@@ -166,34 +402,31 @@ func (h *Handler) callLLMForHandoffSummary(ctx context.Context, issue db.Issue, 
 		return nil, errLLMNotConfigured
 	}
 
-	// Build a compact comment transcript to stay within a reasonable token
-	// budget. Each comment is rendered as "Author (time): content".
-	var sb strings.Builder
-	for _, c := range comments {
-		ts := c.CreatedAt.Time.UTC().Format("2006-01-02 15:04")
-		author := c.AuthorType
-		sb.WriteString(fmt.Sprintf("[%s] %s: %s\n", ts, author, c.Content))
+	vars := map[string]string{
+		"issue_title":         in.IssueTitle,
+		"issue_description":   in.IssueDescription,
+		"acceptance_criteria": in.Acceptance,
+		"issue_metadata":      in.IssueMetadata,
+		"ancestor_context":    in.AncestorContext,
+		"branch_state":        in.BranchState,
+		"last_execution":      in.LastExecution,
+		"attachments":         in.Attachments,
+		"comments":            in.CommentTranscript,
 	}
-	transcript := sb.String()
 
 	var raw string
 	var err error
 	if businessLLM != nil {
 		raw, err = businessLLM.GenerateJSONTemplate(
 			ctx,
-			map[string]string{"issue_title": issue.Title, "comments": transcript},
+			vars,
 			handoffSystemPrompt,
 			handoffUserTemplate,
 			0,
 			512,
 		)
 	} else {
-		userPrompt := fmt.Sprintf(
-			"Issue title: %s\n\nRecent comment history (oldest first, newest last):\n\n%s\n\nWrite the handoff summary JSON.",
-			issue.Title,
-			transcript,
-		)
-		raw, err = h.LLM.GenerateJSON(ctx, "", handoffSystemPrompt, userPrompt, 0, 512)
+		raw, err = h.LLM.GenerateJSON(ctx, "", handoffSystemPrompt, renderHandoffUserPrompt(vars), 0, 512)
 	}
 	if err != nil {
 		if errors.Is(err, llm.ErrNotConfigured) {
@@ -213,4 +446,14 @@ func (h *Handler) callLLMForHandoffSummary(ctx context.Context, issue db.Issue, 
 	}
 
 	return []byte(raw), nil
+}
+
+// renderHandoffUserPrompt substitutes handoffUserTemplate's placeholders for
+// the non-business-LLM fallback path, so both paths render the same document.
+func renderHandoffUserPrompt(vars map[string]string) string {
+	out := handoffUserTemplate
+	for key, value := range vars {
+		out = strings.ReplaceAll(out, "{{"+key+"}}", value)
+	}
+	return out
 }

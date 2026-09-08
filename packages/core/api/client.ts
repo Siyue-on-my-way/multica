@@ -507,6 +507,12 @@ export interface ClientUsageRequest {
   runtime?: ClientRuntimeSnapshot;
 }
 
+// SIY-167: the rerun API's three decoupled actions. "new_session" starts a
+// clean provider session, "retry" re-runs a source task and may resume its
+// session when safe, "refresh_summary" only regenerates the LLM context
+// summary (no run enqueued, nothing cancelled).
+export type RerunAction = "new_session" | "retry" | "refresh_summary";
+
 export interface LoginResponse {
   token: string;
   user: User;
@@ -2509,13 +2515,26 @@ export class ApiClient {
     });
   }
 
-  async rerunIssue(issueId: string, taskId?: string, withContextCompress?: boolean): Promise<AgentTask> {
+  async rerunIssue(issueId: string, taskId?: string, withContextCompress?: boolean, action?: RerunAction): Promise<AgentTask | Record<string, unknown>> {
     const body: Record<string, unknown> = {};
     if (taskId) body.task_id = taskId;
     if (withContextCompress) body.with_context_compress = true;
-    return this.fetch(`/api/issues/${issueId}/rerun`, {
+    // SIY-167: the rerun API exposes three decoupled actions. An explicit
+    // action takes precedence over the legacy with_context_compress flag.
+    // "refresh_summary" resolves to a compression report, not an AgentTask.
+    if (action) body.action = action;
+    return this.fetch<AgentTask | Record<string, unknown>>(`/api/issues/${issueId}/rerun`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+  }
+
+  // Stop the ONE active run on an issue — the explicit cancel the rerun API
+  // never was (rerun clears pending rows only; it deliberately leaves a
+  // running task alone).
+  async cancelActiveIssueTask(issueId: string): Promise<AgentTask> {
+    return this.fetch<AgentTask>(`/api/issues/${issueId}/cancel`, {
+      method: "POST",
     });
   }
 

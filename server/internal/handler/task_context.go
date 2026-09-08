@@ -25,21 +25,21 @@ import (
 // across packages because the handler package cannot import the daemon package;
 // this matches the existing TaskUsageEntry / TaskUsagePayload convention.
 type taskContextResponse struct {
-	TaskID          string                 `json:"task_id"`
-	Provider        string                 `json:"provider"`
-	RuntimeID       string                 `json:"runtime_id,omitempty"`
-	SessionReused   bool                   `json:"session_reused"`
-	ResumeExpected  bool                   `json:"resume_expected"`
-	ResumeActual    string                 `json:"resume_actual"`
-	FallbackReason  string                 `json:"fallback_reason,omitempty"`
-	WorkdirReused   bool                   `json:"workdir_reused"`
-	PromptBytes     int                    `json:"prompt_bytes"`
-	InputTokens     int                    `json:"input_tokens"`
-	TokenMode       string                 `json:"token_mode"`
-	Sections        []taskContextSection   `json:"sections"`
-	SessionID       string                 `json:"session_id,omitempty"`
-	ObservedAt      time.Time              `json:"observed_at"`
-	CompletedAt     *time.Time             `json:"completed_at,omitempty"`
+	TaskID         string               `json:"task_id"`
+	Provider       string               `json:"provider"`
+	RuntimeID      string               `json:"runtime_id,omitempty"`
+	SessionReused  bool                 `json:"session_reused"`
+	ResumeExpected bool                 `json:"resume_expected"`
+	ResumeActual   string               `json:"resume_actual"`
+	FallbackReason string               `json:"fallback_reason,omitempty"`
+	WorkdirReused  bool                 `json:"workdir_reused"`
+	PromptBytes    int                  `json:"prompt_bytes"`
+	InputTokens    int                  `json:"input_tokens"`
+	TokenMode      string               `json:"token_mode"`
+	Sections       []taskContextSection `json:"sections"`
+	SessionID      string               `json:"session_id,omitempty"`
+	ObservedAt     time.Time            `json:"observed_at"`
+	CompletedAt    *time.Time           `json:"completed_at,omitempty"`
 }
 
 type taskContextSection struct {
@@ -79,6 +79,16 @@ func (h *Handler) ReportTaskContextObservation(w http.ResponseWriter, r *http.Re
 	if !json.Valid(body) {
 		writeError(w, http.StatusBadRequest, "invalid context observation payload")
 		return
+	}
+	// The daemon reports once at provider-startup and once after the run. Only
+	// the completed snapshot is counted so a single run contributes one resume
+	// outcome and one fresh-session boundary sample to telemetry.
+	var observation taskContextResponse
+	if err := json.Unmarshal(body, &observation); err == nil && observation.CompletedAt != nil {
+		h.Metrics.RecordHandoffResumeActual(observation.ResumeActual)
+		if observation.ResumeActual == "fresh" {
+			h.Metrics.RecordHandoffFirstTurnTokens(observation.InputTokens)
+		}
 	}
 
 	if err := h.Queries.UpsertTaskContextObservation(r.Context(), db.UpsertTaskContextObservationParams{

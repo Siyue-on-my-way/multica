@@ -24,6 +24,30 @@ SELECT * FROM (
 ) AS recent
 ORDER BY created_at ASC, id ASC;
 
+-- name: GetLatestCommentForIssue :one
+SELECT * FROM comment
+WHERE issue_id = @issue_id
+  AND workspace_id = @workspace_id
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
+-- name: ListCommentIDsForIssue :many
+-- Used by Context Manifest generation. IDs are cheap to retain and let an
+-- agent audit exactly which older comments were omitted without copying their
+-- contents into the claim payload.
+SELECT id FROM comment
+WHERE issue_id = @issue_id
+  AND workspace_id = @workspace_id
+ORDER BY created_at DESC, id DESC
+LIMIT @row_limit;
+
+-- name: CountCommentsForIssue :one
+-- Complements ListCommentIDsForIssue: the manifest keeps a bounded ID sample,
+-- but still reports how many older comments fell outside that sample.
+SELECT COUNT(*)::bigint FROM comment
+WHERE issue_id = @issue_id
+  AND workspace_id = @workspace_id;
+
 -- name: ListCommentsByIDsForIssue :many
 -- The subset of @ids that exists within this issue and workspace.
 --

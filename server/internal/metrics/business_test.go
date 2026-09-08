@@ -187,6 +187,12 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	m.RecordEntitlementVersionRegression()
 	m.RecordAutopilotQuotaDecision("observe", "manual", "admitted")
 	m.ObserveRuntimeSweepStage(RuntimeSweepStageLiveness, time.Second, 2, 1)
+	m.RecordHandoffCompression("written")
+	m.RecordHandoffCompressionLatency(0.4)
+	m.RecordHandoffCoverage(0.9)
+	m.RecordHandoffResumeActual("resumed")
+	m.RecordHandoffFirstTurnTokens(12000)
+	m.RecordIssueRerunAction("new_session")
 
 	families, err := registry.Gather()
 	if err != nil {

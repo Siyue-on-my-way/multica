@@ -2687,6 +2687,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.TriggerCommentContent = "The newest triggering comment is no longer available. Address every earlier comment included below."
 		}
 
+		// Persist an auditable claim snapshot after comment delivery has been
+		// resolved. The manifest deliberately records IDs and bounded omission
+		// information, not a second copy of comment bodies: the agent can use the
+		// normal thread API to drill into only the omitted discussion it needs.
+		h.attachIssueContextManifest(r.Context(), task, &resp, issue, ancestorBrief.Refs, deliveredCommentIDs)
+
 		// Resolve the prior agent session / workdir to resume.
 		if task.RerunOfTaskID.Valid {
 			// Manual retry: resume precisely from the source task the user
@@ -3320,6 +3326,121 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	}
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+}
+
+// attachIssueContextManifest builds and persists the claim-time context audit
+// record. It is intentionally best-effort: a manifest is valuable observability
+// and recovery data, but a transient read/write failure must not strand an
+// otherwise valid claimed task. The response still carries the in-memory
+// manifest whenever its JSON can be assembled.
+func (h *Handler) attachIssueContextManifest(
+	ctx context.Context,
+	task *db.AgentTaskQueue,
+	resp *AgentTaskResponse,
+	issue db.Issue,
+	ancestorRefs []service.AncestorBriefRef,
+	includedCommentIDs []pgtype.UUID,
+) {
+	if task == nil || resp == nil || !issue.ID.Valid {
+		return
+	}
+
+	included := make([]string, 0, len(includedCommentIDs))
+	includedSet := make(map[string]struct{}, len(includedCommentIDs))
+	for _, id := range includedCommentIDs {
+		value := uuidToString(id)
+		if value == "" {
+			continue
+		}
+		if _, exists := includedSet[value]; exists {
+			continue
+		}
+		includedSet[value] = struct{}{}
+		included = append(included, value)
+	}
+
+	allIDs, listErr := h.Queries.ListCommentIDsForIssue(ctx, db.ListCommentIDsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		RowLimit:    service.ManifestCommentScanLimit,
+	})
+	if listErr != nil {
+		slog.Debug("claim context manifest: comment id scan failed", "task_id", uuidToString(task.ID), "error", listErr)
+	}
+
+	omitted := make([]string, 0, len(allIDs))
+	for _, id := range allIDs {
+		value := uuidToString(id)
+		if value == "" {
+			continue
+		}
+		if _, delivered := includedSet[value]; !delivered {
+			omitted = append(omitted, value)
+		}
+	}
+
+	var total int64
+	if count, err := h.Queries.CountCommentsForIssue(ctx, db.CountCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err == nil {
+		total = count
+	} else {
+		slog.Debug("claim context manifest: comment count failed", "task_id", uuidToString(task.ID), "error", err)
+	}
+
+	// The bounded ID query is newest-first. If a delivered coalesced comment
+	// falls outside that window, subtract it from the older count so the
+	// manifest never claims an included comment was omitted.
+	outOfScanIncluded := 0
+	if len(allIDs) > 0 {
+		scanned := make(map[string]struct{}, len(allIDs))
+		for _, id := range allIDs {
+			if value := uuidToString(id); value != "" {
+				scanned[value] = struct{}{}
+			}
+		}
+		for id := range includedSet {
+			if _, present := scanned[id]; !present {
+				outOfScanIncluded++
+			}
+		}
+	}
+	olderOmitted := 0
+	if total > int64(len(allIDs)) {
+		olderOmitted = int(total) - len(allIDs) - outOfScanIncluded
+		if olderOmitted < 0 {
+			olderOmitted = 0
+		}
+	}
+
+	sourceTaskID := ""
+	if task.RerunOfTaskID.Valid {
+		sourceTaskID = uuidToString(task.RerunOfTaskID)
+	}
+	manifest := service.BuildContextManifest(
+		issue,
+		ancestorRefs,
+		included,
+		omitted,
+		olderOmitted,
+		sourceTaskID,
+		time.Now(),
+	)
+	raw, err := service.MarshalContextManifest(manifest)
+	if err != nil {
+		slog.Warn("claim context manifest: marshal failed", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
+	resp.ContextManifest = raw
+	if updated, err := h.Queries.SetAgentTaskContextManifest(ctx, db.SetAgentTaskContextManifestParams{
+		Manifest: raw,
+		ID:       task.ID,
+	}); err != nil {
+		slog.Warn("claim context manifest: persist failed", "task_id", uuidToString(task.ID), "error", err)
+	} else {
+		task.ContextManifest = updated.ContextManifest
+	}
 }
 
 // worktreeClaimBlockReason returns a user-facing reason when this runtime must
@@ -4611,7 +4732,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		effectiveReason = taskfailure.NormalizeDaemonReason(effectiveReason, req.Error).String()
 		if effectiveReason == string(taskfailure.ReasonAgentContextOverflow) {
 			if issue, ierr := h.Queries.GetIssue(r.Context(), task.IssueID); ierr == nil {
-				h.compressHandoffContext(r.Context(), issue, false)
+				h.compressHandoffContext(r.Context(), issue, false, uuidToString(task.ID))
 			}
 		}
 	}
@@ -4653,6 +4774,13 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	}
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(failedTask.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
+	// SIY-167 rework signal: a rerun-mode task failing again means the fresh
+	// session / resumed retry did NOT fix the problem — the closest
+	// server-side proxy for "切换后返工率". The rerun_mode column rides the
+	// row from the split rerun API.
+	if failedTask.RerunMode != "" {
+		h.Metrics.RecordHandoffRework(failedTask.RerunMode)
+	}
 	writeJSON(w, http.StatusOK, taskToResponse(*failedTask, workspaceID))
 }
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,10 +82,18 @@ type IssueResponse struct {
 	Revision  int64   `json:"revision"`
 	// LastActivityAt is the latest semantic issue activity. It stays nullable
 	// while the operator-run historical backfill is incomplete.
-	LastActivityAt *string `json:"last_activity_at"`
+	LastActivityAt *string         `json:"last_activity_at"`
 	WorkingBranch  *string         `json:"working_branch"`
 	AgentStatus    *string         `json:"agent_status"`
 	HandoffSummary json.RawMessage `json:"handoff_summary"`
+	// SIY-167 compression state: how the effective handoff_summary above came
+	// to be. "manual" means an authored checkpoint wins; "fresh"/"stale"
+	// describe a derived digest against the issue's current revision; "none"
+	// means no resume state. SourceRevision is the revision the derived
+	// digest was built from; LatencyMs the duration of that compression.
+	CompressionStatus string `json:"compression_status,omitempty"`
+	SourceRevision    int64  `json:"source_revision,omitempty"`
+	LatencyMs         int32  `json:"latency_ms,omitempty"`
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
@@ -103,10 +112,10 @@ type IssueResponse struct {
 	Labels *[]LabelResponse `json:"labels,omitempty"`
 	// SourceContext is detail-only. List, board, search, and children responses
 	// deliberately omit the potentially large immutable snapshot.
-	SourceContext *sourceContextDetailResponse `json:"source_context,omitempty"`
-	ManualPositionLocked bool             `json:"manual_position_locked"`
-	AgentResultAt        *string          `json:"agent_result_at,omitempty"`
-	HasUnreadAgentResult bool             `json:"has_unread_agent_result"`
+	SourceContext        *sourceContextDetailResponse `json:"source_context,omitempty"`
+	ManualPositionLocked bool                         `json:"manual_position_locked"`
+	AgentResultAt        *string                      `json:"agent_result_at,omitempty"`
+	HasUnreadAgentResult bool                         `json:"has_unread_agent_result"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -307,37 +316,58 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		statusCategory = i.Status
 	}
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		StatusCategory: statusCategory,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Revision:       i.Revision,
-		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                   uuidToString(i.ID),
+		WorkspaceID:          uuidToString(i.WorkspaceID),
+		Number:               i.Number,
+		Identifier:           identifier,
+		Title:                i.Title,
+		Description:          textToPtr(i.Description),
+		Status:               i.Status,
+		StatusCategory:       statusCategory,
+		Priority:             i.Priority,
+		AssigneeType:         textToPtr(i.AssigneeType),
+		AssigneeID:           uuidToPtr(i.AssigneeID),
+		CreatorType:          i.CreatorType,
+		CreatorID:            uuidToString(i.CreatorID),
+		ParentIssueID:        uuidToPtr(i.ParentIssueID),
+		ProjectID:            uuidToPtr(i.ProjectID),
+		Position:             i.Position,
+		Stage:                int4ToPtr(i.Stage),
+		StartDate:            dateToPtr(i.StartDate),
+		DueDate:              dateToPtr(i.DueDate),
+		CreatedAt:            timestampToString(i.CreatedAt),
+		UpdatedAt:            timestampToString(i.UpdatedAt),
+		Revision:             i.Revision,
+		LastActivityAt:       timestampToNanoPtr(i.LastActivityAt),
+		Metadata:             parseIssueMetadata(i.Metadata),
+		Properties:           parseIssueProperties(i.Properties),
 		WorkingBranch:        textToPtr(i.WorkingBranch),
 		AgentStatus:          textToPtr(i.AgentStatus),
 		HandoffSummary:       json.RawMessage(i.HandoffSummary),
+		CompressionStatus:    service.CompressionStatus(i),
+		SourceRevision:       derivedSourceRevision(i),
+		LatencyMs:            derivedLatencyMs(i),
 		ManualPositionLocked: i.ManualPositionLocked,
 		AgentResultAt:        timestampToPtr(i.AgentResultAt),
 	}
+}
+
+// derivedSourceRevision surfaces the revision a derived summary was built
+// from (0 when none exists).
+func derivedSourceRevision(i db.Issue) int64 {
+	if i.DerivedSummarySourceRevision.Valid {
+		return i.DerivedSummarySourceRevision.Int64
+	}
+	return 0
+}
+
+// derivedLatencyMs surfaces the persisted duration of the last compression
+// attempt (0 when unknown).
+func derivedLatencyMs(i db.Issue) int32 {
+	if i.DerivedSummaryLatencyMs.Valid {
+		return i.DerivedSummaryLatencyMs.Int32
+	}
+	return 0
 }
 
 // issueListRowToResponse converts a list-query row (no description) to an IssueResponse.
@@ -349,31 +379,31 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 	}
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		StatusCategory: statusCategory,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Revision:       i.Revision,
-		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                   uuidToString(i.ID),
+		WorkspaceID:          uuidToString(i.WorkspaceID),
+		Number:               i.Number,
+		Identifier:           identifier,
+		Title:                i.Title,
+		Description:          textToPtr(i.Description),
+		Status:               i.Status,
+		StatusCategory:       statusCategory,
+		Priority:             i.Priority,
+		AssigneeType:         textToPtr(i.AssigneeType),
+		AssigneeID:           uuidToPtr(i.AssigneeID),
+		CreatorType:          i.CreatorType,
+		CreatorID:            uuidToString(i.CreatorID),
+		ParentIssueID:        uuidToPtr(i.ParentIssueID),
+		ProjectID:            uuidToPtr(i.ProjectID),
+		Position:             i.Position,
+		Stage:                int4ToPtr(i.Stage),
+		StartDate:            dateToPtr(i.StartDate),
+		DueDate:              dateToPtr(i.DueDate),
+		CreatedAt:            timestampToString(i.CreatedAt),
+		UpdatedAt:            timestampToString(i.UpdatedAt),
+		Revision:             i.Revision,
+		LastActivityAt:       timestampToNanoPtr(i.LastActivityAt),
+		Metadata:             parseIssueMetadata(i.Metadata),
+		Properties:           parseIssueProperties(i.Properties),
 		ManualPositionLocked: i.ManualPositionLocked,
 		AgentResultAt:        timestampToPtr(i.AgentResultAt),
 	}
@@ -439,31 +469,31 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 	}
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:             uuidToString(i.ID),
-		WorkspaceID:    uuidToString(i.WorkspaceID),
-		Number:         i.Number,
-		Identifier:     identifier,
-		Title:          i.Title,
-		Description:    textToPtr(i.Description),
-		Status:         i.Status,
-		StatusCategory: statusCategory,
-		Priority:       i.Priority,
-		AssigneeType:   textToPtr(i.AssigneeType),
-		AssigneeID:     uuidToPtr(i.AssigneeID),
-		CreatorType:    i.CreatorType,
-		CreatorID:      uuidToString(i.CreatorID),
-		ParentIssueID:  uuidToPtr(i.ParentIssueID),
-		ProjectID:      uuidToPtr(i.ProjectID),
-		Position:       i.Position,
-		Stage:          int4ToPtr(i.Stage),
-		StartDate:      dateToPtr(i.StartDate),
-		DueDate:        dateToPtr(i.DueDate),
-		CreatedAt:      timestampToString(i.CreatedAt),
-		UpdatedAt:      timestampToString(i.UpdatedAt),
-		Revision:       i.Revision,
-		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
-		Metadata:       parseIssueMetadata(i.Metadata),
-		Properties:     parseIssueProperties(i.Properties),
+		ID:                   uuidToString(i.ID),
+		WorkspaceID:          uuidToString(i.WorkspaceID),
+		Number:               i.Number,
+		Identifier:           identifier,
+		Title:                i.Title,
+		Description:          textToPtr(i.Description),
+		Status:               i.Status,
+		StatusCategory:       statusCategory,
+		Priority:             i.Priority,
+		AssigneeType:         textToPtr(i.AssigneeType),
+		AssigneeID:           uuidToPtr(i.AssigneeID),
+		CreatorType:          i.CreatorType,
+		CreatorID:            uuidToString(i.CreatorID),
+		ParentIssueID:        uuidToPtr(i.ParentIssueID),
+		ProjectID:            uuidToPtr(i.ProjectID),
+		Position:             i.Position,
+		Stage:                int4ToPtr(i.Stage),
+		StartDate:            dateToPtr(i.StartDate),
+		DueDate:              dateToPtr(i.DueDate),
+		CreatedAt:            timestampToString(i.CreatedAt),
+		UpdatedAt:            timestampToString(i.UpdatedAt),
+		Revision:             i.Revision,
+		LastActivityAt:       timestampToNanoPtr(i.LastActivityAt),
+		Metadata:             parseIssueMetadata(i.Metadata),
+		Properties:           parseIssueProperties(i.Properties),
 		ManualPositionLocked: i.ManualPositionLocked,
 		AgentResultAt:        timestampToPtr(i.AgentResultAt),
 	}
@@ -3205,8 +3235,12 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateIssueRequest struct {
-	ExpectedRevision *int64  `json:"expected_revision,omitempty"`
-	Title            *string `json:"title"`
+	ExpectedRevision *int64 `json:"expected_revision,omitempty"`
+	// ExpectedHandoffVersion is an independent CAS token for authored
+	// handoff_summary writes. Issue revision protects issue edits; this token
+	// protects checkpoint writers from clobbering one another.
+	ExpectedHandoffVersion *int64  `json:"expected_handoff_version,omitempty"`
+	Title                  *string `json:"title"`
 	// TitleBase is the title adopted by the editor before producing Title. It
 	// protects title edits without coupling them to unrelated issue mutations.
 	TitleBase   *string `json:"title_base,omitempty"`
@@ -3216,20 +3250,20 @@ type UpdateIssueRequest struct {
 	// that landed asynchronously after that base without making media already
 	// present in the base impossible for the user to delete. Older clients omit
 	// it and receive conservative channel-media preservation.
-	DescriptionBase *string  `json:"description_base,omitempty"`
-	Status          *string  `json:"status"`
-	Priority        *string  `json:"priority"`
-	AssigneeType    *string  `json:"assignee_type"`
-	AssigneeID      *string  `json:"assignee_id"`
-	Position        *float64 `json:"position"`
-	StartDate       *string  `json:"start_date"`
-	DueDate         *string  `json:"due_date"`
-	ParentIssueID   *string  `json:"parent_issue_id"`
-	ProjectID       *string  `json:"project_id"`
-	Stage           *int32   `json:"stage"`
-	WorkingBranch  *string         `json:"working_branch"`
-	AgentStatus    *string         `json:"agent_status"`
-	HandoffSummary json.RawMessage `json:"handoff_summary"`
+	DescriptionBase *string         `json:"description_base,omitempty"`
+	Status          *string         `json:"status"`
+	Priority        *string         `json:"priority"`
+	AssigneeType    *string         `json:"assignee_type"`
+	AssigneeID      *string         `json:"assignee_id"`
+	Position        *float64        `json:"position"`
+	StartDate       *string         `json:"start_date"`
+	DueDate         *string         `json:"due_date"`
+	ParentIssueID   *string         `json:"parent_issue_id"`
+	ProjectID       *string         `json:"project_id"`
+	Stage           *int32          `json:"stage"`
+	WorkingBranch   *string         `json:"working_branch"`
+	AgentStatus     *string         `json:"agent_status"`
+	HandoffSummary  json.RawMessage `json:"handoff_summary"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -3471,6 +3505,27 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		AgentStatus:    prevIssue.AgentStatus,
 		HandoffSummary: prevIssue.HandoffSummary,
 	}
+	if _, touched := rawFields["handoff_summary"]; touched {
+		// json.RawMessage preserves an explicit JSON null as the bytes "null".
+		// A null checkpoint clears the authored value and falls back to the
+		// derived summary; passing the previous value here would make every
+		// handoff write a no-op and defeat the handoff CAS.
+		if bytes.Equal(bytes.TrimSpace(req.HandoffSummary), []byte("null")) {
+			params.HandoffSummary = nil
+		} else {
+			params.HandoffSummary = req.HandoffSummary
+		}
+		params.HandoffSummaryTouched = pgtype.Bool{Bool: true, Valid: true}
+		expected := prevIssue.HandoffVersion
+		if req.ExpectedHandoffVersion != nil {
+			if *req.ExpectedHandoffVersion < 0 {
+				writeError(w, http.StatusBadRequest, "expected_handoff_version must be non-negative")
+				return
+			}
+			expected = *req.ExpectedHandoffVersion
+		}
+		params.ExpectedHandoffVersion = pgtype.Int8{Int64: expected, Valid: true}
+	}
 	if req.ExpectedRevision != nil {
 		if *req.ExpectedRevision < 1 {
 			writeError(w, http.StatusBadRequest, "expected_revision must be a positive integer")
@@ -3683,6 +3738,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errIssueFieldConflict) {
 			writeEditConflict(w, "issue", prevIssue.ID)
 			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, touched := rawFields["handoff_summary"]; touched {
+				writeError(w, http.StatusConflict, "handoff checkpoint changed; reload before writing it again")
+				return
+			}
 		}
 		if errors.Is(err, pgx.ErrNoRows) && req.ExpectedRevision != nil {
 			current, reloadErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: prevIssue.ID, WorkspaceID: prevIssue.WorkspaceID})
@@ -4397,6 +4458,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if _, ok := rawUpdates["handoff_summary"]; ok {
+			params.HandoffSummaryTouched = pgtype.Bool{Bool: true, Valid: true}
+			expected := prevIssue.HandoffVersion
+			if req.Updates.ExpectedHandoffVersion != nil {
+				if *req.Updates.ExpectedHandoffVersion < 0 {
+					continue
+				}
+				expected = *req.Updates.ExpectedHandoffVersion
+			}
+			params.ExpectedHandoffVersion = pgtype.Int8{Int64: expected, Valid: true}
 			if req.Updates.HandoffSummary != nil {
 				params.HandoffSummary = req.Updates.HandoffSummary
 			} else {

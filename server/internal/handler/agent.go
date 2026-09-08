@@ -381,31 +381,31 @@ type AgentTaskResponse struct {
 	// IssueStatusesOmitted is how many active custom statuses were dropped by
 	// the cap, so the brief can say the list is incomplete instead of
 	// presenting a truncated catalog as the whole one.
-	IssueStatusesOmitted int                   `json:"issue_statuses_omitted,omitempty"`
-	ThreadName           string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status               string                `json:"status"`
-	Priority             int32                 `json:"priority"`
-	DispatchedAt         *string               `json:"dispatched_at"`
-	StartedAt            *string               `json:"started_at"`
-	CompletedAt          *string               `json:"completed_at"`
-	Result               any                   `json:"result"`
-	Error                *string               `json:"error"`
-	FailureReason        string                `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
-	Attempt              int32                 `json:"attempt"`
-	MaxAttempts          int32                 `json:"max_attempts"`
-	ParentTaskID         *string               `json:"parent_task_id,omitempty"`
-	IsLeaderTask         bool                  `json:"is_leader_task,omitempty"`
-	LeaderRoleResolved   bool                  `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
-	Agent                *TaskAgentData        `json:"agent,omitempty"`
-	ConnectedApps        []ConnectedAppData    `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
-	Repos                []RepoData            `json:"repos,omitempty"`
-	ProjectID            string                `json:"project_id,omitempty"`          // issue's project, when present
-	ProjectTitle         string                `json:"project_title,omitempty"`       // for surfacing in agent context
-	ProjectDescription   string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
-	CreatedAt            string                `json:"created_at"`
-	PriorSessionID       string                `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir         string                `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	IssueStatusesOmitted    int                        `json:"issue_statuses_omitted,omitempty"`
+	ThreadName              string                     `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status                  string                     `json:"status"`
+	Priority                int32                      `json:"priority"`
+	DispatchedAt            *string                    `json:"dispatched_at"`
+	StartedAt               *string                    `json:"started_at"`
+	CompletedAt             *string                    `json:"completed_at"`
+	Result                  any                        `json:"result"`
+	Error                   *string                    `json:"error"`
+	FailureReason           string                     `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	Attempt                 int32                      `json:"attempt"`
+	MaxAttempts             int32                      `json:"max_attempts"`
+	ParentTaskID            *string                    `json:"parent_task_id,omitempty"`
+	IsLeaderTask            bool                       `json:"is_leader_task,omitempty"`
+	LeaderRoleResolved      bool                       `json:"leader_role_resolved,omitempty"` // claim-only capability, always true here: IsLeaderTask/SquadID authoritatively answer "is this a leader run", so the daemon must not infer the role from briefing text. Servers predating it make no such promise — before #4951 they sent no is_leader_task at all, after it they sent the flag without guaranteeing a briefing — so a daemon seeing no capability keeps the legacy inference. Never rendered into a prompt; see daemon.taskIsSquadLeader (MUL-5811). Mirror field: internal/daemon/types.go, same JSON name
+	Agent                   *TaskAgentData             `json:"agent,omitempty"`
+	ConnectedApps           []ConnectedAppData         `json:"connected_apps,omitempty"` // daemon-claim only: per-run app capabilities mounted through runtime MCP overlays
+	Repos                   []RepoData                 `json:"repos,omitempty"`
+	ProjectID               string                     `json:"project_id,omitempty"`          // issue's project, when present
+	ProjectTitle            string                     `json:"project_title,omitempty"`       // for surfacing in agent context
+	ProjectDescription      string                     `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectResources        []ProjectResourceData      `json:"project_resources,omitempty"`   // resources attached to the project
+	CreatedAt               string                     `json:"created_at"`
+	PriorSessionID          string                     `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir            string                     `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
 	CurrentIssueTitle       string                     `json:"current_issue_title,omitempty"`
 	CurrentIssueDescription string                     `json:"current_issue_description,omitempty"`
 	AncestorBrief           string                     `json:"ancestor_brief,omitempty"`
@@ -489,9 +489,22 @@ type AgentTaskResponse struct {
 	// Populated at claim time from the issue row so the new agent can resume
 	// without re-reading the full comment history. omitempty so old daemons
 	// and non-handoff runs produce no extra wire bytes.
-	WorkingBranch         string          `json:"working_branch,omitempty"`          // git branch the previous agent was on
-	AgentStatus           string          `json:"agent_status,omitempty"`            // machine-readable progress stage (e.g. "coding")
-	HandoffSummary        json.RawMessage `json:"handoff_summary,omitempty"`         // structured JSON checkpoint
+	WorkingBranch  string          `json:"working_branch,omitempty"`  // git branch the previous agent was on
+	AgentStatus    string          `json:"agent_status,omitempty"`    // machine-readable progress stage (e.g. "coding")
+	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"` // structured JSON checkpoint (effective: manual checkpoint if present, else the derived summary)
+	// SIY-167 compression state. Populated by the rerun API alongside the new
+	// task when compression ran (and by GET endpoints that resolve the issue
+	// row), so the UI can distinguish a manual checkpoint from a fresh or
+	// stale derived digest without guessing from the opaque summary bytes.
+	CompressionStatus         string `json:"compression_status,omitempty"`          // manual | fresh | stale | none
+	CompressionSourceRevision int64  `json:"compression_source_revision,omitempty"` // issue revision the derived summary was built from
+	CompressionLatencyMs      int32  `json:"compression_latency_ms,omitempty"`      // wall-clock duration of the last compression attempt
+	// ContextManifest is the SIY-167 claim-time audit record: which issue
+	// revision and handoff state this context was assembled from, which
+	// comments were delivered, and which known ids were omitted. The daemon
+	// renders it into the brief so the run can reconcile on its first turn;
+	// old daemons ignore it.
+	ContextManifest json.RawMessage `json:"context_manifest,omitempty"`
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -812,6 +825,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:    uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:         textToPtr(t.TriggerSummary),
 		HandoffNote:            handoffNote,
+		ContextManifest:        json.RawMessage(t.ContextManifest),
 		WorkDir:                workDir,
 		RelativeWorkDir:        relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		DurableWorkDir:         durableWorkDir,

@@ -6,7 +6,8 @@ llm:
   provider: openai-compatible
   base_url: ${MULTICA_LLM_BASE_URL}
   api_key_env: MULTICA_LLM_API_KEY
-  model: gemini-3.1-pro-preview
+  model: gemini-3.8-flash
+  reasoning_effort: high
   temperature: 0.1
   max_completion_tokens: 512
   timeout_ms: 30000
@@ -15,13 +16,34 @@ llm:
 prompt:
   system: |-
     You are a technical project assistant. Your only job is to produce a concise handoff summary for an AI coding agent taking over an issue.
+    You receive the issue itself (description, acceptance criteria, metadata, ancestor context), the branch/progress state, the last execution outcome, attachments, and the recent comment history. Ground the summary in ALL of it: details that decide the direction or quality of the task must survive, especially decisions, constraints, and open questions stated in comments.
     Output EXACTLY one JSON object and nothing else:
     {"current_progress":"one sentence","next_steps":["step 1"],"unresolved_issues":"empty string if none"}
   user_template: |-
     Issue title: {{issue_title}}
 
-    Recent comment history (oldest first, newest last):
+    ## Issue description
+    {{issue_description}}
 
+    ## Acceptance criteria
+    {{acceptance_criteria}}
+
+    ## Issue metadata
+    {{issue_metadata}}
+
+    ## Ancestor context
+    {{ancestor_context}}
+
+    ## Branch / progress state
+    {{branch_state}}
+
+    ## Last execution outcome
+    {{last_execution}}
+
+    ## Attachments
+    {{attachments}}
+
+    ## Recent comment history (oldest first, newest last; "[reply to <id>]" marks a thread reply)
     {{comments}}
 
     Write the handoff summary JSON.

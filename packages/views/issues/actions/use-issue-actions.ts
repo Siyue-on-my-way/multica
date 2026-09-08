@@ -275,16 +275,18 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const [compactingContext, setCompactingContext] = useState(false);
 
-  // Standalone "compact context now": no task_id (the manual, no-failure
-  // trigger — distinct from the execution-log per-row retry-in-new-session
-  // action), always forces a fresh handoff_summary via with_context_compress.
-  // Cancels any active run on the current assignee and starts a new one from
-  // the compacted checkpoint, same as a cross-agent handoff.
+  // Standalone "compact context now": SIY-167 split the rerun API, so this
+  // action is now EXACTLY what it claims to be — a forced refresh of the
+  // derived context summary (action: "refresh_summary"). It enqueues NO run
+  // and cancels NOTHING; the previous copy promised to cancel the active run,
+  // which the backend never did (pending rows only). The next run — started
+  // explicitly via rerun/new-session — picks the fresh summary up at claim
+  // time, with the Context Manifest recording exactly what it covered.
   const compactContext = useCallback(() => {
     if (!issueId || compactingContext) return;
     setCompactingContext(true);
     api
-      .rerunIssue(issueId, undefined, true)
+      .rerunIssue(issueId, undefined, false, "refresh_summary")
       .then(() => {
         toast.success(t(($) => $.actions.compact_context_success));
         void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });

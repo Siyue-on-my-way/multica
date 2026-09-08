@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -104,11 +105,15 @@ func (d *skillReadDBTX) Query(_ context.Context, sql string, _ ...any) (pgx.Rows
 }
 
 // skillRow / skillFileRow build result rows in the column order the generated
-// ListAgentSkills / ListSkillFilesBySkillIDs scanners read.
+// ListAgentSkills / ListSkillFilesBySkillIDs scanners read. ListAgentSkills is
+// `SELECT s.*`, so the row must track the skill table's full column order:
+// id, workspace_id, name, description, content, config, created_by, created_at,
+// updated_at, is_global, plugin_installation_id.
 func skillRow(id pgtype.UUID, name, description, content string) []any {
 	return []any{
 		id, testUUID(0xF0), name, description, content,
-		[]byte(nil), pgtype.UUID{}, pgtype.Timestamptz{}, pgtype.Timestamptz{}, pgtype.UUID{},
+		[]byte(nil), pgtype.UUID{}, pgtype.Timestamptz{}, pgtype.Timestamptz{},
+		false, pgtype.UUID{},
 	}
 }
 
@@ -116,6 +121,7 @@ func skillFileRow(skillID pgtype.UUID, path, content string) []any {
 	return []any{
 		testUUID(0xF1), skillID, path, content,
 		pgtype.Timestamptz{}, pgtype.Timestamptz{},
+		"", int32(0),
 	}
 }
 
@@ -160,9 +166,18 @@ func TestLoadAgentSkills_GroupsBatchedFilesBySkillID(t *testing.T) {
 		}
 	}
 
+	// FileMode 0 in the fixture normalizes to 0644 — the same conversion
+	// agentSkillDataFromDB applies on the per-skill path.
+	wantMode := skillbundle.NormalizeFileMode(0)
 	wantFiles := map[string][]AgentSkillFileData{
-		"alpha": {{Path: "docs/one.md", Content: "alpha one"}, {Path: "docs/two.md", Content: "alpha two"}},
-		"beta":  {{Path: "a.md", Content: "beta a"}, {Path: "z.md", Content: "beta z"}},
+		"alpha": {
+			{Path: "docs/one.md", Content: "alpha one", Mode: wantMode},
+			{Path: "docs/two.md", Content: "alpha two", Mode: wantMode},
+		},
+		"beta": {
+			{Path: "a.md", Content: "beta a", Mode: wantMode},
+			{Path: "z.md", Content: "beta z", Mode: wantMode},
+		},
 		"gamma": nil,
 	}
 	for _, skill := range got {

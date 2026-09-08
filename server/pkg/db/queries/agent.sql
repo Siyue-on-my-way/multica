@@ -301,7 +301,7 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
     coalesced_comment_ids, trigger_summary, force_fresh_session, is_leader_task, handoff_note,
     squad_id, context, originator_user_id, accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
-    originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id, trigger_evidence_kind, trigger_evidence_ref_id,
+    originator_source, delegated_from_task_id, rule_version_id, rerun_of_task_id, rerun_mode, trigger_evidence_kind, trigger_evidence_ref_id,
     id
 )
 SELECT
@@ -325,10 +325,20 @@ SELECT
     sqlc.narg(delegated_from_task_id),
     sqlc.narg(rule_version_id),
     sqlc.narg(rerun_of_task_id),
+    COALESCE(sqlc.narg('rerun_mode')::text, ''),
     sqlc.narg(trigger_evidence_kind),
     sqlc.narg(trigger_evidence_ref_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows($1, $3, $2)
+RETURNING *;
+
+-- name: SetAgentTaskContextManifest :one
+-- The task is already claimed when this is written. The response still carries
+-- the computed manifest if this best-effort audit write fails, but successful
+-- writes make the exact claim reproducible from the task row alone.
+UPDATE agent_task_queue
+SET context_manifest = @manifest::jsonb
+WHERE id = @id
 RETURNING *;
 
 -- name: CreateDeferredChannelIssueTask :one
@@ -1216,6 +1226,17 @@ LIMIT 1;
 SELECT started_at FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2 AND started_at IS NOT NULL
 ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: GetLastTerminalTaskForIssue :one
+-- The most recent completed or failed task on an issue, for handoff
+-- compression: its recorded result/error is the freshest execution outcome
+-- and belongs in the LLM's input next to the comment history. Cancelled runs
+-- are excluded — an interrupted run says nothing about the work's outcome.
+SELECT * FROM agent_task_queue
+WHERE issue_id = $1
+  AND status IN ('completed', 'failed')
+ORDER BY COALESCE(completed_at, created_at) DESC, id DESC
 LIMIT 1;
 
 -- name: FailAgentTask :one

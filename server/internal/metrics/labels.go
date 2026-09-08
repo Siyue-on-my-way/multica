@@ -35,6 +35,7 @@ const (
 	labelGate         = "gate"
 	labelOutcome      = "outcome"
 	labelStage        = "stage"
+	labelResumeActual = "resume_actual"
 )
 
 var businessMetricLabels = map[string][]string{
@@ -62,6 +63,10 @@ var businessMetricLabels = map[string][]string{
 	"multica_runtime_sweeper_candidate_rows_total":     {labelStage},
 	"multica_runtime_sweeper_rows_changed_total":       {labelStage},
 	"multica_agent_runtime_lookup_total":               {labelSource, labelResult},
+	"multica_handoff_compression_total":                {labelResult},
+	"multica_handoff_resume_total":                     {labelResumeActual},
+	"multica_handoff_rework_total":                     {labelAction},
+	"multica_issue_rerun_total":                        {labelAction},
 
 	// PR3 funnel / community / commercial.
 	"multica_signup_total":                             {labelSignupSource},

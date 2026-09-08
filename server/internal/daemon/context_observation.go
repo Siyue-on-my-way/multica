@@ -219,6 +219,10 @@ func buildContextSections(p observationParams) []ContextSection {
 	if handoffText != "" {
 		out = append(out, sectionFromText("handoff", "task.handoff", deliveryProviderPrompt, true, handoffText))
 	}
+	manifestText := strings.TrimSpace(string(p.task.ContextManifest))
+	if manifestText != "" && manifestText != "null" && manifestText != "{}" {
+		out = append(out, sectionFromText("context_manifest", "task.context_manifest", deliveryProviderPrompt, true, manifestText))
+	}
 
 	// Triggering comment (embedded verbatim) and any coalesced earlier comments.
 	if p.task.TriggerCommentContent != "" {
@@ -252,7 +256,7 @@ func buildContextSections(p observationParams) []ContextSection {
 	// turn-mode marker, and perTurnContextBlocks (initiator, connected apps,
 	// continuity notice, shared-dir, worktree conflicts). It is an estimate by
 	// subtraction, so it never goes negative and is marked estimated downstream.
-	embedded := len(issueText) + len(p.task.AncestorBrief) + len(handoffText) + len(p.task.TriggerCommentContent) + len(coalescedCommentsText(p.task))
+	embedded := len(issueText) + len(p.task.AncestorBrief) + len(handoffText) + len(manifestText) + len(p.task.TriggerCommentContent) + len(coalescedCommentsText(p.task))
 	residual := len(p.prompt) - embedded
 	if residual < 0 {
 		residual = 0
@@ -284,8 +288,8 @@ func buildContextSections(p observationParams) []ContextSection {
 			Digest:   "",
 		})
 	}
-	// Sidecar files written by writeContextFiles (issue_context.md,
-	// daemon_task_context.json, project resources). Counted, not tokenized.
+	// Sidecar files written by writeContextFiles (daemon_task_context.json,
+	// project resources). Counted, not tokenized.
 	if sidecarCount := countSidecars(p.task); sidecarCount > 0 {
 		out = append(out, ContextSection{
 			Key:      "sidecar",
@@ -364,12 +368,11 @@ func skillCount(t Task) int {
 
 // countSidecars reports how many sidecar files this task's kind writes. It
 // mirrors execenv.writeContextFiles' branch shape without reproducing its I/O.
+// No per-task Markdown brief is counted: execenv stopped writing
+// .agent_context/issue_context.md in MUL-6984, so counting it here reported a
+// file that never reached the workdir.
 func countSidecars(t Task) int {
 	n := 0
-	// issue_context.md carries assignment + checkpoint for issue-bound runs.
-	if t.IssueID != "" {
-		n++ // .agent_context/issue_context.md
-	}
 	// daemon_task_context.json is the minimal identity marker.
 	n++ // .multica/daemon_task_context.json
 	// project resources sidecar when the task carries a project with resources.

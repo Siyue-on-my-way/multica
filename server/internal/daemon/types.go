@@ -156,6 +156,13 @@ type Task struct {
 	WorkingBranch  string          `json:"working_branch,omitempty"`
 	AgentStatus    string          `json:"agent_status,omitempty"`
 	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`
+	// ContextManifest (SIY-167) is the server's claim-time audit record of
+	// the assembled context: issue revision, handoff status/version, the
+	// delivered comment ids, and the known-but-omitted ones. Rendered into
+	// the issue prompt so the agent can reconcile its checkpoint against what
+	// was actually included and read raw comments on demand. Absent on old
+	// servers, which is the safe reading (no manifest, behave as before).
+	ContextManifest json.RawMessage `json:"context_manifest,omitempty"`
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text

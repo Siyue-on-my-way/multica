@@ -195,13 +195,14 @@ type TaskContextForEnv struct {
 	AutopilotSource         string
 	AutopilotTriggerPayload string
 	QuickCreatePrompt       string // non-empty for quick-create tasks
-	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
-	// Handoff state written by the previous agent. Injected into issue_context.md
-	// so the new agent resumes without re-reading the full comment history.
-	WorkingBranch           string          // git branch the previous agent was working on
-	AgentStatus             string          // machine-readable progress stage (e.g. "coding")
-	HandoffSummary          json.RawMessage // structured JSON checkpoint
-	IsSquadLeader           bool            // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
+	HandoffNote             string // assignment handoff instruction; rendered into the per-turn prompt (MUL-3375)
+	// Handoff state written by the previous agent. Delivered in the claim
+	// payload so the new agent resumes without re-reading the full comment
+	// history.
+	WorkingBranch  string          // git branch the previous agent was working on
+	AgentStatus    string          // machine-readable progress stage (e.g. "coding")
+	HandoffSummary json.RawMessage // structured JSON checkpoint
+	IsSquadLeader  bool            // true when THIS TASK runs the agent in the squad-leader role (may exit silently on no_action); derived from the claim's is_leader_task / squad_id, never sniffed from instructions text (MUL-5811)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
 	// non-empty so every agent in the workspace sees the same shared context,

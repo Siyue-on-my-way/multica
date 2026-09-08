@@ -131,27 +131,39 @@ func commentIDsForSkillMatch(task *db.AgentTaskQueue) []pgtype.UUID {
 // agentSkillDataFromDB converts a skill row to its wire shape, loading its
 // supporting files. Shared by the agent-assignment and global-skill loaders.
 func (s *TaskService) agentSkillDataFromDB(ctx context.Context, sk db.Skill) AgentSkillData {
-	data := AgentSkillData{
+	data := agentSkillDataFromRow(sk)
+	files, _ := s.Queries.ListSkillFiles(ctx, sk.ID)
+	for _, f := range files {
+		data.Files = appendSkillFile(data.Files, f)
+	}
+	return data
+}
+
+// agentSkillDataFromRow converts a skill row to its wire shape without reading
+// its files; the caller attaches them from whichever query loaded them.
+func agentSkillDataFromRow(sk db.Skill) AgentSkillData {
+	return AgentSkillData{
 		ID:          util.UUIDToString(sk.ID),
 		Name:        sk.Name,
 		Description: sk.Description,
 		Content:     sk.Content,
 	}
-	files, _ := s.Queries.ListSkillFiles(ctx, sk.ID)
-	for _, f := range files {
-		file := AgentSkillFileData{
-			Path:            f.Path,
-			ContentEncoding: f.ContentEncoding,
-			Mode:            skillbundle.NormalizeFileMode(f.FileMode),
-		}
-		if file.ContentEncoding == skillbundle.EncodingBase64 {
-			file.ContentBase64 = f.Content
-		} else {
-			file.Content = f.Content
-		}
-		data.Files = append(data.Files, file)
+}
+
+// appendSkillFile converts one skill_file row to the wire shape, splitting
+// base64-encoded payloads out of the plain-text content field.
+func appendSkillFile(files []AgentSkillFileData, f db.SkillFile) []AgentSkillFileData {
+	file := AgentSkillFileData{
+		Path:            f.Path,
+		ContentEncoding: f.ContentEncoding,
+		Mode:            skillbundle.NormalizeFileMode(f.FileMode),
 	}
-	return data
+	if file.ContentEncoding == skillbundle.EncodingBase64 {
+		file.ContentBase64 = f.Content
+	} else {
+		file.Content = f.Content
+	}
+	return append(files, file)
 }
 
 // SkillNameInText reports whether name appears in text as a standalone token:

@@ -353,8 +353,15 @@ var issueUsageCmd = &cobra.Command{
 var issueRerunCmd = &cobra.Command{
 	Use:   "rerun <id>",
 	Short: "Re-enqueue an issue's current agent assignment as a fresh run",
-	Args:  exactArgs(1),
-	RunE:  runIssueRerun,
+	Long: "Re-enqueue an issue's agent assignment as a new run. Use --action to pick " +
+		"one of the decoupled rerun behaviours: \"new_session\" starts a clean " +
+		"provider session (default), \"retry\" re-runs a source task's work and " +
+		"may resume its session when the failure did not poison it (pair with " +
+		"--task-id), and \"refresh_summary\" ONLY regenerates the LLM context " +
+		"summary without enqueueing anything. Use `issue cancel` to stop an " +
+		"active run — rerun never cancels one.",
+	Args: exactArgs(1),
+	RunE: runIssueRerun,
 }
 
 var issueCancelTaskCmd = &cobra.Command{
@@ -589,6 +596,7 @@ func init() {
 
 	// issue rerun
 	issueRerunCmd.Flags().String("output", "json", "Output format: table or json")
+	issueRerunCmd.Flags().String("action", "", "Rerun behaviour: new_session (clean provider session, default), retry (resume the source task's session when safe, pair with --task-id), or refresh_summary (only regenerate the context summary, no run)")
 	// issue cancel-task
 	issueCancelTaskCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCancelTaskCmd.Flags().String("issue", "", "Issue ID/key to scope short run ID prefix resolution")
@@ -2425,8 +2433,15 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve issue: %w", err)
 	}
 
+	// The split rerun API (SIY-167): forward the requested action when set. An
+	// empty body keeps the legacy server behaviour for existing scripts.
+	body := map[string]any{}
+	if action, _ := cmd.Flags().GetString("action"); action != "" {
+		body["action"] = action
+	}
+
 	var task map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/rerun", map[string]any{}, &task); err != nil {
+	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/rerun", body, &task); err != nil {
 		return fmt.Errorf("rerun issue: %w", err)
 	}
 

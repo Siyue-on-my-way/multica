@@ -77,6 +77,19 @@ type BusinessMetrics struct {
 	// readiness gates is observable. See labels.go for the closed enum.
 	agentRuntimeLookup *prometheus.CounterVec
 
+	// SIY-167 handoff compression / resume telemetry. These make "does
+	// compress-and-reopen actually preserve task quality" measurable:
+	// compression outcomes and latency, how much of the comment history each
+	// compression actually saw, whether resumed sessions really resumed, and
+	// how big a fresh session's first turn is after a compression handoff.
+	handoffCompression        *prometheus.CounterVec
+	handoffCompressionLatency prometheus.Histogram
+	handoffCoverageRatio      prometheus.Histogram
+	handoffResumeActual       *prometheus.CounterVec
+	handoffFirstTurnTokens    prometheus.Histogram
+	handoffRework             *prometheus.CounterVec
+	issueRerunAction          *prometheus.CounterVec
+
 	activeMu    sync.Mutex
 	activeTasks map[string]activeTaskLabels
 
@@ -283,6 +296,37 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Namespace: "multica", Subsystem: "agent_runtime", Name: "lookup_total",
 			Help: "Total single-row agent_runtime reads by product source and outcome.",
 		}, metricLabels("multica_agent_runtime_lookup_total")),
+		handoffCompression: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "handoff", Name: "compression_total",
+			Help: "Handoff compression attempts by outcome (written, skipped_manual, skipped_fresh, skipped_no_comments, not_configured, llm_error, db_error, cas_conflict).",
+		}, metricLabels("multica_handoff_compression_total")),
+		handoffCompressionLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: "multica", Subsystem: "handoff", Name: "compression_latency_seconds",
+			Help: "Wall-clock duration of an LLM handoff compression attempt, including the LLM call.",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30},
+		}),
+		handoffCoverageRatio: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: "multica", Subsystem: "handoff", Name: "compression_coverage_ratio",
+			Help: "Fraction of the issue's comment history included in each compression input (included / total comments).",
+			Buckets: []float64{0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1},
+		}),
+		handoffResumeActual: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "handoff", Name: "resume_total",
+			Help: "Actual resume outcome reported by run context observations (resumed, fresh, fallback, unknown).",
+		}, metricLabels("multica_handoff_resume_total")),
+		handoffFirstTurnTokens: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: "multica", Subsystem: "handoff", Name: "first_turn_input_tokens",
+			Help: "Estimated boundary input tokens for fresh-session runs (no provider session reuse).",
+			Buckets: []float64{1000, 2500, 5000, 10000, 20000, 40000, 80000, 160000, 320000},
+		}),
+		handoffRework: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "handoff", Name: "rework_total",
+			Help: "Rerun-mode tasks that FAILED again after the rerun — the rework signal for context switches and resumed retries.",
+		}, metricLabels("multica_handoff_rework_total")),
+		issueRerunAction: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "issue", Name: "rerun_total",
+			Help: "Manual issue rerun requests by action (refresh_summary, new_session, retry, legacy).",
+		}, metricLabels("multica_issue_rerun_total")),
 		activeTasks: map[string]activeTaskLabels{},
 		events:      newBusinessEventMetrics(),
 	}
@@ -298,6 +342,20 @@ func NewBusinessMetrics() *BusinessMetrics {
 		for _, result := range AllRuntimeLookupResults() {
 			m.agentRuntimeLookup.WithLabelValues(source, result).Add(0)
 		}
+	}
+	// Prewarm the handoff/rerun series the same way: an outcome that has not
+	// fired since boot must read as zero, not as a gap on the dashboard.
+	for _, result := range []string{"written", "skipped_manual", "skipped_fresh", "skipped_no_comments", "not_configured", "llm_error", "db_error", "cas_conflict"} {
+		m.handoffCompression.WithLabelValues(result).Add(0)
+	}
+	for _, actual := range []string{"resumed", "fresh", "fallback", "unknown"} {
+		m.handoffResumeActual.WithLabelValues(actual).Add(0)
+	}
+	for _, mode := range []string{"refresh_summary", "new_session", "retry", "legacy"} {
+		m.handoffRework.WithLabelValues(mode).Add(0)
+	}
+	for _, action := range []string{"refresh_summary", "new_session", "retry", "legacy"} {
+		m.issueRerunAction.WithLabelValues(action).Add(0)
 	}
 	return m
 }
@@ -338,6 +396,13 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.entitlementVersionRegression,
 		m.autopilotQuotaDecision,
 		m.agentRuntimeLookup,
+		m.handoffCompression,
+		m.handoffCompressionLatency,
+		m.handoffCoverageRatio,
+		m.handoffResumeActual,
+		m.handoffFirstTurnTokens,
+		m.handoffRework,
+		m.issueRerunAction,
 	}, m.events.collectors()...)
 }
 
@@ -387,6 +452,98 @@ func (m *BusinessMetrics) RecordEntitlementVersionRegression() {
 	if m != nil {
 		m.entitlementVersionRegression.Inc()
 	}
+}
+
+// RecordHandoffCompression counts one handoff compression decision by its
+// outcome. Unknown outcomes land on "llm_error" — the bucket an operator
+// already watches — rather than minting a series.
+func (m *BusinessMetrics) RecordHandoffCompression(result string) {
+	if m == nil {
+		return
+	}
+	switch result {
+	case "written", "skipped_manual", "skipped_fresh", "skipped_no_comments",
+		"not_configured", "llm_error", "db_error", "cas_conflict":
+	default:
+		result = "llm_error"
+	}
+	m.handoffCompression.WithLabelValues(result).Inc()
+}
+
+func (m *BusinessMetrics) RecordHandoffCompressionLatency(seconds float64) {
+	if m != nil {
+		m.handoffCompressionLatency.Observe(seconds)
+	}
+}
+
+// RecordHandoffCoverage observes the fraction of an issue's comment history
+// the compression input actually carried (0..1). A ratio below 1 with a bad
+// resume outcome is the signature of context loss the split storage exists to
+// expose.
+func (m *BusinessMetrics) RecordHandoffCoverage(ratio float64) {
+	if m == nil {
+		return
+	}
+	if ratio < 0 {
+		ratio = 0
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	m.handoffCoverageRatio.Observe(ratio)
+}
+
+// RecordHandoffResumeActual counts the resume outcome a run's context
+// observation reported. Normalized like RecordAgentRuntimeLookup: an unknown
+// value degrades to "unknown" instead of minting a series.
+func (m *BusinessMetrics) RecordHandoffResumeActual(actual string) {
+	if m == nil {
+		return
+	}
+	switch actual {
+	case "resumed", "fresh", "fallback", "unknown":
+	default:
+		actual = "unknown"
+	}
+	m.handoffResumeActual.WithLabelValues(actual).Inc()
+}
+
+func (m *BusinessMetrics) RecordHandoffFirstTurnTokens(tokens int) {
+	if m == nil || tokens <= 0 {
+		return
+	}
+	m.handoffFirstTurnTokens.Observe(float64(tokens))
+}
+
+// RecordHandoffRework counts a rerun-mode task that FAILED again — the fresh
+// session or resumed retry did not fix the problem. Normalized like
+// RecordIssueRerunAction so an unknown mode degrades to "legacy" instead of
+// minting a series.
+func (m *BusinessMetrics) RecordHandoffRework(rerunMode string) {
+	if m == nil {
+		return
+	}
+	switch rerunMode {
+	case "refresh_summary", "new_session", "retry", "legacy":
+	default:
+		rerunMode = "legacy"
+	}
+	m.handoffRework.WithLabelValues(rerunMode).Inc()
+}
+
+// RecordIssueRerunAction counts one manual rerun request by its declared
+// action. The legacy shape (no action field) stays its own series so adoption
+// of the split actions is visible on the dashboard.
+func (m *BusinessMetrics) RecordIssueRerunAction(action string) {
+	if m == nil {
+		return
+	}
+	switch action {
+	case "refresh_summary", "new_session", "retry", "legacy":
+	default:
+		action = "legacy"
+	}
+	m.issueRerunAction.WithLabelValues(action).Inc()
 }
 
 func (m *BusinessMetrics) RecordAutopilotQuotaDecision(action, source, result string) {

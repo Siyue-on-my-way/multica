@@ -399,9 +399,9 @@ individually, but writing all available information helps the most:
 
 ```bash
 multica issue update <issue-id> \
-  --working-branch "feat/issue-SIY-2" \
+  --working-branch "feature/handoff-retry" \
   --agent-status "coding" \
-  --handoff-summary '{"current_progress":"Completed AST analysis. PR draft opened.","next_steps":["run integration tests","address review comments"],"unresolved_issues":"flaky test in auth_test.go line 42"}'
+  --handoff-summary '{"current_progress":"Completed analysis. Draft opened for review.","next_steps":["run integration tests","address review comments"],"unresolved_issues":"one flaky integration test fails intermittently"}'
 ```
 
 Field semantics:
@@ -422,12 +422,12 @@ Field semantics:
 ### How the next agent reads the checkpoint
 
 The next agent automatically receives `working_branch`, `agent_status`, and
-`handoff_summary` in its `issue_context.md` and opening prompt. It will see a
-**## Previous Agent State** section and is instructed to resume from the
-checkpoint instead of starting from scratch.
+`handoff_summary` in its opening prompt. It will see a **Previous Agent State**
+section and is instructed to resume from the checkpoint instead of starting
+from scratch.
 
 The next agent should:
-1. Read the checkpoint from `issue_context.md`.
+1. Read the checkpoint from the opening prompt (the issue's `handoff_summary`).
 2. Run `git fetch && git checkout <working_branch>` if a branch is specified.
 3. Continue from `next_steps` without re-doing `current_progress`.
 4. Clear stale checkpoint fields once the handoff is complete:

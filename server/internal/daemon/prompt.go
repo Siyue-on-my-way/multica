@@ -235,6 +235,7 @@ func buildPromptBody(task Task, provider string) string {
 		}
 		b.WriteString("\n")
 	}
+	appendContextManifest(&b, task)
 	b.WriteString(turnModeOwnership)
 	// Assignment handoff (MUL-3375) is run-scoped data. Keep it in the
 	// per-turn prompt rather than the cached runtime brief (MUL-5377).
@@ -403,6 +404,7 @@ func buildCommentPrompt(task Task, provider string) string {
 		}
 		b.WriteString("\n")
 	}
+	appendContextManifest(&b, task)
 	// Mode marker for the brief's router. Emitted unconditionally from the same
 	// branch that selects this code path, so the brief and the prompt can never
 	// disagree about which mode this turn is in. It must NOT be gated on
@@ -560,6 +562,25 @@ func buildCommentPrompt(task Task, provider string) string {
 		b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID, taskIsSquadLeader(task)))
 	}
 	return b.String()
+}
+
+// appendContextManifest injects the structured claim audit alongside the issue
+// context. It is intentionally a small, machine-readable block: the manifest
+// tells the agent exactly which comments were included or omitted, while the
+// normal `multica issue comment list --thread ...` command remains the source
+// of truth for omitted bodies. This keeps cold starts loss-aware without
+// replaying an entire timeline into every provider session.
+func appendContextManifest(b *strings.Builder, task Task) {
+	raw := strings.TrimSpace(string(task.ContextManifest))
+	if raw == "" || raw == "null" || raw == "{}" {
+		return
+	}
+	b.WriteString("## Context Manifest\n\n")
+	b.WriteString("This claim manifest is the server's audit of the context delivered to this run. At the start of the turn, reconcile its issue revision and handoff version. Treat included comment IDs as already delivered; if an omitted ID or thread matters, fetch only that thread with `multica issue comment list ")
+	b.WriteString(task.IssueID)
+	b.WriteString(" --thread <thread-id> --tail 30 --compact --output json`. The manifest is not a replacement for current issue state or source code.\n\n```json\n")
+	b.WriteString(raw)
+	b.WriteString("\n```\n\n")
 }
 
 // commentReplyThreads groups this run's trigger + coalesced comments by their

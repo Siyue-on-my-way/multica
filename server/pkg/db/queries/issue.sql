@@ -68,6 +68,51 @@ LIMIT $2 OFFSET $3;
 SELECT * FROM issue
 WHERE id = $1;
 
+-- name: SetIssueManualCheckpointCAS :one
+-- Manual checkpoints are authored state. They use the handoff version (not
+-- issue.revision) as their compare-and-swap token so a stale agent cannot
+-- overwrite another agent's checkpoint while unrelated issue edits continue.
+-- handoff_summary stays the effective checkpoint agents see: a manual write
+-- always wins it, and this statement does not touch issue.revision (a
+-- checkpoint is resume state, not an issue edit).
+UPDATE issue
+SET manual_checkpoint = @checkpoint::jsonb,
+    manual_checkpoint_source = COALESCE(NULLIF(@source::text, ''), 'agent'),
+    manual_checkpoint_version = manual_checkpoint_version + 1,
+    manual_checkpoint_updated_at = now(),
+    handoff_version = handoff_version + 1,
+    handoff_summary = @checkpoint::jsonb,
+    updated_at = now()
+WHERE id = @id
+  AND workspace_id = @workspace_id
+  AND handoff_version = @expected_handoff_version::bigint
+RETURNING *;
+
+-- name: SetIssueDerivedSummaryCAS :one
+-- Derived summaries are only valid for the issue/comment snapshot used to
+-- create them. The revision predicate prevents a slow LLM response from
+-- landing after a user edit, while handoff_version protects both manual and
+-- derived writers from lost updates. The effective handoff_summary mirror
+-- prefers a manual checkpoint written under the same version — the version
+-- guard means manual_checkpoint cannot change concurrently with this write.
+UPDATE issue
+SET derived_summary = @summary::jsonb,
+    derived_summary_source = COALESCE(NULLIF(@source::text, ''), 'llm'),
+    derived_summary_version = derived_summary_version + 1,
+    derived_summary_updated_at = now(),
+    derived_summary_source_revision = @source_revision::bigint,
+    derived_summary_source_comment_id = NULLIF(@source_comment_id::text, '')::uuid,
+    derived_summary_source_task_id = NULLIF(@source_task_id::text, '')::uuid,
+    derived_summary_latency_ms = @latency_ms::int,
+    handoff_version = handoff_version + 1,
+    handoff_summary = COALESCE(manual_checkpoint, @summary::jsonb),
+    updated_at = now()
+WHERE id = @id
+  AND workspace_id = @workspace_id
+  AND revision = @source_revision::bigint
+  AND handoff_version = @expected_handoff_version::bigint
+RETURNING *;
+
 -- name: GetIssueGCStatus :one
 SELECT workspace_id, status, updated_at
 FROM issue
@@ -148,10 +193,19 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage, working_branch, agent_status, handoff_summary, last_activity_at, id
+    stage, working_branch, agent_status, handoff_summary,
+    manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source,
+    manual_checkpoint_updated_at, handoff_version, last_activity_at, id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('stage'), sqlc.narg('working_branch'), sqlc.narg('agent_status'), sqlc.narg('handoff_summary'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    sqlc.narg('stage'), sqlc.narg('working_branch'), sqlc.narg('agent_status'),
+    sqlc.narg('handoff_summary'),
+    sqlc.narg('handoff_summary'),
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN 0 ELSE 1 END,
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN 'agent' ELSE 'agent' END,
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN NULL ELSE now() END,
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN 0 ELSE 1 END,
+    now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 ) RETURNING *;
 
 -- name: GetIssueByNumber :one
@@ -214,9 +268,15 @@ WITH actor_config AS (
         END AS next_position,
         sqlc.narg('start_date')::date AS next_start_date,
         sqlc.narg('due_date')::date AS next_due_date,
-        sqlc.narg('parent_issue_id')::uuid AS next_parent_issue_id,
-        sqlc.narg('project_id')::uuid AS next_project_id,
-        sqlc.narg('stage')::integer AS next_stage
+		sqlc.narg('parent_issue_id')::uuid AS next_parent_issue_id,
+		sqlc.narg('project_id')::uuid AS next_project_id,
+		sqlc.narg('stage')::integer AS next_stage,
+		CASE
+			WHEN COALESCE(sqlc.narg('handoff_summary_touched')::bool, false)
+				THEN COALESCE(sqlc.narg('handoff_summary')::jsonb, i.derived_summary)
+			ELSE COALESCE(i.manual_checkpoint, i.derived_summary, i.handoff_summary)
+		END AS next_handoff_summary,
+		COALESCE(sqlc.narg('handoff_summary_touched')::bool, false) AS handoff_summary_touched
     FROM issue AS i
     WHERE i.id = $1
       AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
@@ -226,13 +286,14 @@ WITH actor_config AS (
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
             position, start_date, due_date, parent_issue_id, project_id, stage,
-            working_branch, agent_status, handoff_summary
+			working_branch, agent_status,
+			COALESCE(manual_checkpoint, derived_summary, handoff_summary)
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
             next_assignee_type, next_assignee_id, next_position, next_start_date,
             next_due_date, next_parent_issue_id, next_project_id, next_stage,
-            sqlc.narg('working_branch')::text, sqlc.narg('agent_status')::text,
-            sqlc.narg('handoff_summary')::jsonb
+			sqlc.narg('working_branch')::text, sqlc.narg('agent_status')::text,
+			next_handoff_summary
         ) AS did_change,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
@@ -259,7 +320,19 @@ UPDATE issue AS i SET
     stage = changed.next_stage,
     working_branch = sqlc.narg('working_branch'),
     agent_status = sqlc.narg('agent_status'),
-    handoff_summary = sqlc.narg('handoff_summary'),
+    -- Writing handoff_summary through the generic update is an AUTHORED
+    -- checkpoint (agent / assignment tooling), so the value lands in
+    -- manual_checkpoint and the effective mirror prefers it. A NULL passes
+    -- through: the CAS writers own derived_summary, and a generic update must
+	-- never clear or clobber one (that was the forced-compression overwrite
+	-- bug this split exists to fix).
+	manual_checkpoint = CASE WHEN changed.handoff_summary_touched
+		THEN sqlc.narg('handoff_summary')::jsonb ELSE manual_checkpoint END,
+	manual_checkpoint_version = manual_checkpoint_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
+	manual_checkpoint_source = CASE WHEN changed.handoff_summary_touched THEN 'agent' ELSE manual_checkpoint_source END,
+	manual_checkpoint_updated_at = CASE WHEN changed.handoff_summary_touched THEN now() ELSE manual_checkpoint_updated_at END,
+	handoff_version = handoff_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
+	handoff_summary = changed.next_handoff_summary,
     manual_position_locked = i.manual_position_locked OR (sqlc.narg('position')::double precision IS NOT NULL),
     revision = i.revision + changed.did_change::integer,
     last_activity_at = CASE WHEN changed.did_activity
@@ -273,7 +346,9 @@ WHERE i.id = changed.id
   -- Under READ COMMITTED, concurrent statements may both populate candidate
   -- from the same snapshot; EvalPlanQual re-evaluates this target-row predicate
   -- after waiting for the first writer, leaving the stale writer with 0 rows.
-  AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
+	AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
+	AND (NOT COALESCE(sqlc.narg('handoff_summary_touched')::bool, false)
+		OR i.handoff_version = sqlc.narg('expected_handoff_version')::bigint)
   -- Referenced so the actor_config CTE always executes; the issue_status_history
   -- trigger reads these transaction-local settings (259_issue_status_history_trigger).
   AND (SELECT true FROM actor_config)
@@ -369,11 +444,19 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage, working_branch, agent_status, handoff_summary, last_activity_at, id
+    origin_type, origin_id, stage, working_branch, agent_status, handoff_summary,
+    manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source,
+    manual_checkpoint_updated_at, handoff_version, last_activity_at, id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'),
-    sqlc.narg('working_branch'), sqlc.narg('agent_status'), sqlc.narg('handoff_summary'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    sqlc.narg('working_branch'), sqlc.narg('agent_status'), sqlc.narg('handoff_summary'),
+    sqlc.narg('handoff_summary'),
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN 0 ELSE 1 END,
+    'agent',
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN NULL ELSE now() END,
+    CASE WHEN sqlc.narg('handoff_summary')::jsonb IS NULL THEN 0 ELSE 1 END,
+    now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 ) RETURNING *;
 
 -- name: LockIssueDuplicateKey :exec

@@ -144,13 +144,19 @@ func fullyPopulatedIssue(t *testing.T) db.Issue {
 		WorkingBranch:  pgtype.Text{String: "feat/login", Valid: true},
 		AgentStatus:    pgtype.Text{String: "working", Valid: true},
 		HandoffSummary: []byte(`{"summary":"details"}`),
-		StartDate:      pgtype.Date{Time: utcDate(2026, time.January, 1), Valid: true},
-		DueDate:        pgtype.Date{Time: utcDate(2026, time.February, 1), Valid: true},
-		CreatedAt:      pgtype.Timestamptz{Time: utcDate(2026, time.January, 1), Valid: true},
-		UpdatedAt:      pgtype.Timestamptz{Time: utcDate(2026, time.January, 2), Valid: true},
-		LastActivityAt: pgtype.Timestamptz{Time: utcDate(2026, time.January, 3), Valid: true},
-		Metadata:       []byte(`{"pr_url":"https://example.test/pr/1"}`),
-		Properties:     []byte(`{"77777777-7777-7777-7777-777777777777":"done"}`),
+		// SIY-167 compression state: set the derived fields so both renderings
+		// must agree on compression_status / source_revision / latency_ms with
+		// non-zero values, not just coincidentally-equal zeros.
+		ManualCheckpoint:             []byte(`{"checkpoint":true}`),
+		DerivedSummarySourceRevision: pgtype.Int8{Int64: 7, Valid: true},
+		DerivedSummaryLatencyMs:      pgtype.Int4{Int32: 812, Valid: true},
+		StartDate:                    pgtype.Date{Time: utcDate(2026, time.January, 1), Valid: true},
+		DueDate:                      pgtype.Date{Time: utcDate(2026, time.February, 1), Valid: true},
+		CreatedAt:                    pgtype.Timestamptz{Time: utcDate(2026, time.January, 1), Valid: true},
+		UpdatedAt:                    pgtype.Timestamptz{Time: utcDate(2026, time.January, 2), Valid: true},
+		LastActivityAt:               pgtype.Timestamptz{Time: utcDate(2026, time.January, 3), Valid: true},
+		Metadata:                     []byte(`{"pr_url":"https://example.test/pr/1"}`),
+		Properties:                   []byte(`{"77777777-7777-7777-7777-777777777777":"done"}`),
 	}
 }
 

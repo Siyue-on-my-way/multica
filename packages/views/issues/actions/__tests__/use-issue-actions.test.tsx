@@ -495,8 +495,8 @@ describe("useIssueActions", () => {
       expect(memberAssigned.result.current.canCompactContext).toBe(false);
     });
 
-    it("calls rerunIssue with no task_id and with_context_compress=true, then toasts success", async () => {
-      mockRerunIssue.mockResolvedValue({ id: "task-fresh" });
+    it("calls rerunIssue with the refresh_summary action (summary only — no run, no cancel), then toasts success", async () => {
+      mockRerunIssue.mockResolvedValue({ compression_status: "fresh", written: true });
       const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
       const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
 
@@ -505,7 +505,10 @@ describe("useIssueActions", () => {
         await waitFor(() => expect(toast.success).toHaveBeenCalled());
       });
 
-      expect(mockRerunIssue).toHaveBeenCalledWith("issue-1", undefined, true);
+      // SIY-167: compact-context is a forced summary refresh, not a rerun.
+      // It must NOT enqueue a run (and never cancelled one, despite the old
+      // copy) — the action field is what decouples the two on the server.
+      expect(mockRerunIssue).toHaveBeenCalledWith("issue-1", undefined, false, "refresh_summary");
       expect(toast.error).not.toHaveBeenCalled();
     });
 

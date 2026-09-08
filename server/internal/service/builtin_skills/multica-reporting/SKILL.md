@@ -1,7 +1,7 @@
 ---
 name: multica-reporting
 description: "Use when generating or reading project reports (daily, weekly, monthly). Covers the multica report CLI commands and report templates."
-user-invocable: true
+user-invocable: false
 allowed-tools: Bash(multica *)
 ---
 
