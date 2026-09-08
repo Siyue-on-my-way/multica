@@ -124,13 +124,12 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // agent skills in the appropriate provider-native location, and project
 // resources.
 //
-// It deliberately writes no per-task Markdown brief. There used to be an
-// .agent_context/issue_context.md carrying the issue id, trigger comment id,
-// handoff note, quick-create input, and autopilot run data — every one of
-// which the runtime brief and the per-turn user message already carry. No
-// provider read the file (nothing in either surface pointed at it), so it was
-// a third copy that had to be kept in sync with the two that agents actually
-// see, for no reader at all (MUL-6984).
+// It deliberately writes no per-task Markdown brief. The old managed brief
+// duplicated the issue id, trigger comment id, handoff note, quick-create
+// input, and autopilot run data — every one of which the runtime brief and
+// the per-turn user message already carry. No provider read that file, so it
+// was a third copy that had to be kept in sync with the two surfaces agents
+// actually see, for no reader at all (MUL-6984).
 //
 // Claude:      skills → {workDir}/.claude/skills/{name}/SKILL.md  (native discovery)
 // CodeBuddy:   skills → {workDir}/.codebuddy/skills/{name}/SKILL.md  (native discovery — CodeBuddy is a Claude Code fork but uses its own config directory, not .claude/; see https://www.codebuddy.ai/docs/cli/skills)

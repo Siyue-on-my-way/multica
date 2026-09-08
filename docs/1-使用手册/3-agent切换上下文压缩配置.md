@@ -1,89 +1,69 @@
 # Agent 切换时的上下文压缩配置
 
-当 Issue 的负责人从一个 Agent 换到另一个 Agent 时，Multica 服务端会自动调用
-LLM 对 Issue 的历史评论进行压缩，生成结构化的 `handoff_summary`，并在新 Agent
-接手时直接注入到其工作上下文（`issue_context.md`）中。
-
----
+Multica 的 handoff 是可迁移的业务检查点，不是 Provider transcript 的副本。自动摘要存放在 `derived_summary`，Agent 手写的 checkpoint 存放在 `manual_checkpoint`；对外的 `handoff_summary` 仍表示当前生效的 checkpoint，手写内容优先于 LLM 摘要。
 
 ## 工作原理
 
-1. 用户在 UI 或通过 CLI 将 Issue 的负责人更改为另一个 Agent。
-2. 服务端检测到 assignee 变更，触发 `compressHandoffContext`。
-3. 服务端读取该 Issue 最近至多 **80 条**评论，拼接成对话记录。
-4. 调用配置的 LLM 接口，生成如下结构的 JSON 摘要：
-   ```json
-   {
-     "current_progress": "已完成代码分析和 PR 草稿",
-     "next_steps": ["跑集成测试", "处理 review 意见"],
-     "unresolved_issues": "auth_test.go 第 42 行存在 flaky test"
-   }
-   ```
-5. 摘要写入 Issue 的 `handoff_summary` 字段。
-6. 新 Agent 接收任务时，`handoff_summary` 连同 `working_branch` / `agent_status`
-   一并注入 `issue_context.md` 的 `## Previous Agent State` 章节。
+服务端生成摘要时会把以下内容交给 handoff LLM：
 
-> **降级策略**：若 LLM 未配置、评论为空、或前一个 Agent 已手动写入 `handoff_summary`，
-> 则跳过自动压缩，不影响任务分发。
+- Issue 标题、描述、acceptance criteria 和 metadata；
+- 祖先 Issue 背景、工作分支和 Agent 状态；
+- 最近评论及其 thread parent 关系；
+- 附件元数据；
+- 最近一次 terminal task 的 result、error 和 failure reason。
 
----
+摘要写入时带有 Issue revision、最新 comment ID、来源 task、版本和耗时，并通过 handoff version 做 CAS。Issue 有新的语义活动时，旧摘要会被标记为 `stale`；手写 checkpoint 不会被强制压缩覆盖。
 
-## 配置方式
+新 task claim 时，服务端同时生成 Context Manifest。Manifest 记录 Issue revision、handoff version、祖先 refs、实际纳入的 comment IDs、已知但未纳入的 IDs、来源 task 和 branch checkpoint。Agent 首轮应先对账；需要细节时再用 `multica issue comment list --thread ... --tail 30` 回源读取。
 
-在服务端的 `.env` 文件（或环境变量）中添加以下三个变量：
+## 三种动作
+
+```text
+refresh_summary  只刷新 derived_summary，不入队，也不取消运行中的 task
+new_session      复用来源 task 的 workdir，但启动新的 Provider session
+retry            按来源 task 重试；仅在失败未污染且 runtime 相容时恢复 Provider session
+```
+
+示例：
+
+```bash
+multica issue rerun <issue-id> --action refresh_summary --output json
+multica issue rerun <issue-id> --action new_session --output json
+multica issue rerun <issue-id> --action retry --output json
+```
+
+需要停止运行中的 task 时，使用独立的 Cancel API；rerun 不会取消 running task：
+
+```bash
+curl -X POST "$MULTICA_URL/api/issues/<issue-id>/cancel" \
+  -H "Authorization: Bearer $MULTICA_TOKEN"
+```
+
+## 配置 LLM
+
+在服务端 `.env` 或环境变量中配置 handoff LLM：
 
 ```env
-# 必填：LLM 接口 API Key
 MULTICA_LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
-
-# 必填：LLM 接口的 base URL（兼容 OpenAI 协议的任意服务）
-# 示例：使用 OpenAI 官方
 MULTICA_LLM_BASE_URL=https://api.openai.com/v1
-
-# 示例：使用 Azure OpenAI
-# MULTICA_LLM_BASE_URL=https://your-resource.openai.azure.com/openai/deployments/your-deployment
-
-# 示例：使用本地 Ollama
-# MULTICA_LLM_BASE_URL=http://localhost:11434/v1
-
-# 可选：指定用于压缩的模型名称（留空则使用 gpt-5.6-luna）
 MULTICA_LLM_DEFAULT_MODEL=gpt-4o-mini
 ```
 
-修改后重启服务端：
+也可以通过业务配置为 `handoff-compress` 单独指定 provider/model。修改配置后重启服务端。
 
-```bash
-# Docker Compose 部署
-docker compose -f docker-compose.selfhost.yml up -d --no-deps backend
+## 验证
 
-# 或直接重启
-make selfhost-stop && make selfhost
-```
+1. 执行 `multica issue rerun <issue-id> --action refresh_summary --output json`，确认响应包含 `compression_status`、`source_revision` 和 `latency`。
+2. 执行一次 `new_session` 或 `retry`，在 claim payload 中确认存在 `context_manifest`。
+3. 检查服务端日志中的摘要耗时、CAS conflict 和覆盖率指标。
+4. 通过 `multica issue get <issue-id> --output json` 检查 handoff 状态；不要把 workdir 中的历史文件当作事实源。
 
----
-
-## 验证配置生效
-
-1. 在 Web 界面将一个 Issue 的负责 Agent 从 A 换为 B。
-2. 查看服务端日志，应出现：
-   ```
-   handoff compress: summary written  issue_id=xxx  comment_count=N
-   ```
-3. 在 Issue 详情页（或通过 CLI）确认字段已写入：
-   ```bash
-   multica issue get <issue-id> --output json | jq '.handoff_summary'
-   ```
-4. 等待 Agent B 的任务启动，其工作目录下的 `.agent_context/issue_context.md`
-   应包含 `## Previous Agent State` 章节。
-
----
-
-## 注意事项
+## 降级与注意事项
 
 | 场景 | 行为 |
 |------|------|
-| LLM 未配置（无 API Key / BaseURL） | 跳过压缩，不影响任务分发 |
-| 前一 Agent 已手动写入 `--handoff-summary` | 跳过自动压缩，优先使用手动 checkpoint |
-| Issue 无评论历史 | 跳过压缩 |
-| LLM 调用超时（>30s）或返回错误 | 记录警告日志，继续正常分发任务 |
-| LLM 返回格式不符 | 记录警告日志，不写入摘要 |
+| LLM 未配置、评论为空或调用失败 | 保留现有 checkpoint，task 分发不被阻塞 |
+| 手写 checkpoint 已存在 | 继续保留手写内容；自动摘要可独立刷新 |
+| Issue revision 或 handoff version 在 LLM 返回期间变化 | CAS 拒绝旧结果，下一次刷新重新生成 |
+| retry 来源 task 的 session 不安全或 runtime 不同 | 复用 workdir（若仍可用），启动新的 Provider session |
+| 需要停止 active run | 调用 `/api/issues/{id}/cancel`，不要依赖 rerun |

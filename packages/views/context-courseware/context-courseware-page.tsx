@@ -599,8 +599,8 @@ export function ContextCoursewarePage() {
                   <ul className="mt-4 grid gap-3">
                     {[
                       "task kind 是 direct / issue assignment，本次没有触发 comment，因此 Prompt 中没有 [NEW COMMENT]。",
-                      "Codex 使用 AGENTS.md 发现 Brief；sidecar 包含 issue_context.md、daemon_task_context.json 和 resources.json。",
-                      "daemon 从 fresh session / workdir 开始，上一 run 的 checkpoint 通过 handoff / issue_context 进入。",
+                      "Codex 使用 AGENTS.md 发现 Brief；sidecar 包含 daemon_task_context.json 和 resources.json。",
+                      "daemon 从 fresh session / workdir 开始，上一 run 的 checkpoint 通过 handoff / Context Manifest 进入。",
                       "ancestor brief 以 SIY-59 为 parent，独立预算为 8,192 tokens，并保留 ancestor refs。",
                     ].map((fact) => <li key={fact} className="flex items-start gap-2 text-caption leading-5 text-muted-foreground"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-500" aria-hidden="true" />{fact}</li>)}
                   </ul>

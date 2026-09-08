@@ -94,9 +94,9 @@ server/internal/service/ancestor_brief.go:43-91 从当前 Issue 的 parent 开�
 有四类状态经常被混淆：
 
 - Issue / comment / metadata：业务事实和用户意图，agent 可以用 multica CLI 重新读取；
-- handoff_summary：上一个 agent 主动留下的可迁移 checkpoint，适合说明已完成、下一步和未解决问题；
+- handoff：上一个 agent 的 manual_checkpoint 与 LLM derived_summary；对外 handoff_summary 是当前生效的 checkpoint，适合说明已完成、下一步和未解决问题；
 - Provider session / rollout：原生对话上下文，恢复快，但受 agent、runtime、账号、存储和 Provider 规则限制；
-- workdir / sidecar：代码、未提交变更、AGENTS.md、.agent_context/issue_context.md 等运行环境状态。workdir 不是自动可信的历史库，仍要经过 reuse gate。
+- workdir / sidecar：代码、未提交变更、AGENTS.md、daemon task marker 和项目资源等运行环境状态。workdir 不是自动可信的历史库，仍要经过 reuse gate。
 
 ## 2. 从事件到结果的完整链路
 
@@ -122,7 +122,7 @@ flowchart LR
   R --> X[execenv]
   F --> X
   X --> B[Brief file: AGENTS.md / CLAUDE.md / QWEN.md]
-  X --> S[sidecar: issue_context.md and resources]
+  X --> S[sidecar: task marker and project resources]
   X --> P[BuildPrompt]
   B --> V[Provider session]
   P --> V
@@ -155,7 +155,7 @@ server/internal/daemon/daemon.go:4898-5205 将 Task 转成 execenv.TaskContextFo
 - shouldReusePriorWorkdir 通过后调用 reuseExecutionEnvironment，否则 Prepare；
 - gateResumeToReusedWorkdir 检查 workdir 不能单独证明 Codex transcript 存在；
 - execenv.InjectRuntimeConfig 写入 Brief；
-- writeContextFiles 写入 .agent_context/issue_context.md、.multica/daemon_task_context.json 和项目资源 sidecar；
+- writeContextFiles 写入 .multica/daemon_task_context.json 和项目资源 sidecar；
 - 最后才 BuildPrompt，并把 Prompt 与 ExecOptions.ResumeSessionID 交给 Provider。
 
 server/internal/daemon/daemon.go:5210-5558 再负责 Provider 启动和恢复：
@@ -210,7 +210,7 @@ chat 使用 server/pkg/db/queries/chat.sql:465-510 的 session 指针和 task fa
 - 当前 Issue 的 title/description；
 - ancestor refs 和重新生成的 ancestor brief；
 - project context / resources；
-- 上一个 agent 写入的 handoff_summary；
+- 上一个 agent 写入的 handoff checkpoint（manual 或 derived）；
 - 新 agent 自己的 Brief、skills、身份和 token；
 - 通过 CLI 读取 comment threads、metadata 和 result 的协议。
 
@@ -239,9 +239,9 @@ fresh retry 的原则是先承认状态丢失，再重建。源码中的固定�
 - agent_status；
 - handoff_summary.current_progress；
 - handoff_summary.next_steps；
-- handoff_summary.unresolved_issues。
+- handoff_summary.unresolved_issues；Context Manifest 还携带 revision、版本和评论覆盖范围。
 
-新 run 将它注入 issue_context.md 和 assignment Prompt。handoff 不能替代用户评论或代码事实，所以仍要按读取协议复核；它的价值是把“下一步怎么接”从 Provider transcript 提炼成跨 agent 可读的 checkpoint。
+新 run 将它注入 task payload、Context Manifest 和 assignment Prompt。handoff 不能替代用户评论或代码事实，所以仍要按读取协议复核；它的价值是把“下一步怎么接”从 Provider transcript 提炼成跨 agent 可读的 checkpoint。
 
 ## 5. 多 Provider 的 Brief、sidecar 和缓存稳定性
 
@@ -263,7 +263,6 @@ server/internal/daemon/execenv/runtime_config.go:156-209 的映射是：
 
 server/internal/daemon/execenv/context.go:121-316：
 
-- .agent_context/issue_context.md：assignment、触发方式和上一个 agent checkpoint；
 - .multica/daemon_task_context.json：最小的 agent/issue 任务身份标记；
 - .multica/project/resources.json：项目资源的 JSON 表示；
 - skills：按 Provider 写到原生技能目录；Codex 通过 per-task CODEX_HOME 管理；
@@ -302,10 +301,10 @@ Multica 的做法不是把全部评论和 transcript 一次性塞进 Prompt，�
 - task kind：direct / issue assignment；
 - daemon：prompt_bytes=1564、resume_session=false、reuse_workdir=false、trigger_comment_id=""、inline_system_prompt=false、mcp_config=false、repos=0；
 - 工作区 Brief：Codex 使用 AGENTS.md，脱敏副本约 17.7 KiB；
-- sidecar：.agent_context/issue_context.md、.multica/daemon_task_context.json、.multica/project/resources.json；
+- sidecar：.multica/daemon_task_context.json、.multica/project/resources.json；
 - Provider transcript 的 user_message 与 prompt.txt 对应，内容是 assignment wrapper、Ownership 标记、checkpoint 和 mandatory CLI reads；
 - 本次原始 Prompt 没有 [NEW COMMENT]。这是正确结果，因为本次没有触发 comment；评论分支和 [NEW COMMENT] 的源码级例子仍在本课件和 task-payload.json 的 marker_examples 中；
-- 本次是 agent 切换示例：上一 run 的 checkpoint 通过 handoff/issue_context 进入当前运行，但 daemon 日志明确从 fresh session/workdir 开始。
+- 本次是 agent 切换示例：上一 run 的 checkpoint 通过 handoff/Context Manifest 进入当前运行，但 daemon 日志明确从 fresh session/workdir 开始。
 
 “真实”在这里指运行时实际经过 daemon 的 Task → claim → execenv → Provider 链路；“脱敏”只移除 token、邮箱、绝对路径和运行环境身份，不把没有发生的 comment 触发伪造成发生过。
 
@@ -347,13 +346,13 @@ Multica 的做法不是把全部评论和 transcript 一次性塞进 Prompt，�
 
 1. 当前 Issue 的 title 和 description；
 2. 从当前 Issue 的 parent 开始到祖先的 title/description 快照，带 <code>[Background source: Issue X]</code>、updated_at refs 和 8192 token 独立预算；
-3. 上一个 agent 写在当前 Issue 上的 handoff_summary、working_branch、agent_status；
+3. 上一个 agent 写在当前 Issue 上的 handoff checkpoint、working_branch、agent_status；
 4. 当前 agent 自己的 Brief、技能、workspace/project context 和 task-scoped 身份；
 5. 若本次由 comment 触发，触发 comment 以及预算内的 coalesced comments；assignment run 则没有 [NEW COMMENT]；
 6. 评论、metadata、旧结果和其他线程不一定全部进入 Prompt，而是通过 roots summary、thread tail、since candidate 和 per-id 校验协议让新 Agent按需读取；
 7. 如果 continuity gate 通过，才额外复用旧 Provider session；切换 agent、runtime 不匹配、rollout 缺失或 resume 失败时，这一项为空，并应出现 Session Continuity Notice。
 
-所以用户的担心有一个准确部分：handoff_summary 是有损压缩，ancestor brief 也只默认覆盖祖先的标题和描述，并不自动包含每个祖先的全部评论、metadata、代码状态和 Provider transcript。当前设计用“可验证的 CLI 读取协议”补偿这部分损失，但它不是“把所有历史打包后绝不遗漏”的保证。
+所以用户的担心有一个准确部分：derived_summary 是有损压缩，ancestor brief 也只默认覆盖祖先的标题和描述，并不自动包含每个祖先的全部评论、metadata、代码状态和 Provider transcript。当前设计用 manual checkpoint、Context Manifest 和“可验证的 CLI 读取协议”补偿这部分损失，但它不是“把所有历史打包后绝不遗漏”的保证。
 
 ### 10.2 三个可选方案
 
@@ -375,4 +374,3 @@ Multica 的做法不是把全部评论和 transcript 一次性塞进 Prompt，�
 - 只有在 B 的首轮读取成本无法接受时，才评估 C 的分段/分页 snapshot，而不是无上限地把所有历史拼进一个 Prompt。
 
 这三个方案是讨论材料，不是本次 run 的代码变更。当前真实 dump 展示的是现有方案：assignment Prompt 带 checkpoint 和读取协议，Task payload 带 ancestor/handoff 结构，Provider 从 fresh session 开始；它没有把用户新补充的 comment 伪装成当时已经存在的输入。
-

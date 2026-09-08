@@ -9,7 +9,6 @@
 | task-payload.json | 以 server/internal/daemon/types.go:63-159 为准的 Task wire payload 快照；_capture 记录观测来源和脱敏说明 |
 | prompt.txt | Codex app-server 实际收到的完整 user_message；本次日志的 prompt_bytes=1564 |
 | brief.AGENTS.md | 本次 Codex workdir 中生成的 AGENTS.md 脱敏全文 |
-| .agent_context/issue_context.md | 本次 sidecar 的 assignment/checkpoint 内容，摘要已并入 task payload 的 handoff_summary |
 | .multica/daemon_task_context.json | 本次 sidecar 的最小身份标记，实际内容在执行环境中可见 |
 | .multica/project/resources.json | 本次项目资源 sidecar；项目有 project context，但 resources 为空 |
 
@@ -43,4 +42,3 @@
 3. Brief 显示稳定的运行时契约；
 4. ancestor、handoff 和 sidecar 解释为什么 agent 切换后仍能恢复业务上下文；
 5. 若要对照 comment run，请用课件中的源码级 [NEW COMMENT] 样例，不要把它误判为这次 capture 的实际输入。
-

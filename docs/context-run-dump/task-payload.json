@@ -30,7 +30,6 @@
     },
     "generated_files": [
       "AGENTS.md",
-      ".agent_context/issue_context.md",
       ".multica/daemon_task_context.json",
       ".multica/project/resources.json"
     ],
@@ -145,4 +144,3 @@
   "initiator_email": "",
   "auth_token": "[REDACTED]"
 }
-

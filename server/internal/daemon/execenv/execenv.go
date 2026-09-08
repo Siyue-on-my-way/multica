@@ -864,7 +864,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.
 	// On reuse the workdir still holds the prior run's skill directories (and,
-	// for a workdir prepared before MUL-6984, its issue_context.md); without
+	// for a workdir prepared before MUL-6984, legacy managed Markdown); without
 	// clearing them first, writeSkillFiles sees
 	// its own earlier output occupying the canonical slug and falls back to
 	// a collision-free sibling (issue-review, issue-review-multica,
@@ -884,8 +884,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	//      which would otherwise keep the canonical slug occupied and push the
 	//      refresh back to issue-review-multica.
 	//   2. CleanupSidecars rolls back the remaining sidecar files (project
-	//      resources today, plus any issue_context.md recorded by a manifest
-	//      an older build wrote — legacy upgrade cleanup, not a live writer)
+	//      resources today, plus any legacy managed files recorded by a
+	//      manifest an older build wrote — upgrade cleanup, not a live writer)
 	//      and the manifest itself.
 	//
 	// No-op when RootDir is empty (legacy local_directory reuse, which the

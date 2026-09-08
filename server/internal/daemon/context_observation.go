@@ -369,8 +369,8 @@ func skillCount(t Task) int {
 // countSidecars reports how many sidecar files this task's kind writes. It
 // mirrors execenv.writeContextFiles' branch shape without reproducing its I/O.
 // No per-task Markdown brief is counted: execenv stopped writing
-// .agent_context/issue_context.md in MUL-6984, so counting it here reported a
-// file that never reached the workdir.
+// the deprecated managed Markdown brief in MUL-6984, so counting it here
+// reported a file that never reached the workdir.
 func countSidecars(t Task) int {
 	n := 0
 	// daemon_task_context.json is the minimal identity marker.
