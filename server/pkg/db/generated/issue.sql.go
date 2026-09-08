@@ -2524,15 +2524,17 @@ UPDATE issue AS i SET
     -- checkpoint (agent / assignment tooling), so the value lands in
     -- manual_checkpoint and the effective mirror prefers it. A NULL passes
     -- through: the CAS writers own derived_summary, and a generic update must
-	-- never clear or clobber one (that was the forced-compression overwrite
-	-- bug this split exists to fix).
-	manual_checkpoint = CASE WHEN changed.handoff_summary_touched
-		THEN $4::jsonb ELSE manual_checkpoint END,
-	manual_checkpoint_version = manual_checkpoint_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
-	manual_checkpoint_source = CASE WHEN changed.handoff_summary_touched THEN 'agent' ELSE manual_checkpoint_source END,
-	manual_checkpoint_updated_at = CASE WHEN changed.handoff_summary_touched THEN now() ELSE manual_checkpoint_updated_at END,
-	handoff_version = handoff_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
-	handoff_summary = changed.next_handoff_summary,
+    -- never clear or clobber one (that was the forced-compression overwrite
+    -- bug this split exists to fix). Every old-row reference below is
+    -- qualified with ` + "`" + `i.` + "`" + ` — ` + "`" + `changed` + "`" + ` carries candidate.* (i.*) too, so an
+    -- unqualified column name here is ambiguous (SQLSTATE 42702).
+    manual_checkpoint = CASE WHEN changed.handoff_summary_touched
+        THEN $4::jsonb ELSE i.manual_checkpoint END,
+    manual_checkpoint_version = i.manual_checkpoint_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
+    manual_checkpoint_source = CASE WHEN changed.handoff_summary_touched THEN 'agent' ELSE i.manual_checkpoint_source END,
+    manual_checkpoint_updated_at = CASE WHEN changed.handoff_summary_touched THEN now() ELSE i.manual_checkpoint_updated_at END,
+    handoff_version = i.handoff_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
+    handoff_summary = changed.next_handoff_summary,
     manual_position_locked = i.manual_position_locked OR ($5::double precision IS NOT NULL),
     revision = i.revision + changed.did_change::integer,
     last_activity_at = CASE WHEN changed.did_activity
