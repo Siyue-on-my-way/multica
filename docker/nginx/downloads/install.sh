@@ -12,7 +12,12 @@ UPDATE_REPO='Siyue-on-my-way/multica'
 MIN_COMMIT='b2ebe15ec'
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; [ "$OS" = "darwin" ] && OS=darwin || OS=linux
-ARCH="$(uname -m)"; [ "$ARCH" = "aarch64" ] && ARCH=arm64
+ARCH="$(uname -m)"
+case "$ARCH" in
+    aarch64|arm64) ARCH=arm64 ;;
+    x86_64|amd64)  ARCH=amd64 ;;
+    *) echo "unsupported architecture: $ARCH"; exit 1 ;;
+esac
 ASSET="multica-${OS}-${ARCH}"
 [ "$OS" = "darwin" ] && [ "$ARCH" != "arm64" ] && { echo "仅提供 Apple Silicon (arm64) 构建"; exit 1; }
 
