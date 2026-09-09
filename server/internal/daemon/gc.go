@@ -320,8 +320,24 @@ func (d *Daemon) gcWorkspaceIssues(ctx context.Context, workspaceID string, cand
 // atomically reserves the env root because a task can start while the server
 // reconciliation request is in flight.
 func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) int {
+	var owner *execenv.EnvRootOwner
+	legacyArtifactOwnership := false
 	if action != gcActionSkip {
-		if _, err := d.gcTaskDirOwner(taskDir); err != nil {
+		var err error
+		switch action {
+		case gcActionCleanArtifacts, gcActionCleanManagedArtifacts:
+			owner, legacyArtifactOwnership, err = d.gcTaskDirArtifactOwner(taskDir)
+			if legacyArtifactOwnership && action == gcActionCleanArtifacts {
+				// A legacy root has daemon provenance and a task record, but no
+				// current .task_owner marker. Keep the compatibility path exact:
+				// only remove the daemon's own caches, never broad basename
+				// matches such as a user's node_modules.
+				action = gcActionCleanManagedArtifacts
+			}
+		default:
+			owner, err = d.gcTaskDirOwner(taskDir)
+		}
+		if err != nil {
 			d.logger.Warn("gc: refusing to mutate unowned task directory", "dir", taskDir, "error", err)
 			stats.skipped++
 			return 0
@@ -334,8 +350,19 @@ func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) 
 		defer release()
 		// Re-read provenance after taking the exclusion lock so a concurrent
 		// reset cannot change ownership between validation and mutation.
-		if _, err := d.gcTaskDirOwner(taskDir); err != nil {
-			d.logger.Warn("gc: refusing to mutate task directory after ownership changed", "dir", taskDir, "error", err)
+		var currentOwner *execenv.EnvRootOwner
+		var currentLegacy bool
+		var currentErr error
+		if legacyArtifactOwnership {
+			currentOwner, currentLegacy, currentErr = d.gcTaskDirArtifactOwner(taskDir)
+		} else {
+			currentOwner, currentErr = d.gcTaskDirOwner(taskDir)
+		}
+		if currentErr != nil || currentLegacy != legacyArtifactOwnership || !sameEnvRootOwner(owner, currentOwner) {
+			if currentErr == nil {
+				currentErr = errors.New("task ownership changed")
+			}
+			d.logger.Warn("gc: refusing to mutate task directory after ownership changed", "dir", taskDir, "error", currentErr)
 			stats.skipped++
 			return 0
 		}
@@ -866,6 +893,50 @@ func (d *Daemon) gcTaskDirOwner(taskDir string) (*execenv.EnvRootOwner, error) {
 		return nil, err
 	}
 	return &validated, nil
+}
+
+// gcTaskDirArtifactOwner validates a task root for an artifact-only mutation.
+// Current roots use .task_owner, while older roots may have only the
+// Prepare-time .managed_env.json plus .gc_meta.json. The latter pair still
+// gives us the daemon discriminator, workspace identity, and full task ID, so
+// it is enough to reclaim exact daemon-managed caches. It is deliberately not
+// accepted by full task cleanup: missing current ownership proof must never
+// turn into RemoveAll.
+func (d *Daemon) gcTaskDirArtifactOwner(taskDir string) (*execenv.EnvRootOwner, bool, error) {
+	if owner, err := d.gcTaskDirOwner(taskDir); err == nil {
+		return owner, false, nil
+	}
+
+	meta, metaErr := execenv.ReadGCMeta(taskDir)
+	provenance, provenanceErr := execenv.ReadManagedEnvProvenance(taskDir)
+	if metaErr != nil || provenanceErr != nil || meta == nil || provenance == nil {
+		return nil, false, fmt.Errorf("read legacy managed task provenance: metadata=%v provenance=%v", metaErr, provenanceErr)
+	}
+	workspaceID := strings.TrimSpace(provenance.WorkspaceID)
+	if provenance.ManagedBy != execenv.ManagedEnvProvenanceManagedBy ||
+		workspaceID == "" || strings.TrimSpace(provenance.AgentID) == "" ||
+		(strings.TrimSpace(provenance.IssueID) == "" && strings.TrimSpace(provenance.ChatSessionID) == "") {
+		return nil, false, errors.New("legacy managed task provenance is incomplete or not daemon-owned")
+	}
+	if strings.TrimSpace(meta.WorkspaceID) != workspaceID || strings.TrimSpace(meta.TaskID) == "" {
+		return nil, false, errors.New("legacy managed task metadata does not match provenance")
+	}
+
+	owner := &execenv.EnvRootOwner{
+		WorkspaceID: workspaceID,
+		TaskID:      strings.TrimSpace(meta.TaskID),
+	}
+	if err := execenv.ValidateEnvRootOwnerPath(d.cfg.WorkspacesRoot, taskDir, *owner); err != nil {
+		return nil, false, err
+	}
+	return owner, true, nil
+}
+
+func sameEnvRootOwner(left, right *execenv.EnvRootOwner) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.WorkspaceID == right.WorkspaceID && left.TaskID == right.TaskID
 }
 
 // cleanTaskDir removes a proven daemon-owned task directory, logs the

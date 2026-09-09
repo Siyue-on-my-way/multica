@@ -236,6 +236,22 @@ func TestResolveRootDirAdoptsRootHoldingOnlyAnUnpublishedOwnerTemp(t *testing.T)
 	}
 }
 
+func TestValidateEnvRootOwnerPathAcceptsLegacyShortTaskSegment(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	taskID := "01a07764-3630-7a4d-ab01-57ee325e0a4f"
+	legacyRoot := filepath.Join(root, pruneWorkspaceID, shortID(taskID))
+	owner := EnvRootOwner{WorkspaceID: pruneWorkspaceID, TaskID: taskID}
+
+	if err := ValidateEnvRootOwnerPath(root, legacyRoot, owner); err != nil {
+		t.Fatalf("legacy short task segment was rejected: %v", err)
+	}
+	if err := ValidateEnvRootOwnerPath(root, filepath.Join(root, pruneWorkspaceID, "another"), owner); err == nil {
+		t.Fatal("unrelated task segment was accepted")
+	}
+}
+
 // Every fail-closed error must name the record directory: the refusal is
 // permanent until an operator removes it, and they need the path to do that.
 func TestValidateTaskRootRecordErrorsNameTheRecordDir(t *testing.T) {

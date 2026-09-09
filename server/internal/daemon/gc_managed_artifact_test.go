@@ -424,6 +424,62 @@ func TestManagedArtifact_DirectRemovalDoesNotFollowLinks(t *testing.T) {
 	}
 }
 
+// Older task roots were named with the first eight characters of the task ID
+// and persisted .managed_env.json/.gc_meta.json without the newer .task_owner
+// marker. They remain safe sources for exact daemon-cache cleanup, but must
+// never become eligible for full RemoveAll cleanup through that compatibility
+// path.
+func TestManagedArtifact_LegacyManagedEnvReclaimsOnlyExactCache(t *testing.T) {
+	t.Parallel()
+
+	d := newGCTestDaemon(t, http.NewServeMux())
+	workspaceID := "a05b0e10-ee7a-4603-a72d-a548b2390cb2"
+	taskID := "01a07764-3630-7a4d-ab01-57ee325e0a4f"
+	taskDir := filepath.Join(d.cfg.WorkspacesRoot, workspaceID, shortID(taskID))
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := execenv.WriteManagedEnvProvenance(taskDir, execenv.ManagedEnvProvenance{
+		WorkspaceID: workspaceID,
+		IssueID:     "issue-legacy-cache",
+		AgentID:     "agent-legacy-cache",
+	}); err != nil {
+		t.Fatalf("write managed env provenance: %v", err)
+	}
+	meta, err := json.Marshal(execenv.GCMeta{
+		Kind:        execenv.GCKindIssue,
+		IssueID:     "issue-legacy-cache",
+		TaskID:      taskID,
+		WorkspaceID: workspaceID,
+		CompletedAt: time.Now().Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy GC metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, ".gc_meta.json"), meta, 0o644); err != nil {
+		t.Fatalf("write legacy GC metadata: %v", err)
+	}
+	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, "workdir/node_modules/user-file"), 32)
+	writeFile(t, filepath.Join(taskDir, "payload.txt"), 32)
+
+	fullStats := &gcStats{byPattern: map[string]int{}}
+	if removed := d.applyGCAction(taskDir, gcActionClean, fullStats); removed != 0 {
+		t.Fatalf("legacy root allowed full cleanup: removed=%d", removed)
+	}
+	assertKept(t, taskDir, "payload.txt", sandboxBinRel+"/codex")
+
+	artifactStats := &gcStats{byPattern: map[string]int{}}
+	if removed := d.applyGCAction(taskDir, gcActionCleanArtifacts, artifactStats); removed != 0 {
+		t.Fatalf("artifact cleanup reported task removal: %d", removed)
+	}
+	assertGone(t, taskDir, sandboxBinRel)
+	assertKept(t, taskDir, "payload.txt", "workdir/node_modules/user-file", ".managed_env.json", ".gc_meta.json")
+	if got := artifactStats.byPattern[managedArtifactPatternPrefix+sandboxBinRel]; got != 1 {
+		t.Fatalf("managed pattern count = %d, want 1", got)
+	}
+}
+
 // A repository directory that merely shares the managed leaf name is not the
 // managed path and must survive the direct removal.
 func TestManagedArtifact_DirectRemovalIgnoresSameNamedUserDir(t *testing.T) {

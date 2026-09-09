@@ -5,7 +5,8 @@
 # It never removes tagged images, containers, or volumes.
 set -Eeuo pipefail
 
-KEEP_STORAGE="${DOCKER_BUILDER_KEEP_STORAGE:-8GB}"
+MAX_USED_SPACE="${DOCKER_BUILDER_MAX_USED_SPACE:-4GB}"
+MIN_FREE_SPACE="${DOCKER_BUILDER_MIN_FREE_SPACE:-12GB}"
 LOCK_FILE="${DOCKER_BUILD_LOCK_FILE:-/tmp/multica-docker-build.lock}"
 LOCK_TIMEOUT="${DOCKER_BUILD_LOCK_TIMEOUT:-900}"
 
@@ -14,7 +15,11 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 Usage: docker-housekeeping.sh
 
 Environment:
-  DOCKER_BUILDER_KEEP_STORAGE  BuildKit cache floor (default: 8GB)
+  DOCKER_BUILDER_MAX_USED_SPACE
+                              Maximum BuildKit cache to retain (default: 4GB)
+  DOCKER_BUILDER_MIN_FREE_SPACE
+                              Desired free space after pruning (default: 12GB;
+                              set empty to disable when supported)
   DOCKER_BUILD_LOCK_FILE       Shared build/cleanup lock (default: /tmp/multica-docker-build.lock)
   DOCKER_BUILD_LOCK_TIMEOUT    Lock wait timeout in seconds (default: 900)
 USAGE
@@ -42,7 +47,24 @@ if ! docker image prune -f; then
   printf '[docker-housekeeping] image cleanup failed; continuing\n' >&2
 fi
 
-printf '[docker-housekeeping] pruning unused BuildKit cache (keep %s)\n' "$KEEP_STORAGE"
-if ! docker builder prune -af --keep-storage "$KEEP_STORAGE"; then
+prune_help="$(docker builder prune --help 2>&1 || true)"
+prune_args=(--all --force)
+if grep -q -- '--max-used-space' <<<"$prune_help"; then
+  # Current Docker/buildx uses --max-used-space. The old --keep-storage name
+  # is retained as a compatibility fallback for older Docker installations.
+  prune_args+=(--max-used-space "$MAX_USED_SPACE")
+elif grep -q -- '--keep-storage' <<<"$prune_help"; then
+  prune_args+=(--keep-storage "$MAX_USED_SPACE")
+else
+  printf '[docker-housekeeping] Docker CLI has no supported cache-size limit; skipping BuildKit cleanup\n' >&2
+  exit 1
+fi
+if [[ -n "$MIN_FREE_SPACE" ]] && grep -q -- '--min-free-space' <<<"$prune_help"; then
+  prune_args+=(--min-free-space "$MIN_FREE_SPACE")
+fi
+
+printf '[docker-housekeeping] pruning unused BuildKit cache (max %s, target free %s)\n' \
+  "$MAX_USED_SPACE" "${MIN_FREE_SPACE:-disabled}"
+if ! docker builder prune "${prune_args[@]}"; then
   printf '[docker-housekeeping] BuildKit cleanup failed; continuing\n' >&2
 fi

@@ -195,7 +195,12 @@ func ValidateEnvRootOwnerPath(workspacesRoot, envRoot string, owner EnvRootOwner
 	if !validTaskRootSegment(parts[0], owner.WorkspaceID, true) {
 		return fmt.Errorf("execenv: workspace directory %q does not match owner %s", parts[0], owner.WorkspaceID)
 	}
-	if !validTaskRootSegment(parts[1], owner.TaskID, false) {
+	if !validTaskRootSegment(parts[1], owner.TaskID, false) && parts[1] != shortID(owner.TaskID) {
+		// Releases before readable workdir names used the first eight hex
+		// characters of the task ID as the second path segment. Keep accepting
+		// that legacy shape when the owner marker names the complete task ID;
+		// callers still get the exact workspace/task identity from the marker,
+		// so this does not widen the path outside the daemon's old layout.
 		return fmt.Errorf("execenv: task directory %q does not match owner %s", parts[1], owner.TaskID)
 	}
 	return nil
