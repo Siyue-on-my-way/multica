@@ -2744,8 +2744,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 				// MUL-5305: if the source task withheld its Codex session because
 				// the rollout was missing, this rerun has nothing resumable from it
-				// — disclose the gap rather than silently starting fresh.
-				if allowSourceSession && src.SessionRolloutMissing {
+				// — disclose the gap rather than silently starting fresh. The
+				// disclosure is deliberately mode-independent (only the RESUME
+				// above is gated by rerun mode): a retry loses the session it
+				// hoped for, and a fresh-session rerun still reuses the source
+				// workdir — where it may find the run's half-finished state — so
+				// both need to know the conversation is gone.
+				if src.SessionRolloutMissing {
 					resp.PriorSessionResumeUnavailable = true
 				}
 			} else if err == nil {

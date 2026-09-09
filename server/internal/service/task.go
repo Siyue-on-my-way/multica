@@ -7458,8 +7458,13 @@ func IssueToMap(issue db.Issue, issuePrefix string) map[string]any {
 		"updated_at":       util.TimestampToString(issue.UpdatedAt),
 		"last_activity_at": util.TimestampToNanoPtr(issue.LastActivityAt),
 		"revision":         issue.Revision,
-		"metadata":         util.JSONObjectOrEmpty(issue.Metadata),
-		"properties":       util.JSONObjectOrEmpty(issue.Properties),
+		// Mirrors handler.IssueResponse's unconditional booleans. Unread state
+		// is hydrated per-row on the HTTP surfaces; a broadcast can only carry
+		// the same default the HTTP renderer starts from.
+		"has_unread_agent_result": false,
+		"metadata":                util.JSONObjectOrEmpty(issue.Metadata),
+		"properties":              util.JSONObjectOrEmpty(issue.Properties),
+		"manual_position_locked":  issue.ManualPositionLocked,
 	}
 
 	// SIY-167 compression state, mirroring handler.IssueResponse's omitempty

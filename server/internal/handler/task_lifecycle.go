@@ -151,7 +151,10 @@ func (h *Handler) PinTaskSession(w http.ResponseWriter, r *http.Request) {
 //   - new_session: enqueue a run that starts a clean provider session in a
 //     fresh/reused workdir (the old force_fresh_session behaviour). Use when
 //     the previous output was bad and replaying the conversation would replay
-//     the problem.
+//     the problem. A stale or missing derived summary is refreshed before the
+//     run is enqueued (freshness-gated; manual checkpoints respected), so one
+//     click is guaranteed to start from a current digest — no separate
+//     refresh step to remember.
 //   - retry: re-run the source task's work and ALLOW resuming its provider
 //     session when the failure did not poison it (infrastructure flake —
 //     network cut, timeout — where the conversation is still good).
@@ -229,10 +232,9 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Metrics.RecordIssueRerunAction(action)
 
-	forceCompress := action == RerunActionRefreshSummary
-	if action == RerunActionLegacy {
-		forceCompress = req.WithContextCompress
-	}
+	// refresh_summary already compressed (and returned) above. The only
+	// remaining force-compress path is the legacy with_context_compress flag.
+	forceCompress := action == RerunActionLegacy && req.WithContextCompress
 
 	var sourceTaskID pgtype.UUID
 	if req.TaskID != "" {
@@ -274,13 +276,18 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		return h.canInvokeAgent(r.Context(), agent, actorType, actorID, originatorUserID, workspaceID)
 	}
 
-	// compression runs BEFORE the enqueue when requested (legacy flag or the
-	// retry/new_session flows that ask for it): a slow LLM must never delay a
-	// task that already claimed the pending slot, and the retry child of a
-	// context-overflow failure depends on the summary existing at claim time.
-	forceCompressNow := forceCompress || action == RerunActionNewSession && req.WithContextCompress
+	// Compression runs BEFORE the enqueue so a slow LLM never delays a task
+	// that already claimed the pending slot. new_session always attempts it,
+	// freshness-gated exactly like the automatic assign path (issue_trigger.go):
+	// a stale or missing digest is rebuilt, a fresh one is kept, and an
+	// authored manual checkpoint is never touched. That makes reopen a single
+	// click — the user no longer has to run refresh_summary first and hope to
+	// remember it. The legacy with_context_compress flag still forces a
+	// regeneration even when fresh (the old "compact and rerun" behaviour).
 	var compressResult *CompressHandoffResult
-	if forceCompressNow {
+	if action == RerunActionNewSession {
+		compressResult = h.compressHandoffContext(r.Context(), issue, req.WithContextCompress, "")
+	} else if forceCompress {
 		compressResult = h.compressHandoffContext(r.Context(), issue, true, "")
 	}
 
@@ -303,6 +310,8 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		resp.CompressionStatus = compressResult.Status
 		resp.SourceRevision = compressResult.SourceRevision
 		resp.Latency = compressResult.Latency
+		resp.CompressionWritten = compressResult.Written
+		resp.CompressionSkippedReason = compressResult.SkippedReason
 	}
 	writeJSON(w, http.StatusAccepted, resp)
 }

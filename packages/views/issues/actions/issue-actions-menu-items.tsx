@@ -335,28 +335,17 @@ export function IssueActionsMenuItems({
           ? t(($) => $.actions.copy_project_directory_path)
           : t(($) => $.actions.copy_workdir_path)}
       </P.Item>
-      {/* Two-step context handoff (SIY-167 product decision): refresh the
-          summary and reopen the session are separate decisions with separate
-          items — the old single item's copy promised a restart its action
-          never performed. Refresh enqueues nothing; reopen starts a new
-          provider session that picks up whatever summary is current. */}
-      {canRefreshContext && (
-        <P.Item
-          onClick={refreshContextSummary}
-          disabled={refreshingSummary || reopeningSession}
-        >
-          {refreshingSummary ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="h-3.5 w-3.5" />
-          )}
-          {t(($) => $.actions.refresh_summary)}
-        </P.Item>
-      )}
+      {/* SIY-167 reopen is ONE action now: enqueue a new provider session —
+          the server refreshes a stale/missing summary first (manual
+          checkpoints respected), so the run always starts from a current
+          digest and no second click has to be remembered. The standalone
+          re-digest stays, but scoped to what only it can do — rebuild the
+          summary WITHOUT starting a run — under a submenu that also shows the
+          summary's current state, which is the answer to "do I need it?". */}
       {canRefreshContext && (
         <P.Item
           onClick={reopenSession}
-          disabled={refreshingSummary || reopeningSession}
+          disabled={reopeningSession}
         >
           {reopeningSession ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -365,6 +354,42 @@ export function IssueActionsMenuItems({
           )}
           {t(($) => $.actions.reopen_session)}
         </P.Item>
+      )}
+      {canRefreshContext && (
+        <P.Sub>
+          <P.SubTrigger>
+            <Sparkles className="h-3.5 w-3.5" />
+            {t(($) => $.actions.context_summary_menu)}
+          </P.SubTrigger>
+          <P.SubContent>
+            <P.Item disabled className="text-xs text-muted-foreground">
+              {(() => {
+                switch (issue.compression_status) {
+                  case "fresh":
+                    return t(($) => $.actions.context_summary_fresh);
+                  case "stale":
+                    return t(($) => $.actions.context_summary_stale);
+                  case "manual":
+                    return t(($) => $.actions.context_summary_manual);
+                  default:
+                    return t(($) => $.actions.context_summary_none);
+                }
+              })()}
+            </P.Item>
+            <P.Separator />
+            <P.Item
+              onClick={refreshContextSummary}
+              disabled={refreshingSummary || reopeningSession}
+            >
+              {refreshingSummary ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {t(($) => $.actions.refresh_summary)}
+            </P.Item>
+          </P.SubContent>
+        </P.Sub>
       )}
 
       <P.Separator />

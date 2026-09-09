@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, Copy, ListChevronsDownUp, ListTree, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, Copy, ListChevronsDownUp, ListTree, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -280,7 +280,6 @@ function TaskCommentRetryButton({
 }) {
   const { t } = useT("issues");
   const [retrying, setRetrying] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [reopening, setReopening] = useState(false);
 
   const handleRetry = async () => {
@@ -303,29 +302,10 @@ function TaskCommentRetryButton({
     }
   };
 
-  // Two-step handoff (SIY-167 product decision): "refresh summary" only
-  // rebuilds the derived summary (no run, no cancel); "reopen session" is
-  // the explicit second step that starts a new provider session. The old
-  // single button's copy claimed both happened at once.
-  const handleRefreshSummary = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-		await api.rerunIssue(issueId, undefined, false, "refresh_summary");
-      toast.success(t(($) => $.actions.refresh_summary_success));
-    } catch (e) {
-      toast.error(
-        dispatchReasonCode(e) === "invocation_not_allowed"
-          ? t(($) => $.actions.refresh_summary_blocked)
-          : e instanceof Error
-            ? e.message
-            : t(($) => $.actions.refresh_summary_failed),
-      );
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
+  // Reopen is one click (SIY-167): new_session refreshes a stale/missing
+  // summary before enqueueing, so the card needs no separate refresh step —
+  // retry (may resume the source session) and reopen (fresh session) cover
+  // the two recovery intents.
   const handleReopenSession = async () => {
     if (reopening) return;
     setReopening(true);
@@ -345,7 +325,7 @@ function TaskCommentRetryButton({
     }
   };
 
-  const busy = retrying || refreshing || reopening;
+  const busy = retrying || reopening;
 
   return (
     <div className={cn("flex gap-2", className)}>
@@ -363,21 +343,6 @@ function TaskCommentRetryButton({
           <RotateCcw className="h-3.5 w-3.5" />
         )}
         {t(($) => $.execution_log.retry_task_tooltip)}
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={handleRefreshSummary}
-        disabled={busy}
-        aria-label={t(($) => $.actions.refresh_summary)}
-      >
-        {refreshing ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Sparkles className="h-3.5 w-3.5" />
-        )}
-        {t(($) => $.actions.refresh_summary)}
       </Button>
       <Button
         type="button"

@@ -477,7 +477,7 @@ describe("useIssueActions", () => {
     expect(mockOpenModal).not.toHaveBeenCalled();
   });
 
-  describe("two-step context handoff (refreshContextSummary + reopenSession)", () => {
+  describe("one-click reopen + standalone summary refresh (refreshContextSummary + reopenSession)", () => {
     it("is only offered for an agent- or squad-assigned issue", () => {
       const unassigned = renderHook(() => useIssueActions(mockIssue), { wrapper });
       expect(unassigned.result.current.canRefreshContext).toBe(false);
@@ -512,7 +512,7 @@ describe("useIssueActions", () => {
       expect(toast.error).not.toHaveBeenCalled();
     });
 
-    it("reopenSession calls rerunIssue with the new_session action (explicit run — the second step), then toasts success", async () => {
+    it("reopenSession calls rerunIssue with the new_session action (one click — the server refreshes a stale summary itself), then toasts success", async () => {
       mockRerunIssue.mockResolvedValue({ id: "task-new" });
       const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
       const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
@@ -522,9 +522,32 @@ describe("useIssueActions", () => {
         await waitFor(() => expect(toast.success).toHaveBeenCalled());
       });
 
-      // The reopen step IS the explicit "start a new provider session"
-      // decision — a real run, enqueued only by this user action.
+      // The reopen IS the explicit "start a new provider session" decision —
+      // a real run, enqueued only by this user action. Summary freshness is
+      // the server's job on this same call (freshness-gated compression
+      // before enqueue), so no second click is involved.
       expect(mockRerunIssue).toHaveBeenCalledWith("issue-1", undefined, false, "new_session");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("reopenSession relays the server's refresh outcome when the response carries compression detail", async () => {
+      mockRerunIssue.mockResolvedValue({
+        id: "task-new",
+        compression_written: true,
+        compression_status: "fresh",
+      });
+      const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+      const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
+
+      await act(async () => {
+        result.current.reopenSession();
+        await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      });
+
+      // t() resolves to "" in this harness, so the composed message is the
+      // separator alone — the assertion that matters is success-not-error on
+      // the written-summary branch.
+      expect(toast.success).toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
     });
 

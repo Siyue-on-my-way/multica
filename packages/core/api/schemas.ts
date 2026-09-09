@@ -2003,6 +2003,11 @@ export const AgentTaskSchema = z.object({
   compression_status: z.string().optional(),
   source_revision: z.number().int().optional(),
   latency: z.number().int().optional(),
+  // What the pre-enqueue compression attempt did for this rerun: written when
+  // a fresh digest landed, otherwise why it was skipped. Older servers omit
+  // both, which degrades to "no compression detail" — never an error.
+  compression_written: z.boolean().optional(),
+  compression_skipped_reason: z.string().optional(),
   attribution: TaskAttributionSchema.optional(),
   // Per-run token usage. Same independent-degradation rule as the coverage
   // arrays above: usage is additive display metadata, so one malformed entry

@@ -275,46 +275,39 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   // no session to reopen and no agent to summarize for.
   const canRefreshContext = issueAssigneeType === "agent" || issueAssigneeType === "squad";
 
-  // SIY-167 product decision: the old single "compact context & restart"
-  // button became a two-step interaction. Step 1 — refresh the derived
-  // context summary (action: "refresh_summary"). It enqueues NO run and
-  // cancels NOTHING; the next run picks the fresh summary up at claim time,
-  // with the Context Manifest recording exactly what it covered.
-  const [refreshingSummary, setRefreshingSummary] = useState(false);
-  const refreshContextSummary = useCallback(() => {
-    if (!issueId || refreshingSummary) return;
-    setRefreshingSummary(true);
-    api
-      .rerunIssue(issueId, undefined, false, "refresh_summary")
-      .then(() => {
-        toast.success(t(($) => $.actions.refresh_summary_success));
-        void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
-      })
-      .catch((e: unknown) => {
-        toast.error(
-          dispatchReasonCode(e) === "invocation_not_allowed"
-            ? t(($) => $.actions.refresh_summary_blocked)
-            : e instanceof Error && e.message
-              ? e.message
-              : t(($) => $.actions.refresh_summary_failed),
-        );
-      })
-      .finally(() => setRefreshingSummary(false));
-  }, [issueId, refreshingSummary, queryClient, t]);
-
-  // Step 2 — explicit reopen: enqueue a NEW provider session for the issue's
-  // current assignee (action: "new_session"). Only the user decides when a
-  // run starts; this is that decision, separate from the refresh above. The
-  // claimed run reads whichever summary is current at claim time.
+  // SIY-167 reopen: one click. Enqueue a NEW provider session for the issue's
+  // current assignee (action: "new_session"); the server refreshes a stale or
+  // missing derived summary before the run is enqueued — the same
+  // freshness-gated compression the automatic assign path uses — so the run
+  // always starts from a current digest and no separate "refresh summary"
+  // step has to be remembered. The response reports what the refresh did,
+  // which the toast relays.
   const [reopeningSession, setReopeningSession] = useState(false);
   const reopenSession = useCallback(() => {
     if (!issueId || reopeningSession) return;
     setReopeningSession(true);
     api
       .rerunIssue(issueId, undefined, false, "new_session")
-      .then(() => {
-        toast.success(t(($) => $.actions.reopen_session_success));
+      .then((result) => {
+        const summaryOutcome =
+          "compression_written" in result
+            ? result.compression_written
+              ? t(($) => $.actions.reopen_session_summary_refreshed)
+              : result.compression_skipped_reason === "manual_present"
+                ? t(($) => $.actions.reopen_session_summary_manual)
+                : t(($) => $.actions.reopen_session_summary_current)
+            : null;
+        toast.success(
+          summaryOutcome
+            ? `${t(($) => $.actions.reopen_session_success)} ${summaryOutcome}`
+            : t(($) => $.actions.reopen_session_success),
+        );
         void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+        // The issue row carries compression_status; re-read it so the
+        // context-summary menu reflects the refresh immediately.
+        if (wsId) {
+          void queryClient.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId) });
+        }
       })
       .catch((e: unknown) => {
         toast.error(
@@ -326,7 +319,37 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
         );
       })
       .finally(() => setReopeningSession(false));
-  }, [issueId, reopeningSession, queryClient, t]);
+  }, [issueId, wsId, reopeningSession, queryClient, t]);
+
+  // Standalone re-digest, kept for the no-run case: rebuild the derived
+  // summary WITHOUT enqueueing anything — e.g. after fixing the compression
+  // model, or to pre-warm a digest for a run another action will start.
+  // Forced: it regenerates even when the current one is fresh. It never
+  // touches a manual checkpoint and never starts or cancels a run.
+  const [refreshingSummary, setRefreshingSummary] = useState(false);
+  const refreshContextSummary = useCallback(() => {
+    if (!issueId || refreshingSummary) return;
+    setRefreshingSummary(true);
+    api
+      .rerunIssue(issueId, undefined, false, "refresh_summary")
+      .then(() => {
+        toast.success(t(($) => $.actions.refresh_summary_success));
+        void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+        if (wsId) {
+          void queryClient.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId) });
+        }
+      })
+      .catch((e: unknown) => {
+        toast.error(
+          dispatchReasonCode(e) === "invocation_not_allowed"
+            ? t(($) => $.actions.refresh_summary_blocked)
+            : e instanceof Error && e.message
+              ? e.message
+              : t(($) => $.actions.refresh_summary_failed),
+        );
+      })
+      .finally(() => setRefreshingSummary(false));
+  }, [issueId, wsId, refreshingSummary, queryClient, t]);
 
   return {
     isPinned,

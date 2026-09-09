@@ -405,6 +405,10 @@ export interface AgentTask {
   source_revision?: number;
   /** Handoff compression latency in milliseconds. */
   latency?: number;
+  /** True when this rerun wrote a fresh derived summary before enqueueing. */
+  compression_written?: boolean;
+  /** Why the pre-enqueue compression attempt skipped writing (fresh, manual_present, …). */
+  compression_skipped_reason?: string;
   /**
    * Resolved accountable-human provenance of this run (MUL-4302 §9): who it ran
    * "on behalf of", how that was resolved, and the evidence/lineage. Present on

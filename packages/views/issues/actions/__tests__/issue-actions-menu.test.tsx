@@ -224,11 +224,11 @@ describe("IssueActionsDropdown", () => {
     expect(screen.queryByText("Set parent issue...")).not.toBeInTheDocument();
     expect(screen.queryByText("Add sub-issue...")).not.toBeInTheDocument();
     // Unassigned issue has no agent session to refresh/reopen.
-    expect(screen.queryByText("Refresh context summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Context summary")).not.toBeInTheDocument();
     expect(screen.queryByText("Reopen session (new session)")).not.toBeInTheDocument();
   });
 
-  it("shows the two-step context handoff (refresh summary + reopen session) only for an agent- or squad-assigned issue", async () => {
+  it("shows the one-click reopen (with the standalone re-digest scoped to a submenu) only for an agent- or squad-assigned issue", async () => {
     const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
     render(
       wrap(
@@ -241,10 +241,13 @@ describe("IssueActionsDropdown", () => {
 
     fireEvent.click(screen.getByTestId("trigger"));
 
-    // SIY-167 product decision: the old single "compact & restart" item is
-    // two separate items — refresh the summary, then explicitly reopen.
-    expect(await screen.findByText("Refresh context summary")).toBeInTheDocument();
-    expect(screen.getByText("Reopen session (new session)")).toBeInTheDocument();
+    // SIY-167: reopen is ONE action — the server refreshes a stale summary
+    // before enqueueing, so the top level carries a single item. The
+    // standalone re-digest (no run) lives inside the "Context summary"
+    // submenu, next to the summary's current state.
+    expect(await screen.findByText("Reopen session (new session)")).toBeInTheDocument();
+    expect(screen.getByText("Context summary")).toBeInTheDocument();
+    expect(screen.queryByText("Refresh summary only (no run)")).not.toBeInTheDocument();
   });
 
   it("clicking the Assignee item opens the shared AssigneePicker popover", async () => {

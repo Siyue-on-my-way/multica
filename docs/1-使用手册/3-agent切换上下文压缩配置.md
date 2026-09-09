@@ -34,13 +34,15 @@ LLM 生成的 `derived_summary` 是固定五键 JSON，`key_decisions` 与 `risk
 
 旧格式（三键）摘要仍可读取，两个数组视为空；刷新后自动补全为五键。
 
-## 两步交互与三种动作
+## 一键重开与三种动作
 
-UI 上"压缩上下文并重开会话"已拆成**两步**：先"刷新摘要"（只更新 `derived_summary`，不影响任何运行），再"重开会话"（显式发起新 task）。后端对应三个解耦的动作：
+UI 上"重开会话（新会话）"是**一个动作**：入队一个全新 Provider 会话的 task，并且服务端会在入队前按新鲜度自动刷新过期/缺失的 `derived_summary`（有手动检查点时不覆盖），不需要先点一次"刷新摘要"。失败评论卡片上同理只有"重试运行"和"重开会话"两个按钮。
+
+"仅刷新摘要"保留在 Issue 菜单的"上下文摘要"子菜单里（子菜单同时显示当前摘要状态），用于**不想启动运行、只想重建摘要**的场景（例如修正压缩模型后重新生成）。后端对应三个解耦的动作：
 
 ```text
 refresh_summary  只刷新 derived_summary，不入队，也不取消运行中的 task
-new_session      复用来源 task 的 workdir，但启动新的 Provider session
+new_session      复用来源 task 的 workdir，启动新的 Provider session；入队前按新鲜度自动刷新摘要
 retry            按来源 task 重试；仅在失败未污染且 runtime 相容时恢复 Provider session
 ```
 

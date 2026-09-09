@@ -86,7 +86,7 @@ multica runtime list --output json
 
 | 能力层 | 内容 | 依赖 |
 |---|---|---|
-| **服务端能力** | 两步交互（刷新摘要 + 显式重开）、三种 rerun 动作、独立取消、五键摘要、claim 时组装 Context Manifest | 只在服务端，任何在线 runtime 都享有 |
+| **服务端能力** | 一键重开会话（入队前自动刷新过期摘要）、三种 rerun 动作、独立取消、五键摘要、claim 时组装 Context Manifest | 只在服务端，任何在线 runtime 都享有 |
 | **daemon 侧能力** | Agent 首轮收到 Context Manifest 可对账评论、retry 按门控恢复会话、更新源指向 fork | 需要 fork 构建（commit ≥ `b2ebe15ec`，当前 `456722116`） |
 
 官方 `0.4.18 (commit: b312e1cbb)` 两个 daemon 侧能力都缺失，且更新源指向官方仓库。同机多个 provider runtime 共用 daemon，升级一次全部生效。

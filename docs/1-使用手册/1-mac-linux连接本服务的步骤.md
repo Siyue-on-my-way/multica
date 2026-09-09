@@ -134,7 +134,7 @@ multica runtime list --output json     # 应能看到本机记录，状态为 on
 
 | 能力层 | 内容 | 依赖 |
 |---|---|---|
-| **服务端能力** | 两步交互（刷新摘要 + 显式重开）、三种 rerun 动作、独立取消、五键摘要、claim 时组装 Context Manifest | 只在服务端，任何在线 runtime 都享有 |
+| **服务端能力** | 一键重开会话（入队前自动刷新过期摘要）、三种 rerun 动作、独立取消、五键摘要、claim 时组装 Context Manifest | 只在服务端，任何在线 runtime 都享有 |
 | **daemon 侧能力** | Agent 首轮收到 Context Manifest 可对账评论、retry 按门控恢复会话、更新源指向 fork 防止被官方代码拉回 | 需要 fork 构建（commit ≥ `b2ebe15ec`，当前 `456722116`） |
 
 - 机器装的是官方 `0.4.18 (commit: b312e1cbb)` → daemon 侧能力全部缺失，且 `multica update` 会拉回官方代码。处理：重跑一键安装，然后**新开一个终端**再验证。

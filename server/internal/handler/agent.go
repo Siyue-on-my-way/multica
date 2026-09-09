@@ -499,6 +499,12 @@ type AgentTaskResponse struct {
 	CompressionStatus string `json:"compression_status,omitempty"` // manual | fresh | stale | none
 	SourceRevision    int64  `json:"source_revision,omitempty"`    // issue revision the derived summary was built from
 	Latency           int32  `json:"latency,omitempty"`            // wall-clock duration in milliseconds of the last compression attempt
+	// What THIS rerun's pre-enqueue compression attempt did: written when a
+	// fresh digest landed, otherwise why it was skipped (fresh, manual_present,
+	// no_comments, llm_not_configured, conflict). Lets the UI say "summary
+	// refreshed" vs "summary already current" instead of guessing from status.
+	CompressionWritten       bool   `json:"compression_written,omitempty"`
+	CompressionSkippedReason string `json:"compression_skipped_reason,omitempty"`
 	// ContextManifest is the SIY-167 claim-time audit record: which issue
 	// revision and handoff state this context was assembled from, which
 	// comments were delivered, and which known ids were omitted. The daemon
