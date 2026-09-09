@@ -556,7 +556,7 @@ export function ContextCoursewarePage() {
                   description="handoff_summary 是主动提炼的 checkpoint，适合说明如何接续，但不是全部事实。"
                   tone="violet"
                   items={[
-                    "current_progress、next_steps、unresolved_issues",
+                    "current_progress、key_decisions、next_steps、unresolved_issues、risks",
                     "working_branch、agent_status 和最近结果",
                     "祖先 refs、当前 Issue 版本和必须关注的线程",
                     "明确哪些信息被省略，避免把摘要当成 transcript",

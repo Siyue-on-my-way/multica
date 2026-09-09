@@ -606,10 +606,14 @@
     "remove_parent_issue_success": "상위 태스크를 제거했습니다",
     "add_sub_issue": "하위 태스크 추가...",
     "delete_issue": "태스크 삭제",
-    "compact_context": "컨텍스트 압축 후 재시작",
-    "compact_context_success": "컨텍스트를 압축하고 새 세션을 시작했습니다",
-    "compact_context_failed": "컨텍스트 압축에 실패했습니다",
-    "compact_context_blocked": "시작되지 않음 — 이 에이전트를 실행할 권한이 없습니다",
+    "refresh_summary": "컨텍스트 요약 새로 고침",
+    "refresh_summary_success": "컨텍스트 요약이 새로 고쳐졌습니다 — 다음 실행 시 반영됩니다",
+    "refresh_summary_failed": "컨텍스트 요약 새로 고침에 실패했습니다",
+    "refresh_summary_blocked": "새로 고치지 않음 — 이 에이전트를 실행할 권한이 없습니다",
+    "reopen_session": "세션 다시 열기(새 세션)",
+    "reopen_session_success": "세션을 다시 열었습니다: 새 Provider 세션으로 실행됩니다",
+    "reopen_session_failed": "세션 다시 열기에 실패했습니다",
+    "reopen_session_blocked": "시작되지 않음 — 이 에이전트를 실행할 권한이 없습니다",
     "copy_project_directory_path": "프로젝트 디렉터리 경로 복사"
   },
   "pickers": {

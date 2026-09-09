@@ -61,8 +61,10 @@ You receive the issue itself (description, acceptance criteria, metadata, ancest
 Output EXACTLY this JSON object and nothing else. The word "JSON" appears in this instruction to satisfy API requirements:
 {
   "current_progress": "one sentence: what has been accomplished so far",
+  "key_decisions": ["decision or constraint that decides the task's direction or quality — state it so the next agent does not relitigate it; empty array if none"],
   "next_steps": ["step 1", "step 2"],
-  "unresolved_issues": "any blockers, open questions, or known problems — empty string if none"
+  "unresolved_issues": "any blockers, open questions, or known problems — empty string if none",
+  "risks": ["risk or pitfall the next agent would otherwise rediscover the hard way — empty array if none"]
 }`
 
 const handoffUserTemplate = `Issue title: {{issue_title}}
@@ -428,6 +430,8 @@ func (h *Handler) callLLMForHandoffSummary(ctx context.Context, in handoffCompre
 
 	var raw string
 	var err error
+	// 768: the schema grew two arrays (key_decisions, risks) beyond the three
+	// original keys; 512 truncated rich summaries in practice.
 	if businessLLM != nil {
 		raw, err = businessLLM.GenerateJSONTemplate(
 			ctx,
@@ -435,10 +439,10 @@ func (h *Handler) callLLMForHandoffSummary(ctx context.Context, in handoffCompre
 			handoffSystemPrompt,
 			handoffUserTemplate,
 			0,
-			512,
+			768,
 		)
 	} else {
-		raw, err = h.LLM.GenerateJSON(ctx, "", handoffSystemPrompt, renderHandoffUserPrompt(vars), 0, 512)
+		raw, err = h.LLM.GenerateJSON(ctx, "", handoffSystemPrompt, renderHandoffUserPrompt(vars), 0, 768)
 	}
 	if err != nil {
 		if errors.Is(err, llm.ErrNotConfigured) {
@@ -447,11 +451,16 @@ func (h *Handler) callLLMForHandoffSummary(ctx context.Context, in handoffCompre
 		return nil, err
 	}
 
-	// Validate: must be a JSON object with the three expected keys.
+	// Validate: must be a JSON object with the five expected keys. The two
+	// arrays (key_decisions, risks) are optional on OLD summaries — they are
+	// missing there, which unmarshals to nil — but the prompt requires the
+	// model to emit them (empty when nothing qualifies).
 	var check struct {
 		CurrentProgress  string   `json:"current_progress"`
+		KeyDecisions     []string `json:"key_decisions"`
 		NextSteps        []string `json:"next_steps"`
 		UnresolvedIssues string   `json:"unresolved_issues"`
+		Risks            []string `json:"risks"`
 	}
 	if err := json.Unmarshal([]byte(raw), &check); err != nil {
 		return nil, fmt.Errorf("LLM returned malformed JSON: %w (raw: %.200s)", err, raw)

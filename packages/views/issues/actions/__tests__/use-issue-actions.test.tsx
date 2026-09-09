@@ -477,38 +477,54 @@ describe("useIssueActions", () => {
     expect(mockOpenModal).not.toHaveBeenCalled();
   });
 
-  describe("compactContext", () => {
+  describe("two-step context handoff (refreshContextSummary + reopenSession)", () => {
     it("is only offered for an agent- or squad-assigned issue", () => {
       const unassigned = renderHook(() => useIssueActions(mockIssue), { wrapper });
-      expect(unassigned.result.current.canCompactContext).toBe(false);
+      expect(unassigned.result.current.canRefreshContext).toBe(false);
 
       const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
       const agentAssigned = renderHook(() => useIssueActions(agentIssue), { wrapper });
-      expect(agentAssigned.result.current.canCompactContext).toBe(true);
+      expect(agentAssigned.result.current.canRefreshContext).toBe(true);
 
       const squadIssue = { ...mockIssue, assignee_type: "squad" } as Issue;
       const squadAssigned = renderHook(() => useIssueActions(squadIssue), { wrapper });
-      expect(squadAssigned.result.current.canCompactContext).toBe(true);
+      expect(squadAssigned.result.current.canRefreshContext).toBe(true);
 
       const memberIssue = { ...mockIssue, assignee_type: "member" } as Issue;
       const memberAssigned = renderHook(() => useIssueActions(memberIssue), { wrapper });
-      expect(memberAssigned.result.current.canCompactContext).toBe(false);
+      expect(memberAssigned.result.current.canRefreshContext).toBe(false);
     });
 
-    it("calls rerunIssue with the refresh_summary action (summary only — no run, no cancel), then toasts success", async () => {
+    it("refreshContextSummary calls rerunIssue with the refresh_summary action (summary only — no run, no cancel), then toasts success", async () => {
       mockRerunIssue.mockResolvedValue({ compression_status: "fresh", written: true });
       const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
       const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
 
       await act(async () => {
-        result.current.compactContext();
+        result.current.refreshContextSummary();
         await waitFor(() => expect(toast.success).toHaveBeenCalled());
       });
 
-      // SIY-167: compact-context is a forced summary refresh, not a rerun.
+      // SIY-167: the refresh step is a forced summary refresh, not a rerun.
       // It must NOT enqueue a run (and never cancelled one, despite the old
       // copy) — the action field is what decouples the two on the server.
       expect(mockRerunIssue).toHaveBeenCalledWith("issue-1", undefined, false, "refresh_summary");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("reopenSession calls rerunIssue with the new_session action (explicit run — the second step), then toasts success", async () => {
+      mockRerunIssue.mockResolvedValue({ id: "task-new" });
+      const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
+      const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
+
+      await act(async () => {
+        result.current.reopenSession();
+        await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      });
+
+      // The reopen step IS the explicit "start a new provider session"
+      // decision — a real run, enqueued only by this user action.
+      expect(mockRerunIssue).toHaveBeenCalledWith("issue-1", undefined, false, "new_session");
       expect(toast.error).not.toHaveBeenCalled();
     });
 
@@ -519,7 +535,7 @@ describe("useIssueActions", () => {
       const { result } = renderHook(() => useIssueActions(agentIssue), { wrapper });
 
       await act(async () => {
-        result.current.compactContext();
+        result.current.refreshContextSummary();
         await waitFor(() => expect(toast.error).toHaveBeenCalled());
       });
 
@@ -531,7 +547,7 @@ describe("useIssueActions", () => {
       expect(toast.success).not.toHaveBeenCalled();
     });
 
-    it("is a no-op re-click while a compact request is already in flight", async () => {
+    it("is a no-op re-click while a summary refresh is already in flight", async () => {
       let resolveRerun!: (value: { id: string }) => void;
       mockRerunIssue.mockReturnValue(
         new Promise((resolve) => {
@@ -542,13 +558,13 @@ describe("useIssueActions", () => {
       const { result, rerender } = renderHook(() => useIssueActions(agentIssue), { wrapper });
 
       act(() => {
-        result.current.compactContext();
+        result.current.refreshContextSummary();
       });
       rerender();
-      expect(result.current.compactingContext).toBe(true);
+      expect(result.current.refreshingSummary).toBe(true);
 
       act(() => {
-        result.current.compactContext();
+        result.current.refreshContextSummary();
       });
       expect(mockRerunIssue).toHaveBeenCalledTimes(1);
 

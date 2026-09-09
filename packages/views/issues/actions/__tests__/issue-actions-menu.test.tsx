@@ -223,11 +223,12 @@ describe("IssueActionsDropdown", () => {
     expect(screen.queryByText("Create sub-issue")).not.toBeInTheDocument();
     expect(screen.queryByText("Set parent issue...")).not.toBeInTheDocument();
     expect(screen.queryByText("Add sub-issue...")).not.toBeInTheDocument();
-    // Unassigned issue has no agent session to compact.
-    expect(screen.queryByText("Compact context & restart")).not.toBeInTheDocument();
+    // Unassigned issue has no agent session to refresh/reopen.
+    expect(screen.queryByText("Refresh context summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reopen session (new session)")).not.toBeInTheDocument();
   });
 
-  it("shows 'Compact context & restart' only for an agent- or squad-assigned issue", async () => {
+  it("shows the two-step context handoff (refresh summary + reopen session) only for an agent- or squad-assigned issue", async () => {
     const agentIssue = { ...mockIssue, assignee_type: "agent" } as Issue;
     render(
       wrap(
@@ -240,7 +241,10 @@ describe("IssueActionsDropdown", () => {
 
     fireEvent.click(screen.getByTestId("trigger"));
 
-    expect(await screen.findByText("Compact context & restart")).toBeInTheDocument();
+    // SIY-167 product decision: the old single "compact & restart" item is
+    // two separate items — refresh the summary, then explicitly reopen.
+    expect(await screen.findByText("Refresh context summary")).toBeInTheDocument();
+    expect(screen.getByText("Reopen session (new session)")).toBeInTheDocument();
   });
 
   it("clicking the Assignee item opens the shared AssigneePicker popover", async () => {

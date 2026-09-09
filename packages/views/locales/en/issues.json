@@ -776,10 +776,14 @@
     "remove_parent_issue_success": "Removed parent issue",
     "add_sub_issue": "Add sub-issue...",
     "delete_issue": "Delete issue",
-    "compact_context": "Compact context & restart",
-    "compact_context_success": "Started a fresh session with compacted context",
-    "compact_context_failed": "Failed to compact context",
-    "compact_context_blocked": "Not started — you don't have permission to use this agent"
+    "refresh_summary": "Refresh context summary",
+    "refresh_summary_success": "Context summary refreshed — the next run picks it up at claim time",
+    "refresh_summary_failed": "Failed to refresh context summary",
+    "refresh_summary_blocked": "Not refreshed — you don't have permission to use this agent",
+    "reopen_session": "Reopen session (new session)",
+    "reopen_session_success": "Session reopened with a fresh provider session",
+    "reopen_session_failed": "Failed to reopen session",
+    "reopen_session_blocked": "Not started — you don't have permission to use this agent"
   },
   "pickers": {
     "custom_property": {

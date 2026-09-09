@@ -36,10 +36,12 @@ export interface UseIssueActionsResult {
   openAddChild: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
   /** True only for an agent- or squad-assigned issue — the only case where a
-   *  fresh-session-with-compacted-context run is meaningful. */
-  canCompactContext: boolean;
-  compactingContext: boolean;
-  compactContext: () => void;
+   *  summary refresh or a session reopen is meaningful. */
+  canRefreshContext: boolean;
+  refreshingSummary: boolean;
+  refreshContextSummary: () => void;
+  reopeningSession: boolean;
+  reopenSession: () => void;
 }
 
 /**
@@ -270,38 +272,61 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   // Only meaningful when an agent (or a squad, whose leader is an agent) can
   // actually pick up a fresh run — a member-assigned or unassigned issue has
-  // no session to compact.
-  const canCompactContext = issueAssigneeType === "agent" || issueAssigneeType === "squad";
+  // no session to reopen and no agent to summarize for.
+  const canRefreshContext = issueAssigneeType === "agent" || issueAssigneeType === "squad";
 
-  const [compactingContext, setCompactingContext] = useState(false);
-
-  // Standalone "compact context now": SIY-167 split the rerun API, so this
-  // action is now EXACTLY what it claims to be — a forced refresh of the
-  // derived context summary (action: "refresh_summary"). It enqueues NO run
-  // and cancels NOTHING; the previous copy promised to cancel the active run,
-  // which the backend never did (pending rows only). The next run — started
-  // explicitly via rerun/new-session — picks the fresh summary up at claim
-  // time, with the Context Manifest recording exactly what it covered.
-  const compactContext = useCallback(() => {
-    if (!issueId || compactingContext) return;
-    setCompactingContext(true);
+  // SIY-167 product decision: the old single "compact context & restart"
+  // button became a two-step interaction. Step 1 — refresh the derived
+  // context summary (action: "refresh_summary"). It enqueues NO run and
+  // cancels NOTHING; the next run picks the fresh summary up at claim time,
+  // with the Context Manifest recording exactly what it covered.
+  const [refreshingSummary, setRefreshingSummary] = useState(false);
+  const refreshContextSummary = useCallback(() => {
+    if (!issueId || refreshingSummary) return;
+    setRefreshingSummary(true);
     api
       .rerunIssue(issueId, undefined, false, "refresh_summary")
       .then(() => {
-        toast.success(t(($) => $.actions.compact_context_success));
+        toast.success(t(($) => $.actions.refresh_summary_success));
         void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
       })
       .catch((e: unknown) => {
         toast.error(
           dispatchReasonCode(e) === "invocation_not_allowed"
-            ? t(($) => $.actions.compact_context_blocked)
+            ? t(($) => $.actions.refresh_summary_blocked)
             : e instanceof Error && e.message
               ? e.message
-              : t(($) => $.actions.compact_context_failed),
+              : t(($) => $.actions.refresh_summary_failed),
         );
       })
-      .finally(() => setCompactingContext(false));
-  }, [issueId, compactingContext, queryClient, t]);
+      .finally(() => setRefreshingSummary(false));
+  }, [issueId, refreshingSummary, queryClient, t]);
+
+  // Step 2 — explicit reopen: enqueue a NEW provider session for the issue's
+  // current assignee (action: "new_session"). Only the user decides when a
+  // run starts; this is that decision, separate from the refresh above. The
+  // claimed run reads whichever summary is current at claim time.
+  const [reopeningSession, setReopeningSession] = useState(false);
+  const reopenSession = useCallback(() => {
+    if (!issueId || reopeningSession) return;
+    setReopeningSession(true);
+    api
+      .rerunIssue(issueId, undefined, false, "new_session")
+      .then(() => {
+        toast.success(t(($) => $.actions.reopen_session_success));
+        void queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+      })
+      .catch((e: unknown) => {
+        toast.error(
+          dispatchReasonCode(e) === "invocation_not_allowed"
+            ? t(($) => $.actions.reopen_session_blocked)
+            : e instanceof Error && e.message
+              ? e.message
+              : t(($) => $.actions.reopen_session_failed),
+        );
+      })
+      .finally(() => setReopeningSession(false));
+  }, [issueId, reopeningSession, queryClient, t]);
 
   return {
     isPinned,
@@ -314,8 +339,10 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     removeParent,
     openAddChild,
     openDeleteConfirm,
-    canCompactContext,
-    compactingContext,
-    compactContext,
+    canRefreshContext,
+    refreshingSummary,
+    refreshContextSummary,
+    reopeningSession,
+    reopenSession,
   };
 }

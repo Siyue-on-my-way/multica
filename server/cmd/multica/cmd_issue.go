@@ -554,7 +554,7 @@ func init() {
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
 	issueUpdateCmd.Flags().String("working-branch", "", "Git branch the agent is currently working on (e.g. feat/issue-SIY-2); pass empty string to clear")
 	issueUpdateCmd.Flags().String("agent-status", "", "Machine-readable agent progress stage (e.g. analyzing, coding, in_review); pass empty string to clear")
-	issueUpdateCmd.Flags().String("handoff-summary", "", "JSON checkpoint for the next agent (e.g. '{\"current_progress\":\"...\",\"next_steps\":[...]}'); pass empty string to clear")
+	issueUpdateCmd.Flags().String("handoff-summary", "", "JSON checkpoint for the next agent (e.g. '{\"current_progress\":\"...\",\"key_decisions\":[...],\"next_steps\":[...]}'); pass empty string to clear")
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 

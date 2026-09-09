@@ -280,7 +280,8 @@ function TaskCommentRetryButton({
 }) {
   const { t } = useT("issues");
   const [retrying, setRetrying] = useState(false);
-  const [compacting, setCompacting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   const handleRetry = async () => {
     if (retrying) return;
@@ -302,24 +303,49 @@ function TaskCommentRetryButton({
     }
   };
 
-  const handleCompactContext = async () => {
-    if (compacting) return;
-    setCompacting(true);
+  // Two-step handoff (SIY-167 product decision): "refresh summary" only
+  // rebuilds the derived summary (no run, no cancel); "reopen session" is
+  // the explicit second step that starts a new provider session. The old
+  // single button's copy claimed both happened at once.
+  const handleRefreshSummary = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
     try {
 		await api.rerunIssue(issueId, undefined, false, "refresh_summary");
-      toast.success(t(($) => $.actions.compact_context_success));
+      toast.success(t(($) => $.actions.refresh_summary_success));
     } catch (e) {
       toast.error(
         dispatchReasonCode(e) === "invocation_not_allowed"
-          ? t(($) => $.actions.compact_context_blocked)
+          ? t(($) => $.actions.refresh_summary_blocked)
           : e instanceof Error
             ? e.message
-            : t(($) => $.actions.compact_context_failed),
+            : t(($) => $.actions.refresh_summary_failed),
       );
     } finally {
-      setCompacting(false);
+      setRefreshing(false);
     }
   };
+
+  const handleReopenSession = async () => {
+    if (reopening) return;
+    setReopening(true);
+    try {
+		await api.rerunIssue(issueId, undefined, false, "new_session");
+      toast.success(t(($) => $.actions.reopen_session_success));
+    } catch (e) {
+      toast.error(
+        dispatchReasonCode(e) === "invocation_not_allowed"
+          ? t(($) => $.actions.reopen_session_blocked)
+          : e instanceof Error
+            ? e.message
+            : t(($) => $.actions.reopen_session_failed),
+      );
+    } finally {
+      setReopening(false);
+    }
+  };
+
+  const busy = retrying || refreshing || reopening;
 
   return (
     <div className={cn("flex gap-2", className)}>
@@ -328,7 +354,7 @@ function TaskCommentRetryButton({
         size="sm"
         variant="outline"
         onClick={handleRetry}
-        disabled={retrying || compacting}
+        disabled={busy}
         aria-label={t(($) => $.execution_log.retry_task_aria)}
       >
         {retrying ? (
@@ -342,16 +368,31 @@ function TaskCommentRetryButton({
         type="button"
         size="sm"
         variant="outline"
-        onClick={handleCompactContext}
-        disabled={retrying || compacting}
-        aria-label={t(($) => $.actions.compact_context)}
+        onClick={handleRefreshSummary}
+        disabled={busy}
+        aria-label={t(($) => $.actions.refresh_summary)}
       >
-        {compacting ? (
+        {refreshing ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
           <Sparkles className="h-3.5 w-3.5" />
         )}
-        {t(($) => $.actions.compact_context)}
+        {t(($) => $.actions.refresh_summary)}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={handleReopenSession}
+        disabled={busy}
+        aria-label={t(($) => $.actions.reopen_session)}
+      >
+        {reopening ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+        )}
+        {t(($) => $.actions.reopen_session)}
       </Button>
     </div>
   );

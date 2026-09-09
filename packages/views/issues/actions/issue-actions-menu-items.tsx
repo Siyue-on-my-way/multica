@@ -16,6 +16,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCcw,
   Sparkles,
   Trash2,
   Unlink,
@@ -124,9 +125,11 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openDeleteConfirm,
-    canCompactContext,
-    compactingContext,
-    compactContext,
+    canRefreshContext,
+    refreshingSummary,
+    refreshContextSummary,
+    reopeningSession,
+    reopenSession,
   } = actions;
 
   // Subscribe to the issue's task list so the cache is warm by the time the
@@ -332,14 +335,35 @@ export function IssueActionsMenuItems({
           ? t(($) => $.actions.copy_project_directory_path)
           : t(($) => $.actions.copy_workdir_path)}
       </P.Item>
-      {canCompactContext && (
-        <P.Item onClick={compactContext} disabled={compactingContext}>
-          {compactingContext ? (
+      {/* Two-step context handoff (SIY-167 product decision): refresh the
+          summary and reopen the session are separate decisions with separate
+          items — the old single item's copy promised a restart its action
+          never performed. Refresh enqueues nothing; reopen starts a new
+          provider session that picks up whatever summary is current. */}
+      {canRefreshContext && (
+        <P.Item
+          onClick={refreshContextSummary}
+          disabled={refreshingSummary || reopeningSession}
+        >
+          {refreshingSummary ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Sparkles className="h-3.5 w-3.5" />
           )}
-          {t(($) => $.actions.compact_context)}
+          {t(($) => $.actions.refresh_summary)}
+        </P.Item>
+      )}
+      {canRefreshContext && (
+        <P.Item
+          onClick={reopenSession}
+          disabled={refreshingSummary || reopeningSession}
+        >
+          {reopeningSession ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RotateCcw className="h-3.5 w-3.5" />
+          )}
+          {t(($) => $.actions.reopen_session)}
         </P.Item>
       )}
 

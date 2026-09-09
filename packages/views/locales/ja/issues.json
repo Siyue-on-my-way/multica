@@ -606,10 +606,14 @@
     "remove_parent_issue_success": "親タスクを解除しました",
     "add_sub_issue": "サブタスクを追加...",
     "delete_issue": "タスクを削除",
-    "compact_context": "コンテキストを圧縮して再開",
-    "compact_context_success": "コンテキストを圧縮して新しいセッションを開始しました",
-    "compact_context_failed": "コンテキストの圧縮に失敗しました",
-    "compact_context_blocked": "開始できませんでした — このエージェントを実行する権限がありません",
+    "refresh_summary": "コンテキスト概要を更新",
+    "refresh_summary_success": "コンテキスト概要を更新しました。次回の実行時に反映されます",
+    "refresh_summary_failed": "コンテキスト概要の更新に失敗しました",
+    "refresh_summary_blocked": "更新されませんでした — このエージェントを実行する権限がありません",
+    "reopen_session": "セッションを再オープン（新規セッション）",
+    "reopen_session_success": "セッションを再オープンしました：新しい Provider セッションで実行します",
+    "reopen_session_failed": "セッションの再オープンに失敗しました",
+    "reopen_session_blocked": "開始できませんでした — このエージェントを実行する権限がありません",
     "copy_project_directory_path": "プロジェクトディレクトリのパスをコピー"
   },
   "pickers": {

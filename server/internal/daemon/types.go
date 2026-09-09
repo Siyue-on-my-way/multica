@@ -152,7 +152,8 @@ type Task struct {
 	// agent should git-fetch and checkout before continuing work.
 	// AgentStatus is the machine-readable progress stage (e.g. "coding").
 	// HandoffSummary is a structured JSON checkpoint (current_progress,
-	// next_steps, unresolved_issues).
+	// key_decisions, next_steps, unresolved_issues, risks — the two arrays
+	// are absent on summaries written before SIY-167's schema extension).
 	WorkingBranch  string          `json:"working_branch,omitempty"`
 	AgentStatus    string          `json:"agent_status,omitempty"`
 	HandoffSummary json.RawMessage `json:"handoff_summary,omitempty"`

@@ -606,10 +606,14 @@
     "remove_parent_issue_success": "已移除父任务",
     "add_sub_issue": "添加子任务...",
     "delete_issue": "删除任务",
-    "compact_context": "压缩上下文并重开会话",
-    "compact_context_success": "已压缩上下文并新开一个会话",
-    "compact_context_failed": "压缩上下文失败",
-    "compact_context_blocked": "未启动——你没有权限触发该 agent",
+    "refresh_summary": "刷新上下文摘要",
+    "refresh_summary_success": "上下文摘要已刷新，下次运行将在认领时使用",
+    "refresh_summary_failed": "刷新上下文摘要失败",
+    "refresh_summary_blocked": "未刷新——你没有权限触发该 agent",
+    "reopen_session": "重开会话（新会话）",
+    "reopen_session_success": "已重开会话：将以全新 Provider 会话运行",
+    "reopen_session_failed": "重开会话失败",
+    "reopen_session_blocked": "未启动——你没有权限触发该 agent",
     "copy_project_directory_path": "复制项目目录路径"
   },
   "pickers": {
