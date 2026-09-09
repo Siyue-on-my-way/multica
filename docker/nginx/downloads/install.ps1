@@ -18,10 +18,17 @@ $exe = Join-Path $Tmp $Asset
 Invoke-WebRequest -Uri "$Base/$Asset" -OutFile $exe -UseBasicParsing
 
 Write-Host '2/5 verifying SHA-256 ...'
-$sums = ((Invoke-WebRequest -Uri "$Base/checksums.txt" -UseBasicParsing).Content.Trim()) -split "`n"
-$want = (($sums | Where-Object { $_ -match [regex]::Escape($Asset) })[0].Trim()) -split '\s+' | Select-Object -First 1
+$sums = (Invoke-WebRequest -Uri "$Base/checksums.txt" -UseBasicParsing).Content
+$want = $null
+foreach ($line in ($sums -split "`r?`n")) {
+    if ($line -match ('^([0-9a-fA-F]{64})\s+\*?' + [regex]::Escape($Asset) + '\r?$')) {
+        $want = $Matches[1].ToUpper()
+        break
+    }
+}
+if (-not $want) { throw "checksums.txt 不包含 $Asset，通道发布可能不完整" }
 $have = (Get-FileHash $exe -Algorithm SHA256).Hash
-if ($have -ne $want.ToUpper()) { throw "SHA-256 mismatch: got $have want $want" }
+if ($have -ne $want) { throw "SHA-256 mismatch: got $have want $want" }
 Write-Host "   OK ($have)"
 
 Write-Host '3/5 stopping old daemon and replacing the binary ...'
