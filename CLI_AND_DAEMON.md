@@ -33,6 +33,21 @@ multica update
 
 `multica update` auto-detects your installation method and upgrades accordingly.
 
+Direct-download installs and daemon self-updates use the official repository by
+default. Self-hosted forks can override the GitHub release source with
+`MULTICA_UPDATE_REPO`, for example:
+
+```bash
+export MULTICA_UPDATE_REPO=Siyue-on-my-way/multica
+multica update
+```
+
+The value may be `owner/repo` or a GitHub HTTPS/SSH remote. Homebrew installs
+continue to use the configured Homebrew tap. The variable must be present in
+the daemon's process environment for `multica runtime update` and periodic
+daemon updates; `restart.sh` also reads this single setting from
+`docker/.env` when restarting the local daemon.
+
 ## Quick Start
 
 ```bash

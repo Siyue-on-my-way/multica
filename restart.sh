@@ -62,6 +62,27 @@ DISK_GUARD_SCRIPT="${DISK_GUARD_SCRIPT:-$REPO_ROOT/scripts/disk-guard.sh}"
 # 设 UPLOADS_GC_REPORT_ON_RESTART=0 可关闭。
 UPLOADS_GC_SCRIPT="${UPLOADS_GC_SCRIPT:-$REPO_ROOT/scripts/uploads-gc.sh}"
 
+# The daemon is a host process, so Docker's env_file alone cannot configure
+# its self-update source. Read only this non-secret setting from the local
+# deployment env; all other values remain inside Compose. An explicitly
+# exported shell value wins over docker/.env, which keeps remote/systemd
+# deployments in control of their own source.
+load_local_update_repository() {
+  if [[ -n "${MULTICA_UPDATE_REPO:-}" || ! -f "$REPO_ROOT/docker/.env" ]]; then
+    return 0
+  fi
+  local value
+  value="$(sed -n 's/^MULTICA_UPDATE_REPO=//p' "$REPO_ROOT/docker/.env" | head -n 1)"
+  value="${value#\"}"
+  value="${value%\"}"
+  if [[ -n "$value" ]]; then
+    export MULTICA_UPDATE_REPO="$value"
+    echo -e "${GREEN}[配置] 本机 daemon 更新源已从 docker/.env 加载${NC}"
+  fi
+}
+
+load_local_update_repository
+
 run_locked_build() {
   command -v flock >/dev/null 2>&1 || {
     echo -e "${RED}未找到 flock，拒绝在没有构建锁的情况下执行 Docker 构建。${NC}" >&2

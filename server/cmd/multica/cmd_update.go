@@ -29,8 +29,13 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Current version: %s (commit: %s, built: %s)\n", version, commit, date)
+	repository, err := cli.ConfiguredUpdateRepository()
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", cli.UpdateRepositoryEnv, err)
+	}
+	fmt.Fprintf(os.Stderr, "Checking GitHub releases from %s...\n", repository)
 
-	// Check latest version from GitHub.
+	// Check latest version from the configured GitHub repository.
 	latest, err := cli.FetchLatestRelease()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not check latest version: %v\n", err)
@@ -58,7 +63,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 
 	// Not installed via brew — download binary directly from GitHub Releases.
 	if latest == nil {
-		return fmt.Errorf("could not determine latest version; check https://github.com/multica-ai/multica/releases/latest")
+		return fmt.Errorf("could not determine latest version; check https://github.com/%s/releases/latest", repository)
 	}
 	targetVersion := latest.TagName
 	fmt.Fprintf(os.Stderr, "Downloading %s from GitHub Releases...\n", targetVersion)

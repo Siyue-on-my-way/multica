@@ -8,6 +8,44 @@ import (
 	"time"
 )
 
+func TestConfiguredUpdateRepository(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    string
+		wantErr bool
+	}{
+		{name: "default", env: "", want: DefaultUpdateRepository},
+		{name: "owner and repo", env: "Siyue-on-my-way/multica", want: "Siyue-on-my-way/multica"},
+		{name: "https remote", env: "https://github.com/Siyue-on-my-way/multica.git", want: "Siyue-on-my-way/multica"},
+		{name: "ssh remote", env: "git@github.com:Siyue-on-my-way/multica.git", want: "Siyue-on-my-way/multica"},
+		{name: "wrong host", env: "https://gitlab.com/Siyue-on-my-way/multica", wantErr: true},
+		{name: "too many path segments", env: "Siyue-on-my-way/multica/releases", wantErr: true},
+		{name: "invalid character", env: "Siyue-on-my-way/multica?ref=main", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(UpdateRepositoryEnv, tt.env)
+			got, err := ConfiguredUpdateRepository()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ConfiguredUpdateRepository() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err == nil && got != tt.want {
+				t.Fatalf("ConfiguredUpdateRepository() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGitHubReleaseAPIURL(t *testing.T) {
+	got := githubReleaseAPIURL("Siyue-on-my-way/multica", "tags/v0.4.41")
+	want := "https://api.github.com/repos/Siyue-on-my-way/multica/releases/tags/v0.4.41"
+	if got != want {
+		t.Fatalf("githubReleaseAPIURL() = %q, want %q", got, want)
+	}
+}
+
 func TestReleaseAssetCandidates(t *testing.T) {
 	tests := []struct {
 		name          string

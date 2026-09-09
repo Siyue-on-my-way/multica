@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,13 +25,76 @@ import (
 	"github.com/multica-ai/multica/server/internal/selfexec"
 )
 
-// ChecksumManifestName is the asset name GoReleaser publishes for the
-// checksum manifest (`checksum.name_template: "checksums.txt"` in
-// .goreleaser.yml). Kept as a constant rather than inlined so a future rename
-// changes one place.
-const ChecksumManifestName = "checksums.txt"
+const (
+	// ChecksumManifestName is the asset name GoReleaser publishes for the
+	// checksum manifest (`checksum.name_template: "checksums.txt"` in
+	// .goreleaser.yml). Kept as a constant rather than inlined so a future
+	// rename changes one place.
+	ChecksumManifestName = "checksums.txt"
 
-const DefaultUpdateDownloadTimeout = 120 * time.Second
+	DefaultUpdateDownloadTimeout = 120 * time.Second
+
+	// DefaultUpdateRepository is the upstream release repository used when
+	// MULTICA_UPDATE_REPO is unset. Keep the fallback on the official project
+	// so existing installations retain their update behavior.
+	DefaultUpdateRepository = "multica-ai/multica"
+
+	// UpdateRepositoryEnv lets self-hosted or forked installations point the
+	// CLI and daemon at their own GitHub Releases repository.
+	UpdateRepositoryEnv = "MULTICA_UPDATE_REPO"
+)
+
+// ConfiguredUpdateRepository returns the GitHub owner/repository used by
+// release discovery and direct binary downloads. The environment accepts the
+// canonical "owner/repo" form as well as common GitHub HTTPS and SSH remote
+// forms. Invalid values fail closed so a typo cannot silently fall back to the
+// official repository.
+func ConfiguredUpdateRepository() (string, error) {
+	raw := strings.TrimSpace(os.Getenv(UpdateRepositoryEnv))
+	if raw == "" {
+		return DefaultUpdateRepository, nil
+	}
+	return normalizeUpdateRepository(raw)
+}
+
+func normalizeUpdateRepository(raw string) (string, error) {
+	repo := strings.TrimSpace(raw)
+	switch {
+	case strings.HasPrefix(repo, "git@github.com:"):
+		repo = strings.TrimPrefix(repo, "git@github.com:")
+	case strings.HasPrefix(repo, "ssh://git@github.com/"):
+		repo = strings.TrimPrefix(repo, "ssh://git@github.com/")
+	case strings.HasPrefix(repo, "https://github.com/"):
+		repo = strings.TrimPrefix(repo, "https://github.com/")
+	case strings.HasPrefix(repo, "http://github.com/"):
+		repo = strings.TrimPrefix(repo, "http://github.com/")
+	case strings.HasPrefix(repo, "github.com/"):
+		repo = strings.TrimPrefix(repo, "github.com/")
+	}
+	repo = strings.TrimRight(repo, "/")
+	repo = strings.TrimSuffix(repo, ".git")
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || !validGitHubName(parts[0]) || !validGitHubName(parts[1]) {
+		return "", fmt.Errorf("%s must be a GitHub repository in owner/repo form (got %q)", UpdateRepositoryEnv, raw)
+	}
+	return repo, nil
+}
+
+func validGitHubName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func githubReleaseAPIURL(repository, releasePath string) string {
+	return "https://api.github.com/repos/" + repository + "/releases/" + releasePath
+}
 
 // GitHubRelease is the subset of the GitHub releases API response we need.
 type GitHubRelease struct {
@@ -225,8 +289,12 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 }
 
 func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
+	repository, err := ConfiguredUpdateRepository()
+	if err != nil {
+		return nil, err
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
+	req, err := http.NewRequest(http.MethodGet, githubReleaseAPIURL(repository, "tags/"+url.PathEscape(tag)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -249,10 +317,15 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	return &release, nil
 }
 
-// FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
+// FetchLatestRelease fetches the latest release tag from the configured
+// GitHub repository.
 func FetchLatestRelease() (*GitHubRelease, error) {
+	repository, err := ConfiguredUpdateRepository()
+	if err != nil {
+		return nil, err
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, githubReleaseAPIURL(repository, "latest"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -361,8 +434,9 @@ func fetchURLBytes(url string, timeout time.Duration) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// UpdateViaDownload downloads the latest release binary from GitHub and replaces
-// the current executable in-place. Returns the combined output message and any error.
+// UpdateViaDownload downloads a release binary from the configured GitHub
+// repository and replaces the current executable in-place. Returns the
+// combined output message and any error.
 func UpdateViaDownload(targetVersion string) (string, error) {
 	return UpdateViaDownloadWithTimeout(targetVersion, DefaultUpdateDownloadTimeout)
 }
