@@ -1,6 +1,6 @@
 # Multica fork CLI one-click installer (Windows / PowerShell).
 # Served from this deployment's own /downloads/ channel; installs the fork
-# build (commit b2ebe15ec) and points future updates at the fork release repo.
+# build of the current HEAD and points future updates at the fork release repo.
 # Run:  irm http://8.148.26.166:2080/downloads/install.ps1 | iex
 # (Regenerate via scripts/publish-cli-downloads.sh, which bakes http://8.148.26.166:2080/downloads.)
 

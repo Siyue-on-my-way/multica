@@ -1,8 +1,12 @@
 # Agent 切换时的上下文压缩配置
 
-> 首次注册运行时、首次手工 bootstrap、`MULTICA_UPDATE_REPO` 持久化和发布后按 daemon 更新，请先执行 [运行时注册与版本分发手册](./2-项目分发到codex-claudecode-grok等.md)。本页只说明上下文压缩和切换动作，不重复完整的机器升级流程。
+> 首次注册运行时、`MULTICA_UPDATE_REPO` 持久化和版本分发，请先执行 [运行时注册与版本分发手册](./2-项目分发到codex-claudecode-grok等.md)。本页只说明上下文压缩和切换动作，不重复完整的机器接入流程。
 
 Multica 的 handoff 是可迁移的业务检查点，不是 Provider transcript 的副本。自动摘要存放在 `derived_summary`，Agent 手写的 checkpoint 存放在 `manual_checkpoint`；对外的 `handoff_summary` 仍表示当前生效的 checkpoint，手写内容优先于 LLM 摘要。
+
+## 版本前提
+
+能力分两层：压缩、rerun 拆分、独立取消、Manifest 组装是**服务端能力**，任何在线 runtime 都享有；Agent 首轮收到 Context Manifest、retry 按门控恢复会话是 **daemon 侧能力**，要求机器为 fork 构建（`multica version` 的 commit 为 `456722116` 或更高，最低门槛 `b2ebe15ec`）。旧官方版 `0.4.18` 缺失 daemon 侧能力，请先按[版本分发手册](./2-项目分发到codex-claudecode-grok等.md)一键安装升级。
 
 ## 工作原理
 
@@ -16,9 +20,23 @@ Multica 的 handoff 是可迁移的业务检查点，不是 Provider transcript 
 
 摘要写入时带有 Issue revision、最新 comment ID、来源 task、版本和耗时，并通过 handoff version 做 CAS。Issue 有新的语义活动时，旧摘要会被标记为 `stale`；手写 checkpoint 不会被强制压缩覆盖。
 
-新 task claim 时，服务端同时生成 Context Manifest。Manifest 记录 Issue revision、handoff version、祖先 refs、实际纳入的 comment IDs、已知但未纳入的 IDs、来源 task 和 branch checkpoint。Agent 首轮应先对账；需要细节时再用 `multica issue comment list --thread ... --tail 30` 回源读取。
+LLM 生成的 `derived_summary` 是固定五键 JSON，`key_decisions` 与 `risks` 用来保住"决定任务方向和质量的细节"，避免压缩时丢失：
 
-## 三种动作
+```json
+{
+  "current_progress": "已完成什么、做到哪一步",
+  "next_steps": ["下一步的具体动作"],
+  "unresolved_issues": "尚未解决的问题",
+  "key_decisions": ["决定任务方向或质量的决策/约束，避免下次重新争论"],
+  "risks": ["已知风险与注意事项"]
+}
+```
+
+旧格式（三键）摘要仍可读取，两个数组视为空；刷新后自动补全为五键。
+
+## 两步交互与三种动作
+
+UI 上"压缩上下文并重开会话"已拆成**两步**：先"刷新摘要"（只更新 `derived_summary`，不影响任何运行），再"重开会话"（显式发起新 task）。后端对应三个解耦的动作：
 
 ```text
 refresh_summary  只刷新 derived_summary，不入队，也不取消运行中的 task
@@ -40,6 +58,12 @@ multica issue rerun <issue-id> --action retry --output json
 multica issue runs <issue-id> --active --output json
 multica issue cancel-task <run-id> --issue <issue-id> --output json
 ```
+
+## Context Manifest（Agent 首轮对账）
+
+新 task claim 时，服务端同时生成 Context Manifest（服务端组装，任何在线 runtime 可用；Agent 侧能否收到取决于 daemon 为 fork 构建）。Manifest 记录 Issue revision、handoff version、祖先 refs、实际纳入的 comment IDs、已知但未纳入的 IDs、来源 task 和 branch checkpoint。
+
+Agent 首轮应先按 Manifest 对账：摘要覆盖了什么、省略了什么一目了然；需要细节时再用 `multica issue comment list <issue-id> --thread <thread-id> --tail 30` 回源读取，不要凭空猜测被截断的内容。
 
 ## 配置 LLM
 

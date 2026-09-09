@@ -4,21 +4,37 @@
 
 > 一台 Windows 电脑只启动一个 Multica 守护进程。该守护进程可以注册 Claude、Codex、Grok、Cursor 等多个运行时；安装、升级和重启都按电脑上的守护进程执行，不需要对每个 provider runtime 重复操作。
 
-## 第一步：安装 Multica CLI
+## 为什么必须用本服务的一键安装
 
-用**管理员权限**打开 PowerShell，执行：
+本部署是私有 fork，官方仓库 `multica-ai/multica` 上没有这些能力。官方安装脚本装出的 `0.4.18` 缺少 daemon 侧新能力（Agent 首轮收不到 Context Manifest、retry 无法按门控恢复会话），且自动更新源指向官方仓库——以后任何一次 `multica update` 都会把机器**静默拉回官方代码**。
+
+因此接入和升级都只使用自托管下载通道 `http://8.148.26.166:2080/downloads/`。一键脚本会下载二进制、做 SHA-256 校验、替换旧版、设置用户级 `MULTICA_UPDATE_REPO` 并启动 daemon。
+
+## 第一步：一键安装 Multica CLI
+
+用**管理员权限**打开 PowerShell，执行（若报执行策略错误，先执行 `Set-ExecutionPolicy -Scope Process Bypass -Force` 再重跑）：
 
 ```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+irm http://8.148.26.166:2080/downloads/install.ps1 | iex
 ```
 
-验证安装成功：
+## 第二步：验证安装结果
+
+安装后**新开一个 PowerShell**（让用户级环境变量生效），逐项核对：
 
 ```powershell
 multica version
+# 输出形如：v0.4.41-siyue.1-dirty (commit: 456722116, built: ...)
+
+[Environment]::GetEnvironmentVariable('MULTICA_UPDATE_REPO','User')
+# 应输出：Siyue-on-my-way/multica
 ```
 
-## 第二步：安装 AI 编码工具并登录
+判定标准（两条都要满足）：commit 是 **`456722116`** 或更高；用户级 `MULTICA_UPDATE_REPO` 等于 `Siyue-on-my-way/multica`。`-dirty` 后缀无功能影响。
+
+不达标就重跑第一步的一键安装；达标后不要执行 `multica update`（当前通道已是最新 fork 构建）。
+
+## 第三步：安装 AI 编码工具并登录
 
 安装 Claude Code（推荐，需 >= 2.0.0）：
 
@@ -41,16 +57,7 @@ Get-Command claude
 claude --version
 ```
 
-## 第三步：连接服务器
-
-先把自托管服务使用的 GitHub fork 持久化到当前 Windows 用户。这个变量必须进入守护进程的环境，不能只配置在服务端的 `docker/.env`：
-
-```powershell
-[Environment]::SetEnvironmentVariable("MULTICA_UPDATE_REPO", "Siyue-on-my-way/multica", "User")
-$env:MULTICA_UPDATE_REPO = "Siyue-on-my-way/multica"
-```
-
-然后执行注册：
+## 第四步：连接服务器
 
 ```powershell
 multica setup self-host `
@@ -65,7 +72,7 @@ multica setup self-host `
 > multica login --token   # 粘贴 PAT，回车
 > ```
 
-## 第四步：启动 Daemon 并验证
+## 第五步：启动 Daemon 并验证
 
 ```powershell
 multica daemon start
@@ -74,6 +81,15 @@ multica runtime list --output json
 ```
 
 启动成功后，在 Web 界面 http://8.148.26.166:2080 → **Runtimes** 页面可以看到本机注册的 runtime（在线状态）。
+
+## 版本与能力分层
+
+| 能力层 | 内容 | 依赖 |
+|---|---|---|
+| **服务端能力** | 两步交互（刷新摘要 + 显式重开）、三种 rerun 动作、独立取消、五键摘要、claim 时组装 Context Manifest | 只在服务端，任何在线 runtime 都享有 |
+| **daemon 侧能力** | Agent 首轮收到 Context Manifest 可对账评论、retry 按门控恢复会话、更新源指向 fork | 需要 fork 构建（commit ≥ `b2ebe15ec`，当前 `456722116`） |
+
+官方 `0.4.18 (commit: b312e1cbb)` 两个 daemon 侧能力都缺失，且更新源指向官方仓库。同机多个 provider runtime 共用 daemon，升级一次全部生效。
 
 ## 常见问题
 
@@ -87,26 +103,18 @@ Get-Command claude | Select-Object -ExpandProperty Source
 
 # 设置环境变量（替换为实际路径）
 $env:MULTICA_CLAUDE_PATH = "C:\Users\xxx\AppData\Roaming\npm\claude.cmd"
-[Environment]::SetEnvironmentVariable("MULTICA_UPDATE_REPO", "Siyue-on-my-way/multica", "User")
-$env:MULTICA_UPDATE_REPO = "Siyue-on-my-way/multica"
+[Environment]::SetEnvironmentVariable("MULTICA_CLAUDE_PATH", $env:MULTICA_CLAUDE_PATH, "User")
 multica daemon restart
 ```
 
 如需永久生效，将该行加入 PowerShell Profile（`$PROFILE`）。
+
+**版本又变回 `0.4.18` 或 `multica update` 后能力丢失**
+
+说明机器上跑了官方安装脚本，或更新源被清掉后被官方代码覆盖。重跑第一步的一键安装即可恢复，并按第二步重新验证。
 
 **查看 daemon 日志排查问题**
 
 ```powershell
 multica daemon logs -f
 ```
-
-## 首次启用本次新功能
-
-本次上下文压缩、Context Manifest 和拆分后的 rerun 需要守护进程至少包含提交 `b2ebe15ec`。旧版 `0.4.18` 不认识 `MULTICA_UPDATE_REPO`，因此第一次升级不能直接依赖 `multica runtime update`：
-
-1. 从 [运行时注册与版本分发手册](./2-项目分发到codex-claudecode-grok等.md) 构建或取得 `windows-amd64` 的 `b2ebe15ec` 二进制。
-2. 在管理员 PowerShell 中停止守护进程，手工替换 `multica.exe`。
-3. 设置上面的用户级 `MULTICA_UPDATE_REPO`，打开一个新的 PowerShell，再启动守护进程。
-4. 用 `multica version` 确认输出中的 commit 是 `b2ebe15ec`，再从服务端执行一次按 daemon 的 runtime 更新。
-
-不要使用此前基于 `10e852b9b` 的旧附件作为本次 bootstrap 二进制。以后发布了包含 `b2ebe15ec` 的 semver release 后，每台电脑只需用一个代表性 runtime 执行一次 `multica runtime update`，同一台电脑上的其他 provider runtime 会一起使用新守护进程。
