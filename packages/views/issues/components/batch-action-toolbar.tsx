@@ -182,7 +182,7 @@ export function BatchActionToolbar({
             )}
           >
             <motion.div
-              className="flex items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg"
+              className="flex max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-1 gap-y-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg"
               initial={{
                 opacity: 0,
                 transform: shouldReduceMotion
