@@ -36,26 +36,47 @@ exit 1
 EOF
 chmod +x "$fake_bin/docker"
 
+cat >"$fake_bin/df" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf 'fake 100 0 %s 0%% /\n' "$DOCKER_FAKE_FREE_KB"
+EOF
+chmod +x "$fake_bin/df"
+
 run_case() {
   local mode="$1"
+  local free_gb="$2"
+  local cli_mode="${3:-$mode}"
   local log="$tmp_dir/$mode.log"
   : >"$log"
   PATH="$fake_bin:$PATH" \
     DOCKER_LOG="$log" \
-    DOCKER_FAKE_CLI="$mode" \
+    DOCKER_FAKE_CLI="$cli_mode" \
+    DOCKER_FAKE_FREE_KB="$((free_gb * 1024 * 1024))" \
     DOCKER_BUILD_LOCK_FILE="$tmp_dir/$mode.lock" \
     DOCKER_BUILDER_MAX_USED_SPACE=4GB \
     DOCKER_BUILDER_MIN_FREE_SPACE=12GB \
     "$HOUSEKEEPING" >/dev/null
 
   grep -Fqx 'image prune -f' "$log"
-  if [[ "$mode" == modern ]]; then
+  if [[ "$cli_mode" == modern ]]; then
     grep -Fqx 'builder prune --all --force --max-used-space 4GB --min-free-space 12GB' "$log"
   else
     grep -Fqx 'builder prune --all --force --keep-storage 4GB --min-free-space 12GB' "$log"
   fi
+
+  if (( free_gb < 12 )); then
+    grep -Fqx 'builder prune --all --force' "$log"
+  else
+    if grep -Fqx 'builder prune --all --force' "$log"; then
+      printf 'unexpected emergency prune for %s with %sGB free\n' "$mode" "$free_gb" >&2
+      exit 1
+    fi
+  fi
 }
 
-run_case modern
-run_case legacy
+run_case modern 20 modern
+run_case modern-low-space 8 modern
+run_case legacy 20
 printf 'docker-housekeeping tests passed\n'
