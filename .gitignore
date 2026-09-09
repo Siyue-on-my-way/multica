@@ -81,3 +81,6 @@ docker/volumes/
 # Python (agent tooling)
 __pycache__/
 *.pyc
+
+# Self-hosted CLI download channel binaries (rebuild via scripts/publish-cli-downloads.sh)
+docker/nginx/downloads/multica-*

@@ -1,0 +1,3 @@
+b5879bfb89b9da7739e50a7da8203dca10d2af640098ba681ad6cf7be1228e47  multica-linux-amd64
+d6b1f082ff2c9605e83588ef00ab3d4c20c43367ce47974cb1fb6972c9e4c09b  multica-darwin-arm64
+a9aa94c621df4cf6430025f5fbdd7e6b8fe386f80ff539485908b5fc20dbf6a7  multica-windows-amd64.exe

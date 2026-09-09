@@ -1,0 +1,11 @@
+{
+  "channel": "siyue-fork",
+  "version": "v0.4.41-siyue.1-dirty",
+  "commit": "456722116",
+  "built_at": "2026-09-09T09:12:47Z",
+  "platforms": {
+    "linux-amd64": "multica-linux-amd64",
+    "darwin-arm64": "multica-darwin-arm64",
+    "windows-amd64": "multica-windows-amd64.exe"
+  }
+}
