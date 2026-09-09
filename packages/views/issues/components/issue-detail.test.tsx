@@ -118,7 +118,9 @@ vi.mock("../../navigation", () => ({
   ),
   useNavigation: () => ({
     push: vi.fn(),
+    replace: vi.fn(),
     pathname: "/issues/issue-1",
+    searchParams: new URLSearchParams(),
     getShareableUrl: (p: string) => `https://app.multica.com${p}`,
   }),
   useBackOrReplace: () => vi.fn(),

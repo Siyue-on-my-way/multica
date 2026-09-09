@@ -50,7 +50,12 @@ vi.mock("../../navigation", () => ({
       {children}
     </a>
   ),
-  useNavigation: () => ({ push: vi.fn(), pathname: "/issues" }),
+  useNavigation: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    pathname: "/issues",
+    searchParams: new URLSearchParams(),
+  }),
   resolveClickIntent: () => "push",
   useIntentNavigate: () => () => {},
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
