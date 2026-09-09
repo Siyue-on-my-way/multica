@@ -2,6 +2,8 @@
 
 > **服务地址：** `http://8.148.26.166:2080`
 
+> 一台电脑只启动一个 Multica 守护进程。该守护进程可以注册 Claude、Codex、Grok、Cursor 等多个运行时；安装、升级和重启都按电脑上的守护进程执行，不需要对每个 provider runtime 重复操作。
+
 ---
 
 ## 快速对比
@@ -33,6 +35,16 @@ multica version
 
 ### 第二步：一键配置并登录
 
+先把自托管服务使用的 GitHub fork 写入当前终端和 shell 配置。这个变量必须存在于守护进程的环境中，不能只写在服务端的 `docker/.env`：
+
+```bash
+export MULTICA_UPDATE_REPO=Siyue-on-my-way/multica
+grep -qxF 'export MULTICA_UPDATE_REPO=Siyue-on-my-way/multica' ~/.zshrc 2>/dev/null || \
+  printf '\nexport MULTICA_UPDATE_REPO=Siyue-on-my-way/multica\n' >> ~/.zshrc
+```
+
+然后执行注册：
+
 ```bash
 multica setup self-host \
   --server-url http://8.148.26.166:2080 \
@@ -49,7 +61,7 @@ multica setup self-host \
 
 ```bash
 multica daemon status   # 应显示 running
-multica runtime list    # 应能看到本机记录（Claude / Codex），状态为 online
+multica runtime list --output json    # 应能看到本机记录，状态为 online
 ```
 
 日志位置：`~/.multica/daemon.log`
@@ -112,10 +124,18 @@ multica login --token mul_xxxxxxxxxxxxxxxx
 
 ### 第五步：启动 Daemon 并验证
 
+持久化自托管 fork 更新源。若守护进程由 systemd、Supervisor 或其他服务管理器启动，还需要把同一个变量写入该管理器的环境配置；只修改 `~/.bashrc` 不会改变已经运行的守护进程：
+
+```bash
+export MULTICA_UPDATE_REPO=Siyue-on-my-way/multica
+grep -qxF 'export MULTICA_UPDATE_REPO=Siyue-on-my-way/multica' ~/.bashrc 2>/dev/null || \
+  printf '\nexport MULTICA_UPDATE_REPO=Siyue-on-my-way/multica\n' >> ~/.bashrc
+```
+
 ```bash
 multica daemon start
 multica daemon status   # 应显示 running
-multica runtime list    # 应能看到本机记录，状态为 online
+multica runtime list --output json    # 应能看到本机记录，状态为 online
 ```
 
 在 Web 界面 **Settings → Runtimes** 确认该服务器已成功上线。
@@ -126,6 +146,19 @@ multica runtime list    # 应能看到本机记录，状态为 online
 > multica daemon stop && multica daemon start
 > ```
 > 如需永久生效，将 `export` 语句加入 `~/.bashrc` 或 `~/.profile`。
+
+---
+
+## 首次启用本次新功能
+
+本次上下文压缩、Context Manifest 和拆分后的 rerun 需要守护进程至少包含提交 `b2ebe15ec`。旧版 `0.4.18` 不认识 `MULTICA_UPDATE_REPO`，因此第一次升级不能直接依赖 `multica runtime update`：
+
+1. 先从 [运行时注册与版本分发手册](./2-项目分发到codex-claudecode-grok等.md) 构建或取得对应平台的 `b2ebe15ec` 二进制。
+2. 停止守护进程，手工替换本机的 `multica` 二进制。
+3. 持久化 `MULTICA_UPDATE_REPO`，再启动守护进程。
+4. 用 `multica version` 确认输出中的 commit 是 `b2ebe15ec`，再从服务端执行一次按 daemon 的 runtime 更新。
+
+不要使用此前基于 `10e852b9b` 的旧附件作为本次 bootstrap 二进制。以后发布了包含 `b2ebe15ec` 的 semver release 后，每台电脑只需用一个代表性 runtime 执行一次 `multica runtime update`，同一台电脑上的其他 provider runtime 会一起使用新守护进程。
 
 ---
 

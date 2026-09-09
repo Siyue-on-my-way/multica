@@ -1,5 +1,7 @@
 # Agent 切换时的上下文压缩配置
 
+> 首次注册运行时、首次手工 bootstrap、`MULTICA_UPDATE_REPO` 持久化和发布后按 daemon 更新，请先执行 [运行时注册与版本分发手册](./2-项目分发到codex-claudecode-grok等.md)。本页只说明上下文压缩和切换动作，不重复完整的机器升级流程。
+
 Multica 的 handoff 是可迁移的业务检查点，不是 Provider transcript 的副本。自动摘要存放在 `derived_summary`，Agent 手写的 checkpoint 存放在 `manual_checkpoint`；对外的 `handoff_summary` 仍表示当前生效的 checkpoint，手写内容优先于 LLM 摘要。
 
 ## 工作原理
@@ -35,8 +37,8 @@ multica issue rerun <issue-id> --action retry --output json
 需要停止运行中的 task 时，使用独立的 Cancel API；rerun 不会取消 running task：
 
 ```bash
-curl -X POST "$MULTICA_URL/api/issues/<issue-id>/cancel" \
-  -H "Authorization: Bearer $MULTICA_TOKEN"
+multica issue runs <issue-id> --active --output json
+multica issue cancel-task <run-id> --issue <issue-id> --output json
 ```
 
 ## 配置 LLM
