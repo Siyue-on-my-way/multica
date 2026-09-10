@@ -375,7 +375,14 @@ func SuggestSubissuePlansWithDiagnostics(
 		return SubissuePlanGeneration{}, err
 	}
 	if len(identified) == 0 {
-		return SubissuePlanGeneration{}, errors.New("subissue plan recognition returned no actionable tasks")
+		// A reply can be a status update, acknowledgement, or completed-work
+		// summary rather than a list of work to split. This is a valid domain
+		// result, not an upstream failure: the preview panel already has an
+		// empty state for it, so return an actual empty JSON array instead of
+		// turning it into a misleading 502.
+		slog.Info("subissue strategy recognition found no actionable tasks",
+			"comment_id", commentID, "input_chars", len([]rune(content)))
+		return SubissuePlanGeneration{Plans: []SubissuePlan{}}, nil
 	}
 	identifiedJSON, err := json.Marshal(identified)
 	if err != nil {

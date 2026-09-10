@@ -731,6 +731,41 @@ func TestSuggestSubissuePlansWithDiagnosticsRetriesSingleContextStrategy(t *test
 	}
 }
 
+func TestSuggestSubissuePlansWithDiagnosticsReturnsEmptyForNoActionableTasks(t *testing.T) {
+	recognizer := &scriptedSubissueLLM{script: []string{
+		`{"tasks":[]}`,
+	}}
+	single := &scriptedSubissueLLM{}
+	parallel := &scriptedSubissueLLM{}
+	full := &scriptedSubissueLLM{}
+
+	generation, err := SuggestSubissuePlansWithDiagnostics(
+		context.Background(),
+		SubissuePlanStages{
+			SingleFullContext: single,
+			Parallel:          parallel,
+			FullCoverage:      full,
+			Recognize:         recognizer,
+		},
+		SubissueSuggestSourceIssue{Identifier: "SIY-63", Title: "完成说明"},
+		"本轮已完成实现并通过验证。",
+		nil, nil, "", "comment-1",
+	)
+	if err != nil {
+		t.Fatalf("empty task recognition should be a successful empty result: %v", err)
+	}
+	if generation.Plans == nil || len(generation.Plans) != 0 {
+		t.Fatalf("plans = %#v, want a non-nil empty slice", generation.Plans)
+	}
+	if recognizer.callCount() != 1 {
+		t.Fatalf("recognition calls = %d, want 1", recognizer.callCount())
+	}
+	if single.callCount() != 0 || parallel.callCount() != 0 || full.callCount() != 0 {
+		t.Fatalf("strategy calls = single:%d parallel:%d full:%d, want no strategy calls",
+			single.callCount(), parallel.callCount(), full.callCount())
+	}
+}
+
 func TestSuggestSubissuePlansWithDiagnosticsRequiresAllStrategies(t *testing.T) {
 	_, err := SuggestSubissuePlansWithDiagnostics(
 		context.Background(),
