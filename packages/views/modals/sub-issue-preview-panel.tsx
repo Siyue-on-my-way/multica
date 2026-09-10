@@ -4,7 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronRight, Loader2 } from "lucide-react";
-import type { Issue, SubIssuePlan, SubIssuePlanItem, SubIssueSuggestion } from "@multica/core/types";
+import type {
+  Issue,
+  SubIssuePlan,
+  SubIssuePlanDiagnostic,
+  SubIssuePlanItem,
+  SubIssueSuggestion,
+} from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueDetailOptions } from "@multica/core/issues/queries";
@@ -87,6 +93,20 @@ function newManualItem(planId: string): SubIssuePlanItem {
   };
 }
 
+function formatDiagnosticValue(value: string | number | undefined): string {
+  if (value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function DiagnosticStat({ label, value }: { label: string; value: string | number | undefined }) {
+  return (
+    <div className="rounded-md bg-muted/40 px-2.5 py-2">
+      <div className="text-caption text-muted-foreground">{label}</div>
+      <div className="mt-0.5 break-words text-body font-medium">{formatDiagnosticValue(value)}</div>
+    </div>
+  );
+}
+
 export function SubIssuePreviewModal({
   onClose,
   data,
@@ -107,7 +127,9 @@ export function SubIssuePreviewModal({
 
   const [phase, setPhase] = useState<ModalPhase>("outline");
   const [plans, setPlans] = useState<SubIssuePlan[]>([]);
+  const [diagnostics, setDiagnostics] = useState<SubIssuePlanDiagnostic[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [humanConstraints, setHumanConstraints] = useState("");
   const [carryAncestorContext, setCarryAncestorContext] = useState(true);
@@ -125,23 +147,26 @@ export function SubIssuePreviewModal({
       if (!issueId || !commentId) return;
       setLoadingPlans(true);
       setPlanError(false);
+      setDiagnostics([]);
       try {
         const response = await api.suggestSubissuePlans(issueId, {
           comment_id: commentId,
           human_constraints: constraints.trim() || undefined,
           carry_ancestor_context: carryAncestorContext,
         });
-      setPlans(response.plans);
-      setAncestorContextRefs(response.ancestor_brief_refs ?? []);
-      // SIY-147: default to the backend-verified full-coverage plan so the
-      // panel never opens pre-selecting a partial decomposition. Reference
-      // plans stay one click away.
-      setSelectedPlanId(
-        (response.plans.find((plan) => plan.coverage === "full") ?? response.plans[0])?.id ?? "",
-      );
-      setMergeSelection([]);
-      setDetailError(false);
-      setPhase("outline");
+        setPlans(response.plans);
+        setDiagnostics(response.diagnostics ?? []);
+        setAncestorContextRefs(response.ancestor_brief_refs ?? []);
+        // SIY-147: default to the backend-verified full-coverage plan so the
+        // panel never opens pre-selecting a partial decomposition. Reference
+        // plans stay one click away.
+        setSelectedPlanId(
+          (response.plans.find((plan) => plan.coverage === "full") ?? response.plans[0])?.id ?? "",
+        );
+        setDiagnosticsOpen(false);
+        setMergeSelection([]);
+        setDetailError(false);
+        setPhase("outline");
       } catch {
         setPlanError(true);
       } finally {
@@ -159,6 +184,11 @@ export function SubIssuePreviewModal({
     () => plans.find((plan) => plan.id === selectedPlanId) ?? null,
     [plans, selectedPlanId],
   );
+  const diagnosticByPlanId = useMemo(
+    () => new Map(diagnostics.map((diagnostic) => [diagnostic.plan_id, diagnostic])),
+    [diagnostics],
+  );
+  const selectedDiagnostic = selectedPlan ? diagnosticByPlanId.get(selectedPlan.id) : undefined;
   const outlineValid = !!selectedPlan && selectedPlan.items.length > 0 && selectedPlan.items.every((item) => item.title.trim() && item.goal.trim());
   const busy = loadingPlans || loadingDetails || creating;
   const checkedCount = drafts.filter((draft) => draft.checked).length;
@@ -372,6 +402,7 @@ export function SubIssuePreviewModal({
                         }`}
                         onClick={() => {
                           setSelectedPlanId(plan.id);
+                          setDiagnosticsOpen(false);
                           setMergeSelection([]);
                         }}
                       >
@@ -384,6 +415,11 @@ export function SubIssuePreviewModal({
                         <div className="mt-1 text-caption text-muted-foreground">
                           {t(($) => $.suggest_subissues.plan_item_count, { count: plan.items.length })}
                         </div>
+                        {diagnosticByPlanId.get(plan.id)?.model && (
+                          <div className="mt-1 truncate text-caption text-muted-foreground">
+                            {diagnosticByPlanId.get(plan.id)?.model}
+                          </div>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -392,6 +428,63 @@ export function SubIssuePreviewModal({
                     <div className="text-caption text-muted-foreground">
                       {t(($) => $.suggest_subissues.plan_reference_hint)}
                     </div>
+                  )}
+
+                  {selectedDiagnostic && (
+                    <Collapsible
+                      open={diagnosticsOpen}
+                      onOpenChange={setDiagnosticsOpen}
+                      className="rounded-lg border border-border/60"
+                    >
+                      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 p-3 text-left hover:bg-muted/30">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${diagnosticsOpen ? "rotate-90" : ""}`} />
+                          <span className="text-body font-medium">{t(($) => $.suggest_subissues.diagnostics_title)}</span>
+                          <span className="truncate text-caption text-muted-foreground">
+                            {selectedDiagnostic.model || t(($) => $.suggest_subissues.diagnostics_unavailable)}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-caption text-muted-foreground">
+                          {t(($) => $.suggest_subissues.diagnostics_hint)}
+                        </span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-3 border-t border-border/60 p-3">
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_model)} value={selectedDiagnostic.model} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_source)} value={selectedDiagnostic.source} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_version)} value={selectedDiagnostic.version} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_reasoning)} value={selectedDiagnostic.reasoning_effort} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_temperature)} value={selectedDiagnostic.temperature} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_max_tokens)} value={selectedDiagnostic.max_completion_tokens} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_timeout)} value={selectedDiagnostic.timeout_ms} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_attempt)} value={selectedDiagnostic.attempt} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_finish_reason)} value={selectedDiagnostic.finish_reason} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_input_chars)} value={selectedDiagnostic.input_chars} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_output_chars)} value={selectedDiagnostic.output_chars} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_prompt_tokens)} value={selectedDiagnostic.prompt_tokens} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_completion_tokens)} value={selectedDiagnostic.completion_tokens} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_total_tokens)} value={selectedDiagnostic.total_tokens} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="text-caption font-medium">{t(($) => $.suggest_subissues.diagnostics_system_prompt)}</div>
+                          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-caption">
+                            {selectedDiagnostic.system_prompt}
+                          </pre>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="text-caption font-medium">{t(($) => $.suggest_subissues.diagnostics_user_prompt)}</div>
+                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-caption">
+                            {selectedDiagnostic.user_prompt}
+                          </pre>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="text-caption font-medium">{t(($) => $.suggest_subissues.diagnostics_raw_output)}</div>
+                          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-caption">
+                            {selectedDiagnostic.raw_output}
+                          </pre>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
                   )}
 
                   {selectedPlan && (

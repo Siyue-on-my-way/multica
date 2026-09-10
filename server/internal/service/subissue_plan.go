@@ -30,8 +30,12 @@ const (
 	SubissuePlanCoverageFull = "full"
 
 	// SubissuePlanFullName is the reserved name of the first, coverage-checked
-	// plan. The model is told to emit it first; the parser enforces position.
+	// plan in the legacy single-outline response.
 	SubissuePlanFullName = "全量覆盖"
+
+	SubissuePlanSingleFullContextName = "单条全覆盖（上下文）"
+	SubissuePlanParallelName          = "并行优先"
+	SubissuePlanFullCoverageName      = "全量覆盖"
 
 	// subissuePlanMaxAttempts bounds the generate→validate loop per stage. A
 	// coverage miss or malformed JSON regenerates with corrective feedback
@@ -79,8 +83,40 @@ type SubissuePlanItem struct {
 type SubissuePlan struct {
 	ID       string             `json:"id"`
 	Name     string             `json:"name"`
+	Strategy string             `json:"strategy,omitempty"`
 	Coverage string             `json:"coverage,omitempty"`
 	Items    []SubissuePlanItem `json:"items"`
+}
+
+// SubissuePlanDiagnostic is the safe, request-scoped record shown in the
+// preview panel. It contains the rendered prompt and usage counters, but never
+// API keys or connection URLs.
+type SubissuePlanDiagnostic struct {
+	PlanID              string  `json:"plan_id"`
+	Strategy            string  `json:"strategy"`
+	Name                string  `json:"name"`
+	Source              string  `json:"source,omitempty"`
+	Version             int     `json:"version,omitempty"`
+	Model               string  `json:"model"`
+	ReasoningEffort     string  `json:"reasoning_effort,omitempty"`
+	Temperature         float64 `json:"temperature"`
+	MaxCompletionTokens int64   `json:"max_completion_tokens"`
+	TimeoutMS           int64   `json:"timeout_ms,omitempty"`
+	SystemPrompt        string  `json:"system_prompt"`
+	UserPrompt          string  `json:"user_prompt"`
+	RawOutput           string  `json:"raw_output"`
+	InputChars          int     `json:"input_chars"`
+	OutputChars         int     `json:"output_chars"`
+	PromptTokens        int64   `json:"prompt_tokens"`
+	CompletionTokens    int64   `json:"completion_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	FinishReason        string  `json:"finish_reason"`
+	Attempt             int     `json:"attempt"`
+}
+
+type SubissuePlanGeneration struct {
+	Plans       []SubissuePlan           `json:"plans"`
+	Diagnostics []SubissuePlanDiagnostic `json:"diagnostics,omitempty"`
 }
 
 type subissueIdentifiedTaskRaw struct {
@@ -88,17 +124,26 @@ type subissueIdentifiedTaskRaw struct {
 	Text string `json:"text"`
 }
 
+type subissuePlanItemRaw struct {
+	Title         string   `json:"title"`
+	Goal          string   `json:"goal"`
+	Business      string   `json:"business"`
+	SourceTaskIDs []string `json:"source_task_ids"`
+}
+
+type subissuePlanCandidateRaw struct {
+	Name  string                `json:"name"`
+	Items []subissuePlanItemRaw `json:"items"`
+}
+
 type subissuePlanLLMResponse struct {
 	IdentifiedTasks []subissueIdentifiedTaskRaw `json:"identified_tasks"`
-	Plans []struct {
-		Name  string `json:"name"`
-		Items []struct {
-			Title         string   `json:"title"`
-			Goal          string   `json:"goal"`
-			Business      string   `json:"business"`
-			SourceTaskIDs []string `json:"source_task_ids"`
-		} `json:"items"`
-	} `json:"plans"`
+	Plans           []subissuePlanCandidateRaw  `json:"plans"`
+}
+
+type subissueStrategyLLMResponse struct {
+	Name  string                `json:"name"`
+	Items []subissuePlanItemRaw `json:"items"`
 }
 
 const subissuePlanSystemPrompt = `你是一个任务拆分方案设计助手。请根据一段 Multica issue 讨论，先识别原文的全部任务，再生成三种不同粒度的候选拆分方案。
@@ -144,13 +189,72 @@ const subissuePlanUserTemplate = `原始评论内容：
 
 请输出 2～3 种拆分方案，第一个必须是“全量覆盖”。`
 
+// These fallbacks are used only by legacy clients that do not have the new
+// strategy stages in their business YAML. The checked-in YAML carries the
+// editable copies; keeping the fallbacks makes a registry-less deployment
+// fail soft while still applying the three distinct contracts.
+const subissueSingleFullContextSystemPrompt = `你是“单条全覆盖（上下文）”任务拆分助手。请把原始 Multica issue 讨论中的全部明确可执行任务合并成一个可以独立交给 agent 执行的子issue。
+
+必须恰好返回 1 个 item；该 item 的 source_task_ids 必须覆盖 identified_tasks 中的全部任务 id，一个都不能遗漏。相关任务即使看起来可以并行，也必须保留在同一个 item 中。title 概括整个业务方向，goal 保留背景、目标、已确定方案和约束，不要编造原文没有的工作。只返回 title、goal、business、source_task_ids，不要生成 description、stage、依赖、父issue或其他字段。business 必须是具体业务概念。严格只输出 JSON，不要输出 Markdown 或解释文字。
+
+输出结构：
+{"name":"单条全覆盖（上下文）","items":[{"title":"...","goal":"...","business":"...","source_task_ids":["t1","t2"]}]}`
+
+const subissueParallelSystemPrompt = `你是“并行优先”任务拆分助手。请把原始 Multica issue 讨论拆成尽可能可以同时开工的子issue，同时保持强相关工作的上下文连续性。
+
+没有真实依赖、可以独立验收的任务才拆成不同 item；共享代码、数据、决策或前置产物的任务应保持合并。identified_tasks 中每个任务都必须被至少一个 item 的 source_task_ids 覆盖，不能因追求并行而丢任务，也不能凭空增加工作。只返回 title、goal、business、source_task_ids，不要生成 description、stage、依赖、父issue或其他字段。business 必须是具体业务概念。严格只输出 JSON，不要输出 Markdown 或解释文字。
+
+输出结构：
+{"name":"并行优先","items":[{"title":"...","goal":"...","business":"...","source_task_ids":["t1"]}]}`
+
+const subissueFullCoverageSystemPrompt = `你是“全量覆盖”任务拆分助手。请把原始 Multica issue 讨论中识别出的任务按清晰、可独立验收的粒度列出，重点保证任务清单完整。
+
+identified_tasks 中每个任务 id 都必须至少出现在一个 item 的 source_task_ids 中。默认一个明确任务对应一个 item；只有两个任务强耦合、分开后任一 item 无法独立执行时才允许合并，并列出全部对应的 source_task_ids。不以是否并行作为首要目标，也不要为了合并而丢失任务边界。只返回 title、goal、business、source_task_ids，不要生成 description、stage、依赖、父issue或其他字段。business 必须是具体业务概念。严格只输出 JSON，不要输出 Markdown 或解释文字。
+
+输出结构：
+{"name":"全量覆盖","items":[{"title":"...","goal":"...","business":"...","source_task_ids":["t1"]}]}`
+
+const subissueStrategyUserTemplate = `原始评论内容：
+{{comment_text}}
+
+当前 issue：{{issue_identifier}} {{issue_title}}
+当前 issue description：
+{{issue_description}}
+
+{{ancestor_brief}}
+
+已识别的原文任务清单（这是权威清单，source_task_ids 只能使用这里的 id）：
+{{identified_tasks}}
+
+当前业务概念：
+{{business_context}}
+
+已有兄弟子issue（避免重复）：
+{{siblings}}
+
+候选父issue（本阶段不生成父issue、stage 或 description）：
+{{candidate_parents}}
+
+用户额外拆分要求：
+{{human_constraints}}
+
+上一次输出的校验结果（若为“（无）”表示第一次调用）：
+{{retry_feedback}}
+
+请严格按照当前 stage 的策略输出完整 JSON。`
+
 // SubissuePlanStages bundles the stage clients the outline pass may use. Plan
 // is the outline stage; Recognize is the optional recognition stage that
 // enables segmented identification of over-budget comments — when nil or
 // disabled, long comments degrade to the truncated single-pass outline.
 type SubissuePlanStages struct {
-	Plan      SubissueSuggestConfiguredLLM
-	Recognize SubissueSuggestConfiguredLLM
+	// Plan is the legacy single-outline client. It remains for old tests and
+	// deployments; new callers should provide all three strategy clients.
+	Plan              SubissueSuggestConfiguredLLM
+	SingleFullContext SubissueSuggestConfiguredLLM
+	Parallel          SubissueSuggestConfiguredLLM
+	FullCoverage      SubissueSuggestConfiguredLLM
+	Recognize         SubissueSuggestConfiguredLLM
 }
 
 // subissueRecognizeSystemPrompt is the recognition pass for one segment of an
@@ -201,6 +305,16 @@ func SuggestSubissuePlans(
 	humanConstraints string,
 	commentID string,
 ) ([]SubissuePlan, error) {
+	if stages.hasIndependentStrategies() {
+		generation, err := SuggestSubissuePlansWithDiagnostics(
+			ctx, stages, sourceIssue, sourceContent, siblings, candidateParents,
+			humanConstraints, commentID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return generation.Plans, nil
+	}
 	if stages.Plan == nil || !stages.Plan.Enabled() {
 		return nil, ErrLLMNotConfigured
 	}
@@ -213,6 +327,243 @@ func SuggestSubissuePlans(
 		ctx, stages.Plan, sourceIssue, content, siblings, candidateParents,
 		humanConstraints, identified, segmented, commentID,
 	)
+}
+
+func (s SubissuePlanStages) hasIndependentStrategies() bool {
+	return s.SingleFullContext != nil || s.Parallel != nil || s.FullCoverage != nil
+}
+
+type subissuePlanStrategy struct {
+	Key        string
+	Name       string
+	Client     SubissueSuggestConfiguredLLM
+	SingleItem bool
+	System     string
+}
+
+func (s SubissuePlanStages) independentStrategies() []subissuePlanStrategy {
+	return []subissuePlanStrategy{
+		{Key: "single_full_context", Name: SubissuePlanSingleFullContextName, Client: s.SingleFullContext, SingleItem: true, System: subissueSingleFullContextSystemPrompt},
+		{Key: "parallel", Name: SubissuePlanParallelName, Client: s.Parallel, System: subissueParallelSystemPrompt},
+		{Key: "full_coverage", Name: SubissuePlanFullCoverageName, Client: s.FullCoverage, System: subissueFullCoverageSystemPrompt},
+	}
+}
+
+// SuggestSubissuePlansWithDiagnostics runs the approved three-strategy flow.
+// Recognition is shared so every strategy receives the same authoritative
+// source-task list; the strategy calls then run concurrently and are returned
+// in the product order, independent of completion order.
+func SuggestSubissuePlansWithDiagnostics(
+	ctx context.Context,
+	stages SubissuePlanStages,
+	sourceIssue SubissueSuggestSourceIssue,
+	sourceContent string,
+	siblings []SubissueCandidateParent,
+	candidateParents []SubissueCandidateParent,
+	humanConstraints string,
+	commentID string,
+) (SubissuePlanGeneration, error) {
+	strategies := stages.independentStrategies()
+	for _, strategy := range strategies {
+		if strategy.Client == nil || !strategy.Client.Enabled() {
+			return SubissuePlanGeneration{}, ErrLLMNotConfigured
+		}
+	}
+	content := strings.TrimSpace(sourceContent)
+	identified, err := identifySubissueSourceTasksForPlanning(ctx, stages.Recognize, content, commentID)
+	if err != nil {
+		return SubissuePlanGeneration{}, err
+	}
+	if len(identified) == 0 {
+		return SubissuePlanGeneration{}, errors.New("subissue plan recognition returned no actionable tasks")
+	}
+	identifiedJSON, err := json.Marshal(identified)
+	if err != nil {
+		return SubissuePlanGeneration{}, fmt.Errorf("encode identified subissue tasks: %w", err)
+	}
+
+	results := make([]SubissuePlan, len(strategies))
+	diagnostics := make([]SubissuePlanDiagnostic, len(strategies))
+	group, groupCtx := errgroup.WithContext(ctx)
+	for index, strategy := range strategies {
+		index, strategy := index, strategy
+		group.Go(func() error {
+			plan, diagnostic, err := generateSubissueStrategyWithRetry(
+				groupCtx, strategy, sourceIssue, content, siblings, candidateParents,
+				humanConstraints, string(identifiedJSON), identified, commentID,
+			)
+			if err != nil {
+				return err
+			}
+			results[index] = plan
+			diagnostics[index] = diagnostic
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return SubissuePlanGeneration{}, err
+	}
+	return SubissuePlanGeneration{Plans: results, Diagnostics: diagnostics}, nil
+}
+
+// identifySubissueSourceTasksForPlanning is deliberately different from the
+// legacy fast path: three independent strategies need the same authoritative
+// task list even for a short comment, otherwise their coverage comparisons
+// would be based on three different model interpretations.
+func identifySubissueSourceTasksForPlanning(
+	ctx context.Context,
+	recognizer SubissueSuggestConfiguredLLM,
+	content string,
+	commentID string,
+) ([]SubissueIdentifiedTask, error) {
+	if recognizer == nil || !recognizer.Enabled() {
+		return nil, ErrLLMNotConfigured
+	}
+	segments, segmented := splitSubissueContentSegments(content, commentID)
+	if !segmented {
+		segments = []string{content}
+	}
+	perSegment := make([][]SubissueIdentifiedTask, len(segments))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(subissueSegmentConcurrency)
+	for index, segment := range segments {
+		index, segment := index, segment
+		group.Go(func() error {
+			tasks, err := recognizeSubissueSegmentWithRetry(groupCtx, recognizer, segment, index+1, len(segments), commentID)
+			if err != nil {
+				return err
+			}
+			perSegment[index] = tasks
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, fmt.Errorf("identify subissue source tasks: %w", err)
+	}
+	identified := mergeSubissueSegmentTasks(perSegment)
+	slog.Info("subissue strategy recognition merged",
+		"comment_id", commentID, "segment_count", len(segments),
+		"task_count", len(identified), "input_chars", len([]rune(content)))
+	return identified, nil
+}
+
+func generateSubissueStrategyWithRetry(
+	ctx context.Context,
+	strategy subissuePlanStrategy,
+	sourceIssue SubissueSuggestSourceIssue,
+	sourceContent string,
+	siblings []SubissueCandidateParent,
+	candidateParents []SubissueCandidateParent,
+	humanConstraints string,
+	identifiedJSON string,
+	identified []SubissueIdentifiedTask,
+	commentID string,
+) (SubissuePlan, SubissuePlanDiagnostic, error) {
+	var lastErr error
+	var diagnostic SubissuePlanDiagnostic
+	for attempt := 1; attempt <= subissuePlanMaxAttempts; attempt++ {
+		variables := buildSubissuePlanVariables(sourceIssue, sourceContent, siblings, candidateParents, humanConstraints, "")
+		variables["identified_tasks"] = identifiedJSON
+		variables["retry_feedback"] = subissueRetryFeedback(lastErr, attempt)
+		metadata, metadataErr := describeSubissuePlanPrompt(
+			strategy.Client, variables, strategy.System, subissueStrategyUserTemplate, 0.4,
+			subissuePlanOutlineMaxCompletionTokens,
+		)
+		if metadataErr != nil {
+			lastErr = metadataErr
+			continue
+		}
+		raw, stats, err := generateSubissueTemplateJSON(
+			ctx, strategy.Client, variables,
+			strategy.System, subissueStrategyUserTemplate, 0.4, subissuePlanOutlineMaxCompletionTokens,
+		)
+		diagnostic = subissuePlanDiagnosticFromMetadata(strategy, metadata, raw, stats, attempt)
+		var plan SubissuePlan
+		if err == nil {
+			plan, err = parseSubissueStrategyResponse(raw, inferSubissueBusiness(sourceIssue, sourceContent), strategy)
+		}
+		if err == nil {
+			err = validateSubissuePlanCoverage(identified, []SubissuePlan{plan})
+		}
+		if err == nil && strategy.SingleItem {
+			implementationCount := 0
+			for _, item := range plan.Items {
+				if item.Kind != SubissuePlanItemSummaryTest {
+					implementationCount++
+				}
+			}
+			if implementationCount != 1 {
+				err = fmt.Errorf("single-context strategy returned %d implementation items, expected exactly 1", implementationCount)
+			}
+		}
+		logSubissueAttempt("subissue plan "+strategy.Key, commentID, attempt, stats, "item_count", len(plan.Items), err)
+		if err == nil {
+			return plan, diagnostic, nil
+		}
+		lastErr = err
+	}
+	return SubissuePlan{}, diagnostic, fmt.Errorf("generate %s plan: validation failed after %d attempts: %w", strategy.Name, subissuePlanMaxAttempts, lastErr)
+}
+
+func describeSubissuePlanPrompt(
+	client SubissueSuggestConfiguredLLM,
+	variables map[string]string,
+	fallbackSystem string,
+	fallbackUserTemplate string,
+	fallbackTemperature float64,
+	fallbackMaxCompletionTokens int64,
+) (llm.TemplateMetadata, error) {
+	if described, ok := client.(SubissueSuggestPromptMetadataLLM); ok {
+		return described.DescribeTemplate(variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	}
+	render := func(template string) string {
+		for name, value := range variables {
+			template = strings.ReplaceAll(template, "{{"+name+"}}", value)
+		}
+		return template
+	}
+	return llm.TemplateMetadata{
+		Source:              "fallback",
+		Temperature:         fallbackTemperature,
+		MaxCompletionTokens: fallbackMaxCompletionTokens,
+		SystemPrompt:        render(fallbackSystem),
+		UserPrompt:          render(fallbackUserTemplate),
+	}, nil
+}
+
+func subissuePlanDiagnosticFromMetadata(
+	strategy subissuePlanStrategy,
+	metadata llm.TemplateMetadata,
+	raw string,
+	stats llm.GenerateStats,
+	attempt int,
+) SubissuePlanDiagnostic {
+	inputChars := stats.InputChars
+	if inputChars == 0 {
+		inputChars = len([]rune(metadata.SystemPrompt)) + len([]rune(metadata.UserPrompt))
+	}
+	return SubissuePlanDiagnostic{
+		PlanID:              "plan-" + strategy.Key,
+		Strategy:            strategy.Key,
+		Name:                strategy.Name,
+		Source:              metadata.Source,
+		Version:             metadata.Version,
+		Model:               metadata.Model,
+		ReasoningEffort:     metadata.ReasoningEffort,
+		Temperature:         metadata.Temperature,
+		MaxCompletionTokens: metadata.MaxCompletionTokens,
+		TimeoutMS:           metadata.TimeoutMS,
+		SystemPrompt:        metadata.SystemPrompt,
+		UserPrompt:          metadata.UserPrompt,
+		RawOutput:           raw,
+		InputChars:          inputChars,
+		OutputChars:         stats.OutputChars,
+		PromptTokens:        stats.PromptTokens,
+		CompletionTokens:    stats.CompletionTokens,
+		TotalTokens:         stats.TotalTokens,
+		FinishReason:        stats.FinishReason,
+		Attempt:             attempt,
+	}
 }
 
 // identifySubissueSourceTasks recognizes the source task list. Only comments
@@ -622,6 +973,68 @@ func truncateSubissuePlanConstraint(value string) string {
 		return value
 	}
 	return string(runes[:SubissuePlanConstraintMax]) + "…"
+}
+
+func parseSubissueStrategyResponse(raw, fallbackBusiness string, strategy subissuePlanStrategy) (SubissuePlan, error) {
+	var parsed subissueStrategyLLMResponse
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return SubissuePlan{}, fmt.Errorf("parse %s plan: %w", strategy.Name, err)
+	}
+	items, err := parseSubissuePlanItems(parsed.Items, fallbackBusiness)
+	if err != nil {
+		return SubissuePlan{}, fmt.Errorf("parse %s plan: %w", strategy.Name, err)
+	}
+	if len(items) == 0 {
+		return SubissuePlan{}, fmt.Errorf("parse %s plan: no actionable items returned", strategy.Name)
+	}
+	items = appendSubissueSummaryTests(items)
+	if len(items) > SubissuePlanItemMaxCount {
+		return SubissuePlan{}, fmt.Errorf("parse %s plan: at most %d items are allowed including summary tests", strategy.Name, SubissuePlanItemMaxCount)
+	}
+	plan := SubissuePlan{
+		ID:       "plan-" + strategy.Key,
+		Name:     strategy.Name,
+		Strategy: strategy.Key,
+		Coverage: SubissuePlanCoverageFull,
+		Items:    items,
+	}
+	for itemIndex := range plan.Items {
+		plan.Items[itemIndex].ID = fmt.Sprintf("%s-item-%d", plan.ID, itemIndex+1)
+	}
+	return plan, nil
+}
+
+func parseSubissuePlanItems(raw []subissuePlanItemRaw, fallbackBusiness string) ([]SubissuePlanItem, error) {
+	items := make([]SubissuePlanItem, 0, len(raw))
+	for _, item := range raw {
+		title := strings.TrimSpace(item.Title)
+		goal := strings.TrimSpace(item.Goal)
+		if title == "" && goal == "" {
+			continue
+		}
+		if title == "" || goal == "" {
+			return nil, errors.New("every item needs title and goal")
+		}
+		if len([]rune(goal)) > SubissuePlanGoalMaxLength {
+			return nil, errors.New("goal is too long")
+		}
+		business := resolveSubissuePlanBusiness(item.Business, fallbackBusiness)
+		title, err := formatSubissuePlanTitle(title, business)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, SubissuePlanItem{
+			Title:         title,
+			Goal:          goal,
+			Kind:          SubissuePlanItemImplementation,
+			Business:      business,
+			SourceTaskIDs: normalizeSubissueSourceTaskIDs(item.SourceTaskIDs),
+		})
+	}
+	if len(items) > SubissuePlanItemMaxCount {
+		return nil, fmt.Errorf("at most %d items are allowed per plan", SubissuePlanItemMaxCount)
+	}
+	return items, nil
 }
 
 func parseSubissuePlansResponse(raw string) ([]SubissuePlan, error) {

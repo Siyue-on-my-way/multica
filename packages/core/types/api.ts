@@ -122,14 +122,43 @@ export interface SubIssuePlanItem {
 export interface SubIssuePlan {
 	id: string;
 	name: string;
+	/** Stable backend strategy key, e.g. single_full_context or parallel. */
+	strategy?: string;
 	/** "full" on the plan the backend verified to cover every identified task;
 	 *  the panel defaults to it. Other plans are optional references. */
 	coverage?: "full" | "partial";
 	items: SubIssuePlanItem[];
 }
 
+/** Safe, request-scoped details for one strategy call. Prompts and usage
+ * counters are returned for comparison; credentials and connection URLs are
+ * never part of this shape. */
+export interface SubIssuePlanDiagnostic {
+	plan_id: string;
+	strategy: string;
+	name: string;
+	source?: string;
+	version?: number;
+	model: string;
+	reasoning_effort?: string;
+	temperature: number;
+	max_completion_tokens: number;
+	timeout_ms?: number;
+	system_prompt: string;
+	user_prompt: string;
+	raw_output: string;
+	input_chars: number;
+	output_chars: number;
+	prompt_tokens: number;
+	completion_tokens: number;
+	total_tokens: number;
+	finish_reason: string;
+	attempt: number;
+}
+
 export interface SuggestSubissuePlansResponse {
 	plans: SubIssuePlan[];
+	diagnostics?: SubIssuePlanDiagnostic[];
 	ancestor_brief_refs?: { id: string; updated_at: string }[];
 }
 

@@ -64,6 +64,14 @@ type SubissueSuggestUsageLLM interface {
 	GenerateJSONTemplateDetailed(ctx context.Context, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, llm.GenerateStats, error)
 }
 
+// SubissueSuggestPromptMetadataLLM is implemented by registry-backed stage
+// clients. It lets the preview show the exact hot-reloaded prompt and safe
+// generation settings that produced a plan without exposing credentials.
+type SubissueSuggestPromptMetadataLLM interface {
+	SubissueSuggestConfiguredLLM
+	DescribeTemplate(variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (llm.TemplateMetadata, error)
+}
+
 // generateSubissueTemplateJSON runs one structured completion through the
 // configured seam, surfacing usage stats when the client supports them.
 func generateSubissueTemplateJSON(
@@ -139,6 +147,37 @@ func (c LegacySubissueSuggestConfiguredLLM) GenerateJSONTemplateDetailed(
 	}
 	stats.OutputChars = len([]rune(raw))
 	return raw, stats, nil
+}
+
+// DescribeTemplate keeps the preview contract useful when the registry is
+// disabled and the legacy global client is still serving requests.
+func (c LegacySubissueSuggestConfiguredLLM) DescribeTemplate(
+	variables map[string]string,
+	fallbackSystem string,
+	fallbackUserTemplate string,
+	fallbackTemperature float64,
+	fallbackMaxCompletionTokens int64,
+) (llm.TemplateMetadata, error) {
+	if !c.Enabled() {
+		return llm.TemplateMetadata{}, ErrLLMNotConfigured
+	}
+	render := func(template string) string {
+		for name, value := range variables {
+			template = strings.ReplaceAll(template, "{{"+name+"}}", value)
+		}
+		return template
+	}
+	metadata := llm.TemplateMetadata{
+		Source:              "legacy",
+		Temperature:         fallbackTemperature,
+		MaxCompletionTokens: fallbackMaxCompletionTokens,
+		SystemPrompt:        render(fallbackSystem),
+		UserPrompt:          render(fallbackUserTemplate),
+	}
+	if modelProvider, ok := c.Client.(interface{ DefaultModel() string }); ok {
+		metadata.Model = modelProvider.DefaultModel()
+	}
+	return metadata, nil
 }
 
 // SubissueSuggestSourceIssue is the minimal shape the prompt needs for the

@@ -35,9 +35,15 @@ const (
 )
 
 const (
-	BusinessStageOutline   = "outline"
-	BusinessStageDetail    = "detail"
-	BusinessStageRecognize = "recognize"
+	// BusinessStageOutline is retained for deployments that still have the
+	// pre-SIY-63 single outline stage. New sub-issue configuration should use
+	// the three explicit strategy stages below.
+	BusinessStageOutline           = "outline"
+	BusinessStageSingleFullContext = "single_full_context"
+	BusinessStageParallel          = "parallel"
+	BusinessStageFullCoverage      = "full_coverage"
+	BusinessStageDetail            = "detail"
+	BusinessStageRecognize         = "recognize"
 )
 
 const (
@@ -64,6 +70,22 @@ type BusinessLoadStatus struct {
 	LoadedAt      time.Time
 	LastAttemptAt time.Time
 	LastError     string
+}
+
+// TemplateMetadata is the safe, request-scoped view of one configured
+// business call. It intentionally excludes API keys and base URLs while
+// retaining the rendered prompts and generation limits needed by the
+// sub-issue preview panel.
+type TemplateMetadata struct {
+	Source              string  `json:"source"`
+	Version             int     `json:"version"`
+	Model               string  `json:"model"`
+	ReasoningEffort     string  `json:"reasoning_effort"`
+	Temperature         float64 `json:"temperature"`
+	MaxCompletionTokens int64   `json:"max_completion_tokens"`
+	TimeoutMS           int64   `json:"timeout_ms"`
+	SystemPrompt        string  `json:"system_prompt"`
+	UserPrompt          string  `json:"user_prompt"`
 }
 
 type businessDefinition struct {
@@ -101,6 +123,54 @@ var businessDefinitions = map[Business]businessDefinition{
 		},
 		stages: map[string]businessStageDefinition{
 			BusinessStageOutline: {
+				expectedOutput: "json",
+				variables: map[string]struct{}{
+					"comment_text":      {},
+					"issue_identifier":  {},
+					"issue_title":       {},
+					"issue_description": {},
+					"ancestor_brief":    {},
+					"business_context":  {},
+					"siblings":          {},
+					"candidate_parents": {},
+					"human_constraints": {},
+					"identified_tasks":  {},
+					"retry_feedback":    {},
+				},
+			},
+			BusinessStageSingleFullContext: {
+				expectedOutput: "json",
+				variables: map[string]struct{}{
+					"comment_text":      {},
+					"issue_identifier":  {},
+					"issue_title":       {},
+					"issue_description": {},
+					"ancestor_brief":    {},
+					"business_context":  {},
+					"siblings":          {},
+					"candidate_parents": {},
+					"human_constraints": {},
+					"identified_tasks":  {},
+					"retry_feedback":    {},
+				},
+			},
+			BusinessStageParallel: {
+				expectedOutput: "json",
+				variables: map[string]struct{}{
+					"comment_text":      {},
+					"issue_identifier":  {},
+					"issue_title":       {},
+					"issue_description": {},
+					"ancestor_brief":    {},
+					"business_context":  {},
+					"siblings":          {},
+					"candidate_parents": {},
+					"human_constraints": {},
+					"identified_tasks":  {},
+					"retry_feedback":    {},
+				},
+			},
+			BusinessStageFullCoverage: {
 				expectedOutput: "json",
 				variables: map[string]struct{}{
 					"comment_text":      {},
@@ -745,7 +815,30 @@ func parseBusinessFile(business Business, definition businessDefinition, data []
 				return businessFileConfig{}, fmt.Errorf("validate %s: unknown stage %q", definition.fileName, stageName)
 			}
 		}
-		for stageName, stageDefinition := range definition.stages {
+		requiredStages := []string{BusinessStageRecognize, BusinessStageDetail}
+		// Keep accepting the old recognize/outline/detail file shape during the
+		// migration. Once any independent strategy is configured, all three
+		// strategies are required so the preview never silently compares a
+		// mixture of new and legacy prompts.
+		independentStrategies := []string{
+			BusinessStageSingleFullContext,
+			BusinessStageParallel,
+			BusinessStageFullCoverage,
+		}
+		independentConfigured := false
+		for _, stageName := range independentStrategies {
+			if _, ok := file.Stages[stageName]; ok {
+				independentConfigured = true
+				break
+			}
+		}
+		if independentConfigured {
+			requiredStages = append(requiredStages, independentStrategies...)
+		} else {
+			requiredStages = append(requiredStages, BusinessStageOutline)
+		}
+		for _, stageName := range requiredStages {
+			stageDefinition := definition.stages[stageName]
 			stageFile, ok := file.Stages[stageName]
 			if !ok {
 				return businessFileConfig{}, fmt.Errorf("validate %s: stage %q is required", definition.fileName, stageName)
@@ -1076,6 +1169,38 @@ func (c *BusinessStageClient) GenerateJSONTemplateDetailed(ctx context.Context, 
 		return "", GenerateStats{}, err
 	}
 	return generateBusinessJSONDetailed(ctx, c.parent.business+"/"+Business(c.stage), snapshot, call, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+}
+
+// DescribeTemplate renders the exact prompt and exposes the non-secret
+// generation settings for a stage. It shares resolveCall/renderBusinessCall
+// with the actual request so the preview cannot drift from a hot-reloaded YAML
+// configuration.
+func (c *BusinessStageClient) DescribeTemplate(variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (TemplateMetadata, error) {
+	snapshot, call, err := c.resolveCall()
+	if err != nil {
+		return TemplateMetadata{}, err
+	}
+	system, user, err := renderBusinessCall(c.parent.business+"/"+Business(c.stage), call, variables, fallbackSystem, fallbackUserTemplate)
+	if err != nil {
+		return TemplateMetadata{}, err
+	}
+	temperature, maxTokens := snapshotLimits(call, fallbackTemperature, fallbackMaxCompletionTokens)
+	metadata := TemplateMetadata{
+		Source:              call.source,
+		Version:             call.version,
+		Model:               call.clientConfig.DefaultModel,
+		ReasoningEffort:     call.clientConfig.ReasoningEffort,
+		Temperature:         temperature,
+		MaxCompletionTokens: maxTokens,
+		TimeoutMS:           call.timeout.Milliseconds(),
+		SystemPrompt:        system,
+		UserPrompt:          user,
+	}
+	if metadata.TimeoutMS < 0 {
+		metadata.TimeoutMS = 0
+	}
+	_ = snapshot // retain the same snapshot/call resolution used by generation
+	return metadata, nil
 }
 
 func generateBusinessJSON(ctx context.Context, name Business, snapshot *businessSnapshot, call *businessCallSnapshot, variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (string, error) {

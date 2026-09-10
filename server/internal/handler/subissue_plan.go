@@ -26,8 +26,9 @@ type SubissuePlanSourceRequest struct {
 }
 
 type SuggestSubissuePlansResponse struct {
-	Plans             []service.SubissuePlan     `json:"plans"`
-	AncestorBriefRefs []service.AncestorBriefRef `json:"ancestor_brief_refs,omitempty"`
+	Plans             []service.SubissuePlan           `json:"plans"`
+	Diagnostics       []service.SubissuePlanDiagnostic `json:"diagnostics,omitempty"`
+	AncestorBriefRefs []service.AncestorBriefRef       `json:"ancestor_brief_refs,omitempty"`
 }
 
 type ExpandSubissuePlanRequest struct {
@@ -51,18 +52,15 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	client := h.subissuePlanLLM(llm.BusinessStageOutline)
-	if client == nil || !client.Enabled() {
-		writeError(w, http.StatusServiceUnavailable, "llm not configured")
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), service.SubissueSuggestTimeout)
 	defer cancel()
-	plans, err := service.SuggestSubissuePlans(
+	generation, err := service.SuggestSubissuePlansWithDiagnostics(
 		ctx,
 		service.SubissuePlanStages{
-			Plan:      client,
-			Recognize: h.subissuePlanLLM(llm.BusinessStageRecognize),
+			SingleFullContext: h.subissuePlanLLM(llm.BusinessStageSingleFullContext),
+			Parallel:          h.subissuePlanLLM(llm.BusinessStageParallel),
+			FullCoverage:      h.subissuePlanLLM(llm.BusinessStageFullCoverage),
+			Recognize:         h.subissuePlanLLM(llm.BusinessStageRecognize),
 		},
 		ctxData.sourceIssue,
 		ctxData.content,
@@ -80,7 +78,7 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to generate subissue plans")
 		return
 	}
-	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: plans, AncestorBriefRefs: func() []service.AncestorBriefRef {
+	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: generation.Plans, Diagnostics: generation.Diagnostics, AncestorBriefRefs: func() []service.AncestorBriefRef {
 		if req.CarryAncestorContext != nil && !*req.CarryAncestorContext {
 			return nil
 		}

@@ -225,7 +225,7 @@ stages:
 	}
 }
 
-func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
+func TestCheckedInSubissueConfigUsesThreeStrategiesAndDetail(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "docker", "config", "subissue-suggest.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -235,32 +235,33 @@ func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse checked-in subissue config: %v", err)
 	}
-	if len(parsed.Stages) != 3 {
-		t.Fatalf("checked-in config stages = %d, want 3", len(parsed.Stages))
+	if len(parsed.Stages) != 5 {
+		t.Fatalf("checked-in config stages = %d, want 5", len(parsed.Stages))
 	}
-	for _, stage := range []string{BusinessStageRecognize, BusinessStageOutline, BusinessStageDetail} {
+	for _, stage := range []string{
+		BusinessStageRecognize,
+		BusinessStageSingleFullContext,
+		BusinessStageParallel,
+		BusinessStageFullCoverage,
+		BusinessStageDetail,
+	} {
 		if parsed.Stages[stage] == nil {
 			t.Fatalf("checked-in config missing stage %q", stage)
 		}
 	}
-	outline := parsed.Stages[BusinessStageOutline]
-	if !strings.Contains(outline.Prompt.System, "business") || !strings.Contains(outline.Prompt.System, "整体流程") {
-		t.Fatal("outline prompt must explicitly require a concrete business and reserve overall-flow fallback")
-	}
-	if !strings.Contains(outline.Prompt.System, "identified_tasks") || !strings.Contains(outline.Prompt.System, "全量覆盖") {
-		t.Fatal("outline prompt must require the identified task list and the full-coverage first plan (SIY-147)")
-	}
-	for _, variable := range []string{"{{issue_description}}", "{{ancestor_brief}}", "{{business_context}}", "{{identified_tasks}}", "{{retry_feedback}}"} {
-		if !strings.Contains(outline.Prompt.UserTemplate, variable) {
-			t.Fatalf("outline prompt missing business context variable %q", variable)
+	for _, stage := range []string{BusinessStageSingleFullContext, BusinessStageParallel, BusinessStageFullCoverage} {
+		strategy := parsed.Stages[stage]
+		if !strings.Contains(strategy.Prompt.System, strategyNameForTest(stage)) {
+			t.Fatalf("%s prompt must name its strategy", stage)
 		}
-	}
-	// identified_tasks became a required schema key with the coverage gate.
-	if err := validateBusinessJSON(`{"plans":[{"name":"方案","items":[{"title":"任务","goal":"目标"}]}]}`, outline.Output.JSONSchema); err == nil {
-		t.Fatal("outline schema must require identified_tasks")
-	}
-	if err := validateBusinessJSON(`{"identified_tasks":[{"id":"t1","text":"任务"}],"plans":[{"name":"全量覆盖","items":[{"title":"任务","goal":"目标","business":"业务","source_task_ids":["t1"]}]}]}`, outline.Output.JSONSchema); err != nil {
-		t.Fatalf("outline schema must accept the coverage contract: %v", err)
+		for _, variable := range []string{"{{issue_description}}", "{{ancestor_brief}}", "{{business_context}}", "{{identified_tasks}}", "{{retry_feedback}}"} {
+			if !strings.Contains(strategy.Prompt.UserTemplate, variable) {
+				t.Fatalf("%s prompt missing business context variable %q", stage, variable)
+			}
+		}
+		if err := validateBusinessJSON(`{"name":"方案","items":[{"title":"任务","goal":"目标","business":"业务","source_task_ids":["t1"]}]}`, strategy.Output.JSONSchema); err != nil {
+			t.Fatalf("%s schema must accept the strategy contract: %v", stage, err)
+		}
 	}
 	recognize := parsed.Stages[BusinessStageRecognize]
 	for _, variable := range []string{"{{comment_segment}}", "{{segment_index}}", "{{segment_total}}", "{{retry_feedback}}"} {
@@ -274,6 +275,19 @@ func TestCheckedInSubissueConfigUsesBothStages(t *testing.T) {
 	detail := parsed.Stages[BusinessStageDetail]
 	if !strings.Contains(detail.Prompt.UserTemplate, "{{retry_feedback}}") {
 		t.Fatal("detail prompt must carry retry feedback for coverage retries")
+	}
+}
+
+func strategyNameForTest(stage string) string {
+	switch stage {
+	case BusinessStageSingleFullContext:
+		return "单条全覆盖（上下文）"
+	case BusinessStageParallel:
+		return "并行优先"
+	case BusinessStageFullCoverage:
+		return "全量覆盖"
+	default:
+		return ""
 	}
 }
 

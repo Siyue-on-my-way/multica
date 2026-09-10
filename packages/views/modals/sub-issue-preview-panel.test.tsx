@@ -67,6 +67,28 @@ describe("SubIssuePreviewModal", () => {
         { id: "plan-1", name: "Context first", coverage: "full" as const, items: [{ id: "plan-1-item-1", title: "Combined", goal: "Combined" }] },
         twoItemPlan,
       ],
+      diagnostics: [{
+        plan_id: "plan-1",
+        strategy: "single_full_context",
+        name: "Context first",
+        source: "file",
+        version: 1,
+        model: "gemini-3.1-pro-preview",
+        reasoning_effort: "high",
+        temperature: 0.4,
+        max_completion_tokens: 8192,
+        timeout_ms: 120000,
+        system_prompt: "System prompt for the selected plan",
+        user_prompt: "User prompt with the original comment",
+        raw_output: '{"name":"Context first","items":[]}',
+        input_chars: 1234,
+        output_chars: 567,
+        prompt_tokens: 321,
+        completion_tokens: 123,
+        total_tokens: 444,
+        finish_reason: "stop",
+        attempt: 1,
+      }],
     });
     mockExpandPlan.mockResolvedValue({
       subissues: [
@@ -87,6 +109,20 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.getAllByDisplayValue("Combined").length).toBeGreaterThan(0);
     expect(screen.getByText("Full coverage")).toBeInTheDocument();
     expect(screen.queryByText("Reference granularity only")).not.toBeInTheDocument();
+  });
+
+  it("shows the selected strategy model, usage and prompts", async () => {
+    renderModal();
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("Context first")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Call details/ }));
+
+    expect(screen.getAllByText("gemini-3.1-pro-preview").length).toBeGreaterThan(0);
+    expect(screen.getByText("1234")).toBeInTheDocument();
+    expect(screen.getByText("System prompt for the selected plan")).toBeInTheDocument();
+    expect(screen.getByText("User prompt with the original comment")).toBeInTheDocument();
+    expect(screen.getByText('{"name":"Context first","items":[]}')).toBeInTheDocument();
   });
 
   it("flags a reference plan when the user switches to it", async () => {
