@@ -3,6 +3,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TimelineEntry } from "@multica/core/types";
 import { useCommentCollapseStore } from "@multica/core/issues/stores";
+import { useModalStore } from "@multica/core/modals";
 import { renderWithI18n } from "../../test/i18n";
 
 vi.mock("../../navigation", () => ({
@@ -57,6 +58,7 @@ function makeEntry(overrides: Partial<TimelineEntry> = {}): TimelineEntry {
     actor_id: "user-1",
     content: "Question body",
     type: "comment",
+    comment_type: "comment",
     created_at: "2026-07-01T00:00:00Z",
     updated_at: "2026-07-01T00:00:00Z",
     attachments: [],
@@ -111,6 +113,7 @@ function getRootMenuTrigger() {
 
 beforeEach(() => {
   useCommentCollapseStore.setState({ collapsedByIssue: {} });
+  useModalStore.getState().close();
 });
 
 describe("CommentCard — layered fold state (MUL-5711)", () => {
@@ -192,5 +195,43 @@ describe("CommentCard — layered fold state (MUL-5711)", () => {
     // the menu (bypassing the chevron) must not mount into a hidden section.
     expect(getBodyElement("root-1")).not.toBeNull();
     expect(screen.getByTestId("editor")).toBeInTheDocument();
+  });
+});
+
+describe("CommentCard — sub-issue suggestions", () => {
+  it("opens the generator for a member-authored thread root", async () => {
+    renderCard(makeEntry());
+
+    fireEvent.click(getRootMenuTrigger());
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Generate sub-issues" }));
+
+    expect(useModalStore.getState()).toMatchObject({
+      modal: "suggest-subissues",
+      data: { issueId: ISSUE_ID, commentId: "root-1" },
+    });
+  });
+
+  it("opens the generator for a member-authored reply", async () => {
+    const reply = makeEntry({ id: "reply-1", parent_id: "root-1", content: "Reply body" });
+    renderCard(makeEntry(), [reply]);
+
+    const triggers = document.querySelectorAll('button[aria-haspopup="menu"]');
+    const replyMenuTrigger = triggers.item(1);
+    if (!replyMenuTrigger) throw new Error("Expected the reply comment actions menu trigger");
+    fireEvent.click(replyMenuTrigger);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Generate sub-issues" }));
+
+    expect(useModalStore.getState()).toMatchObject({
+      modal: "suggest-subissues",
+      data: { issueId: ISSUE_ID, commentId: "reply-1" },
+    });
+  });
+
+  it("does not offer the generator for system comments", async () => {
+    renderCard(makeEntry({ actor_type: "agent", comment_type: "system" }));
+
+    fireEvent.click(getRootMenuTrigger());
+
+    expect(screen.queryByRole("menuitem", { name: "Generate sub-issues" })).toBeNull();
   });
 });

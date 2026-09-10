@@ -785,7 +785,7 @@ function CommentRow({
                   <Copy className="h-3.5 w-3.5" />
                   {t(($) => $.comment.copy_action)}
                 </DropdownMenuItem>
-                {entry.actor_type === "agent" && (
+                {entry.comment_type === "comment" && (
                   <DropdownMenuItem onClick={() => openModal("suggest-subissues", { issueId, commentId: entry.id })}>
                     <ListTree className="h-3.5 w-3.5" />
                     {t(($) => $.comment.generate_subissues_action)}
@@ -1162,7 +1162,7 @@ function CommentCardImpl({
                         <Copy className="h-3.5 w-3.5" />
                         {t(($) => $.comment.copy_action)}
                       </DropdownMenuItem>
-                      {entry.actor_type === "agent" && (
+                      {entry.comment_type === "comment" && (
                         <DropdownMenuItem onClick={() => openModal("suggest-subissues", { issueId, commentId: entry.id })}>
                           <ListTree className="h-3.5 w-3.5" />
                           {t(($) => $.comment.generate_subissues_action)}
