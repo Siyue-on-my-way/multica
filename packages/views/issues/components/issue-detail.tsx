@@ -738,7 +738,7 @@ function SubIssueRow({
     <IssueActionsContextMenu issue={child}>
       <div
         className={cn(
-          "flex min-w-0 items-center gap-2 px-2 py-2 hover:bg-accent/50 transition-colors group/row",
+          "flex min-w-0 items-start gap-2 px-2 py-2 hover:bg-accent/50 transition-colors group/row",
           selected && "bg-accent/30",
         )}
       >
@@ -785,16 +785,17 @@ function SubIssueRow({
         />
         <AppLink
           href={paths.issueDetail(child.id)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2.5"
+          className="flex min-w-0 flex-1 items-start gap-1.5 sm:gap-2.5"
         >
           <span className="text-micro text-muted-foreground tabular-nums font-medium shrink-0">
             {child.identifier}
           </span>
           <IssueAgentActivityIndicator issueId={child.id} />
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span className="flex min-w-0 flex-1 items-start gap-1.5">
             <span
+              title={child.title}
               className={cn(
-                "text-body truncate",
+                "text-body line-clamp-2 leading-snug",
                 isDone
                   ? "text-muted-foreground"
                   : "group-hover/row:text-foreground",
@@ -2665,25 +2666,30 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${parentIssueOpen ? "rotate-90" : ""}`} />
           </button>
           {parentIssueOpen && <div className="pl-2">
-            <div className="flex items-center gap-0.5 rounded-md px-2 -mx-2 hover:bg-accent/50 transition-colors group">
+            <div className="flex items-start gap-0.5 rounded-md px-2 -mx-2 hover:bg-accent/50 transition-colors group">
               <AppLink
                 href={paths.issueDetail(parentIssue.id)}
-                className="flex flex-1 min-w-0 items-center gap-1.5 py-1.5 text-caption"
+                className="flex flex-1 min-w-0 items-start gap-1.5 py-1.5 text-caption"
               >
                 <StatusIcon
                   status={parentIssue.status}
                   category={issueStatusCategory(parentIssue) ?? undefined}
-                  className="h-3.5 w-3.5 shrink-0"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
                 />
                 <span className="text-muted-foreground shrink-0">{parentIssue.identifier}</span>
-                <span className="truncate group-hover:text-foreground">{parentIssue.title}</span>
+                <span
+                  title={parentIssue.title}
+                  className="line-clamp-2 group-hover:text-foreground"
+                >
+                  {parentIssue.title}
+                </span>
               </AppLink>
               <button
                 type="button"
                 title={t(($) => $.actions.remove_parent_issue)}
                 aria-label={t(($) => $.actions.remove_parent_issue)}
                 onClick={() => actions.removeParent()}
-                className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                className="shrink-0 self-center rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               >
                 <Unlink className="h-3.5 w-3.5" />
               </button>

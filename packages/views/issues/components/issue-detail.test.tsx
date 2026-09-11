@@ -2153,17 +2153,19 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      // Sub-issues render in both the main content flow and the sidebar, so
+      // every row assertion must tolerate the duplicated surfaces.
+      await screen.findAllByText("Fix login flow");
       // Label chips ride inside the row link.
-      expect(screen.getByText("backend")).toBeInTheDocument();
-      expect(screen.getByText("auth")).toBeInTheDocument();
+      expect(screen.getAllByText("backend").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("auth").length).toBeGreaterThan(0);
       // Nested own-children progress for child-1 only (header shows 0/2).
-      expect(await screen.findByText("1/3")).toBeInTheDocument();
+      expect((await screen.findAllByText("1/3")).length).toBeGreaterThan(0);
       // Overdue open issue renders its due date in the destructive tone.
-      const due = screen.getByText("Jan 1");
+      const due = screen.getAllByText("Jan 1")[0]!;
       expect(due.closest("span")?.className).toContain("text-destructive");
       // Bare row shows no due date / no progress chip of its own.
-      const bareRow = screen.getByText("Ship dashboards").closest("a");
+      const bareRow = screen.getAllByText("Ship dashboards")[0]!.closest("a");
       expect(bareRow?.textContent).not.toContain("/");
     });
 
@@ -2190,7 +2192,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       expect(screen.queryByText("backend")).not.toBeInTheDocument();
       expect(screen.queryByText("Jan 1")).not.toBeInTheDocument();
     });
@@ -2232,10 +2234,17 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
-      // Chip renders only on the row that has a value for the property.
-      expect(await screen.findByText("Sprint 3")).toBeInTheDocument();
-      expect(screen.getAllByText("Sprint 3")).toHaveLength(1);
+      await screen.findAllByText("Fix login flow");
+      // Chip renders only on the row that has a value for the property (one
+      // copy per surface: sidebar + main content flow).
+      const chips = await screen.findAllByText("Sprint 3");
+      expect(chips.length).toBeGreaterThan(0);
+      for (const chip of chips) {
+        expect(chip.closest("a")).toHaveAttribute(
+          "href",
+          expect.stringContaining("child-1"),
+        );
+      }
     });
 
     it("mutes the due date on done sub-issues even when past", async () => {
@@ -2254,10 +2263,61 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Wrapped up");
-      const due = screen.getByText("Jan 1");
+      await screen.findAllByText("Wrapped up");
+      const due = screen.getAllByText("Jan 1")[0]!;
       expect(due.closest("span")?.className).not.toContain("text-destructive");
       expect(due.closest("span")?.className).toContain("text-muted-foreground");
+    });
+
+    it("clamps long sub-issue titles to two lines with a native hover title", async () => {
+      const longTitle = "A very long sub-issue title that should clamp after two lines";
+      mockApiObj.listChildIssues.mockResolvedValue({
+        issues: [
+          subIssue({
+            id: "child-1",
+            number: 11,
+            identifier: "TES-11",
+            title: longTitle,
+          }),
+        ],
+      });
+
+      renderIssueDetail();
+
+      // Both the sidebar and the main content flow mount SubIssueRow, and the
+      // two-line clamp must hold on every copy.
+      const titles = await screen.findAllByTitle(longTitle);
+      expect(titles.length).toBeGreaterThan(0);
+      for (const title of titles) {
+        expect(title).toHaveClass("line-clamp-2");
+        expect(title).not.toHaveClass("truncate");
+      }
+    });
+  });
+
+  describe("sidebar parent row", () => {
+    it("clamps the parent row title to two lines with a native hover title", async () => {
+      const parentTitle = "A very long parent task title that should clamp after two lines";
+      const parentIssue: Issue = {
+        ...mockIssue,
+        id: "parent-1",
+        number: 9,
+        identifier: "TES-9",
+        title: parentTitle,
+        parent_issue_id: null,
+      };
+      const issueWithParent: Issue = { ...mockIssue, parent_issue_id: "parent-1" };
+      mockApiObj.getIssue.mockImplementation((issueId: string) =>
+        Promise.resolve(issueId === "parent-1" ? parentIssue : issueWithParent),
+      );
+
+      renderIssueDetail();
+
+      // Only the sidebar parent row carries the native hover title; the
+      // compact in-content parent link keeps its single-line display.
+      const title = await screen.findByTitle(parentTitle);
+      expect(title).toHaveClass("line-clamp-2");
+      expect(title).not.toHaveClass("truncate");
     });
   });
 
