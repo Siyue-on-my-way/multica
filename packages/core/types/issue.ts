@@ -198,14 +198,17 @@ export interface ExecutionContextEntry {
 }
 
 /**
- * One issue's persisted execution context. `inherit` is the "继承给后代
- * issue" switch (the create form defaults it on): when true, this issue's
- * entries flow into every descendant's resolved context.
+ * One issue's persisted execution context. `content` is the free-form
+ * longtext users write in the create form (SIY-177 feedback) — whatever they
+ * want every descendant to inherit. `inherit` is the "继承给后代 issue"
+ * switch (the create form defaults it on): when true, this issue's content
+ * and entries flow into every descendant's resolved context.
  */
 export interface ExecutionContext {
   version: number;
   inherit: boolean;
-  entries: ExecutionContextEntry[];
+  content?: string;
+  entries?: ExecutionContextEntry[];
 }
 
 /** Where a resolved entry came from; issue_id + version is the dedup key. */
@@ -223,9 +226,16 @@ export interface ResolvedExecutionContextEntry extends ExecutionContextEntry {
   source_issue_id?: string;
 }
 
+/** One free-form inherited longtext block, with its writer's provenance. */
+export interface ResolvedContent {
+  text: string;
+  source_issue_id?: string;
+}
+
 /** The merged, de-duplicated view a run of an issue receives. */
 export interface ResolvedExecutionContext {
   entries: ResolvedExecutionContextEntry[];
+  contents?: ResolvedContent[];
   sources: ExecutionContextSource[];
 }
 

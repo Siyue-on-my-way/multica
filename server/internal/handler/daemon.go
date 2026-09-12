@@ -3269,6 +3269,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					r.Context(), h.Queries, issueForCtx, ws.IssuePrefix, nil,
 				)
 				resp.ExecutionContextEntries = resolved.Entries
+				resp.ExecutionContextContents = resolved.Contents
 				resp.ExecutionContextSources = resolved.Sources
 			}
 		}

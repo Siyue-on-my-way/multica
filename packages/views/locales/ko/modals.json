@@ -117,7 +117,11 @@
     "ancestor_context_hint": "기본 사용：상위 Issue의 제목과 설명만 포함하며, 토론 내용은 포함하지 않습니다."
   },
   "execution_context": {
-    "add_entry": "항목 추가",
+    "content_block_label": "{{source}}에서",
+    "content_collapse": "접기",
+    "content_expand": "펼치기",
+    "content_filled": "입력됨",
+    "content_placeholder": "저장소 URL: https://github.com/your-org/your-repo\n코드 디렉터리:\n  Linux: /mnt/.../your-repo\n  macOS: /Users/you/work/your-repo\n  Windows: D:\\work\\your-repo\n시작 명령: ./restart.sh\n테스트 명령: pnpm test\n제약: 커밋 전 기존 테스트 실행",
     "entry_count": "{{count}}개 항목",
     "inherit_label": "하위 issue에 상속",
     "inherited_empty": "상속할 실행 컨텍스트가 없습니다",
@@ -128,17 +132,13 @@
     "kind_constraint": "제약",
     "kind_repo": "저장소",
     "kind_resource": "리소스",
-    "label_placeholder": "이름 (예: 백엔드)",
-    "os_all": "전체 OS",
     "own_title": "이 issue 전용 실행 컨텍스트",
-    "remove_entry": "항목 삭제",
     "section_hint": "이 issue의 모든 하위 issue에 자동 주입되며, 수정 시 이후 작업에 영향을 줍니다",
     "section_title": "실행 컨텍스트",
     "sensitive_warning": "비밀번호, 토큰 등 민감한 정보는 입력하지 마세요",
     "source_label": "{{source}}에서",
     "source_project": "프로젝트 리소스",
-    "task_description_caption": "작업 설명(이 issue만)",
-    "value_placeholder": "저장소 URL, 경로, 명령 또는 제약"
+    "task_description_caption": "작업 설명(이 issue만)"
   },
   "run_confirm": {
     "title_assign": "할당을 확인할까요?",

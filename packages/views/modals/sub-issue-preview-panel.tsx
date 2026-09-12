@@ -609,9 +609,9 @@ export function SubIssuePreviewModal({
                   <span className="text-body font-medium">
                     {t(($) => $.execution_context.own_title)}
                   </span>
-                  {ownExecutionContext.entries.length > 0 && (
+                  {ownExecutionContext.content.trim().length > 0 && (
                     <span className="text-caption text-muted-foreground">
-                      {t(($) => $.execution_context.entry_count, { count: ownExecutionContext.entries.length })}
+                      {t(($) => $.execution_context.content_filled)}
                     </span>
                   )}
                 </CollapsibleTrigger>

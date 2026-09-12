@@ -1011,9 +1011,9 @@ export function ManualCreatePanel({
                   <span className="text-caption font-medium">
                     {t(($) => $.execution_context.section_title)}
                   </span>
-                  {executionContext.entries.length > 0 && (
+                  {executionContext.content.trim().length > 0 && (
                     <span className="text-caption text-muted-foreground">
-                      {t(($) => $.execution_context.entry_count, { count: executionContext.entries.length })}
+                      {t(($) => $.execution_context.content_filled)}
                     </span>
                   )}
                 </CollapsibleTrigger>

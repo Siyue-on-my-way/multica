@@ -44,9 +44,15 @@ const (
 	ExecutionContextMaxEntries    = 32
 	ExecutionContextValueMaxRunes = 2000
 	ExecutionContextLabelMaxRunes = 120
-	ExecutionContextVersionMax    = 1 << 30
-	ExecutionContextChainMaxDepth = ancestorBriefMaxDepth
-	executionContextJSONMaxBytes  = 256 << 10
+	// ExecutionContextContentMaxRunes bounds the free-form longtext the create
+	// form carries (SIY-177 feedback: users write whatever they want to
+	// inherit, not a rigid entry list). Comfortably larger than any real
+	// setup text, small enough that a pathological ancestor cannot tax the
+	// subtree's prompt budget.
+	ExecutionContextContentMaxRunes = 20000
+	ExecutionContextVersionMax      = 1 << 30
+	ExecutionContextChainMaxDepth   = ancestorBriefMaxDepth
+	executionContextJSONMaxBytes    = 256 << 10
 )
 
 var executionContextKinds = map[string]struct{}{
@@ -68,9 +74,16 @@ type ExecutionContextEntry struct {
 }
 
 // ExecutionContext is the persisted document.
+//
+// Content is the free-form longtext users write in the create form — whatever
+// they want every descendant to inherit (repo URLs, per-OS directories,
+// commands, constraints, anything). Entries remain the structured, OS-scoped
+// form used by programmatic writers and synthesized project resources; a
+// document may carry either or both.
 type ExecutionContext struct {
 	Version int                     `json:"version"`
 	Inherit bool                    `json:"inherit"`
+	Content string                  `json:"content,omitempty"`
 	Entries []ExecutionContextEntry `json:"entries,omitempty"`
 }
 
@@ -100,17 +113,27 @@ type ExecutionContextEntryResolved struct {
 	SourceIssueID string `json:"source_issue_id,omitempty"`
 }
 
+// ResolvedContent is one free-form content block that won the merge: the
+// text plus the provenance of the chain node that wrote it. Identical text
+// re-asserted deeper in the chain collapses onto the root-most occurrence.
+type ResolvedContent struct {
+	Text          string `json:"text"`
+	SourceIssueID string `json:"source_issue_id,omitempty"`
+}
+
 // ResolvedExecutionContext is the merged, de-duplicated view delivered to the
 // preview panel and (as entries + sources) on the claim wire.
 type ResolvedExecutionContext struct {
-	Entries []ExecutionContextEntryResolved `json:"entries"`
-	Sources []ExecutionContextSource        `json:"sources"`
+	Entries  []ExecutionContextEntryResolved `json:"entries"`
+	Contents []ResolvedContent               `json:"contents,omitempty"`
+	Sources  []ExecutionContextSource        `json:"sources"`
 }
 
-// Empty reports whether the resolution carries nothing at all — no entries
-// and no sources — so the preview panel can skip the inherited-context card.
+// Empty reports whether the resolution carries nothing at all — no entries,
+// no contents and no sources — so the preview panel can skip the
+// inherited-context card.
 func (r ResolvedExecutionContext) Empty() bool {
-	return len(r.Entries) == 0 && len(r.Sources) == 0
+	return len(r.Entries) == 0 && len(r.Contents) == 0 && len(r.Sources) == 0
 }
 
 // ParseExecutionContext tolerantly decodes the persisted JSONB. NULL/absent
@@ -132,6 +155,7 @@ func parseExecutionContextWithInherit(raw []byte, defaultInherit bool) Execution
 	var doc struct {
 		Version *int                    `json:"version"`
 		Inherit *bool                   `json:"inherit"`
+		Content *string                 `json:"content"`
 		Entries []ExecutionContextEntry `json:"entries"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &doc); err != nil {
@@ -143,6 +167,9 @@ func parseExecutionContextWithInherit(raw []byte, defaultInherit bool) Execution
 	}
 	if doc.Version != nil && *doc.Version > 0 {
 		out.Version = minInt(*doc.Version, ExecutionContextVersionMax)
+	}
+	if doc.Content != nil {
+		out.Content = clampRunes(strings.TrimSpace(*doc.Content), ExecutionContextContentMaxRunes)
 	}
 	out.Entries = normalizeExecutionContextEntries(doc.Entries)
 	return out
@@ -265,7 +292,10 @@ type ExecutionContextChainNode struct {
 // shared first). Entries are keyed by kind+label: a later node with the same
 // key but different content overrides the earlier entry (and moves its
 // provenance); an identical re-assertion collapses onto the earlier occurrence
-// so the entry is injected exactly once.
+// so the entry is injected exactly once. Content blocks follow the same
+// collapse rule on exact text: a descendant re-asserting its ancestor's text
+// verbatim adds nothing; different text survives as an additional block, each
+// with its own provenance.
 func ResolveExecutionContextChain(nodes []ExecutionContextChainNode) ResolvedExecutionContext {
 	type keyed struct {
 		entry  ExecutionContextEntryResolved
@@ -273,6 +303,12 @@ func ResolveExecutionContextChain(nodes []ExecutionContextChainNode) ResolvedExe
 	}
 	order := make([]string, 0, len(nodes))
 	byKey := make(map[string]keyed)
+	type contentBlock struct {
+		resolved ResolvedContent
+		source   ExecutionContextSource
+	}
+	contents := make([]contentBlock, 0, len(nodes))
+	contentSeen := make(map[string]struct{}, len(nodes))
 
 	for _, node := range nodes {
 		if !node.Apply {
@@ -284,6 +320,15 @@ func ResolveExecutionContextChain(nodes []ExecutionContextChainNode) ResolvedExe
 			Title:      node.Title,
 			Version:    node.Context.Version,
 			UpdatedAt:  node.UpdatedAt,
+		}
+		if text := strings.TrimSpace(node.Context.Content); text != "" {
+			if _, ok := contentSeen[text]; !ok {
+				contentSeen[text] = struct{}{}
+				contents = append(contents, contentBlock{
+					resolved: ResolvedContent{Text: text, SourceIssueID: node.IssueID},
+					source:   source,
+				})
+			}
 		}
 		for _, entry := range node.Context.Entries {
 			key := entry.Kind + "\x00" + strings.ToLower(entry.Label)
@@ -302,18 +347,25 @@ func ResolveExecutionContextChain(nodes []ExecutionContextChainNode) ResolvedExe
 	}
 
 	resolved := ResolvedExecutionContext{
-		Entries: make([]ExecutionContextEntryResolved, 0, len(order)),
-		Sources: make([]ExecutionContextSource, 0),
+		Entries:  make([]ExecutionContextEntryResolved, 0, len(order)),
+		Contents: make([]ResolvedContent, 0, len(contents)),
+		Sources:  make([]ExecutionContextSource, 0),
 	}
-	sourceSeen := make(map[string]struct{}, len(order))
+	sourceSeen := make(map[string]struct{}, len(order)+len(contents))
+	appendSource := func(source ExecutionContextSource) {
+		if _, ok := sourceSeen[source.IssueID]; !ok {
+			sourceSeen[source.IssueID] = struct{}{}
+			resolved.Sources = append(resolved.Sources, source)
+		}
+	}
+	for _, block := range contents {
+		resolved.Contents = append(resolved.Contents, block.resolved)
+		appendSource(block.source)
+	}
 	for _, key := range order {
 		item := byKey[key]
 		resolved.Entries = append(resolved.Entries, item.entry)
-		sourceKey := item.source.IssueID
-		if _, ok := sourceSeen[sourceKey]; !ok {
-			sourceSeen[sourceKey] = struct{}{}
-			resolved.Sources = append(resolved.Sources, item.source)
-		}
+		appendSource(item.source)
 	}
 	return resolved
 }

@@ -28,17 +28,21 @@ import { useT } from "../../i18n";
 // IssueExecutionContextSection renders the structured execution context on the
 // issue detail page (SIY-177): the issue's own document (with its inherit
 // switch state, editable via a focused dialog) plus the merged chain view a
-// run of this issue receives. The inherited half is fetched only when the
-// user expands it — the merged view costs a chain walk the detail page does
-// not otherwise need.
+// run of this issue receives. The own longtext clamps to its first two lines
+// until expanded (SIY-177 feedback: long inheritance text must not take over
+// the issue page). The inherited half is fetched only when the user expands
+// it — the merged view costs a chain walk the detail page does not otherwise
+// need.
 export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
   const { t } = useT("issues");
   const [expanded, setExpanded] = useState(false);
+  const [contentExpanded, setContentExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ExecutionContextEditorValue | null>(null);
   const updateIssue = useUpdateIssue();
 
   const own = issue.execution_context ?? null;
+  const content = own?.content ?? "";
   const { data: resolved } = useQuery({
     queryKey: ["issue-execution-context", issue.id],
     queryFn: () => api.getIssueExecutionContext(issue.id),
@@ -46,7 +50,7 @@ export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
   });
 
   const openEditor = () => {
-    setDraft(own ? { entries: [...own.entries], inherit: own.inherit } : emptyExecutionContextEditorValue());
+    setDraft(own ? { content: own.content ?? "", inherit: own.inherit } : emptyExecutionContextEditorValue());
     setEditing(true);
   };
 
@@ -64,7 +68,7 @@ export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
     }
   };
 
-  const ownEntries = own?.entries ?? [];
+  const hasOwnContent = content.trim().length > 0;
 
   return (
     <div className="mt-3 flex flex-col gap-2">
@@ -104,27 +108,33 @@ export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
 
       {expanded && (
         <>
-          {ownEntries.length > 0 && (
-            <ul className="flex flex-col gap-1">
-              {ownEntries.map((entry, index) => (
-                <li key={index} className="flex min-w-0 items-center gap-1.5 text-caption">
-                  <Badge variant="secondary" className="shrink-0">
-                    {entry.kind}
-                    {entry.os ? ` · ${entry.os}` : ""}
-                  </Badge>
-                  <span className="min-w-0 flex-1 break-all">
-                    {entry.label ? `${entry.label}: ` : ""}
-                    {entry.value}
-                  </span>
-                </li>
-              ))}
-            </ul>
+          {hasOwnContent && (
+            <div className="rounded-md border border-border/50 p-2">
+              <pre
+                className={`whitespace-pre-wrap break-words font-sans text-caption ${
+                  contentExpanded ? "" : "line-clamp-2"
+                }`}
+              >
+                {content}
+              </pre>
+              {content.split("\n").length > 2 && (
+                <button
+                  type="button"
+                  className="mt-1 text-caption text-primary hover:underline"
+                  onClick={() => setContentExpanded((value) => !value)}
+                >
+                  {contentExpanded
+                    ? t(($) => $.execution_context_detail.collapse)
+                    : t(($) => $.execution_context_detail.expand)}
+                </button>
+              )}
+            </div>
           )}
           <div>
             <div className="mb-1 text-caption text-muted-foreground">
               {t(($) => $.execution_context_detail.resolved_title)}
             </div>
-            <InheritedExecutionContextCard resolved={resolvedToCard(resolved)} defaultOpen />
+            <InheritedExecutionContextCard resolved={dataToCard(resolved)} defaultOpen />
           </div>
         </>
       )}
@@ -151,7 +161,7 @@ export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
   );
 }
 
-function resolvedToCard(
+function dataToCard(
   data: { own: ExecutionContext; inherited: ResolvedExecutionContext } | undefined,
 ): ResolvedExecutionContext | null {
   return data?.inherited ?? null;

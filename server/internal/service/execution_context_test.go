@@ -227,3 +227,47 @@ func TestProjectResourceExecutionEntries(t *testing.T) {
 		t.Fatalf("project entries = %+v", entries)
 	}
 }
+
+func TestParseExecutionContextContentClamped(t *testing.T) {
+	long := strings.Repeat("长", ExecutionContextContentMaxRunes+10)
+	doc := ParseExecutionContext(mustMarshal(t, ExecutionContext{Content: "  " + long + "  \n"}))
+	if len([]rune(doc.Content)) != ExecutionContextContentMaxRunes {
+		t.Fatalf("content must clamp to %d runes, got %d", ExecutionContextContentMaxRunes, len([]rune(doc.Content)))
+	}
+	if strings.HasSuffix(doc.Content, "\n") {
+		t.Fatalf("content must be trimmed at the ends")
+	}
+}
+
+// TestResolveExecutionContextChainContentCollapse covers the SIY-177 feedback:
+// the free-form longtext blocks follow the same once-only rule — a descendant
+// re-asserting the root's text verbatim collapses, different text survives as
+// an additional block with its own provenance, and an ancestor with
+// inheritance off contributes nothing.
+func TestResolveExecutionContextChainContentCollapse(t *testing.T) {
+	rootText := "仓库地址：https://github.com/acme/widget\n启动：./restart.sh"
+	nodes := []ExecutionContextChainNode{
+		{IssueID: "root", Identifier: "SIY-1", Context: ExecutionContext{Version: 1, Inherit: true, Content: rootText}, Apply: true},
+		{IssueID: "child", Identifier: "SIY-2", Context: ExecutionContext{Version: 1, Inherit: true, Content: rootText}, Apply: true},
+		{IssueID: "grandchild", Identifier: "SIY-3", Context: ExecutionContext{Version: 2, Inherit: false, Content: "孙级专属：npm run dev"}, Apply: true},
+		{IssueID: "silent", Identifier: "SIY-4", Context: ExecutionContext{Version: 1, Inherit: true, Content: "不参与继承"}, Apply: false},
+	}
+
+	resolved := ResolveExecutionContextChain(nodes)
+	if len(resolved.Contents) != 2 {
+		t.Fatalf("identical text must collapse and the silent node must drop, got %+v", resolved.Contents)
+	}
+	if resolved.Contents[0].Text != rootText || resolved.Contents[0].SourceIssueID != "root" {
+		t.Fatalf("root content provenance wrong: %+v", resolved.Contents[0])
+	}
+	if resolved.Contents[1].Text != "孙级专属：npm run dev" || resolved.Contents[1].SourceIssueID != "grandchild" {
+		t.Fatalf("grandchild content wrong: %+v", resolved.Contents[1])
+	}
+	// Sources: root first (v1), then grandchild (v2) — the silent node absent.
+	if len(resolved.Sources) != 2 || resolved.Sources[0].Version != 1 || resolved.Sources[1].Version != 2 {
+		t.Fatalf("sources = %+v", resolved.Sources)
+	}
+	if resolved.Empty() {
+		t.Fatalf("content-only resolution is not empty")
+	}
+}

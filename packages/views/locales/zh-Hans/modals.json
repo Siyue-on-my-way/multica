@@ -117,7 +117,11 @@
     "diagnostics_raw_output": "原始 JSON"
   },
   "execution_context": {
-    "add_entry": "添加条目",
+    "content_block_label": "来自 {{source}}",
+    "content_collapse": "收起",
+    "content_expand": "展开",
+    "content_filled": "已填写",
+    "content_placeholder": "仓库地址：https://github.com/your-org/your-repo\n代码目录：\n  Linux: /mnt/.../your-repo\n  macOS: /Users/you/work/your-repo\n  Windows: D:\\work\\your-repo\n启动命令：./restart.sh\n测试命令：pnpm test\n运行约束：提交前先跑通现有测试",
     "entry_count": "{{count}} 条",
     "inherit_label": "继承给后代 issue",
     "inherited_empty": "没有可继承的执行上下文",
@@ -128,17 +132,13 @@
     "kind_constraint": "约束",
     "kind_repo": "仓库",
     "kind_resource": "资源",
-    "label_placeholder": "名称（如：后端仓库）",
-    "os_all": "全部系统",
     "own_title": "本 issue 专属执行上下文",
-    "remove_entry": "移除条目",
     "section_hint": "会自动注入当前 issue 的所有子孙 issue；修改可能影响后续任务",
     "section_title": "执行上下文",
     "sensitive_warning": "禁止填写密码、Token、密钥等敏感信息",
     "source_label": "来自 {{source}}",
     "source_project": "项目资源",
-    "task_description_caption": "任务描述（仅当前 issue）",
-    "value_placeholder": "仓库地址、路径、命令或约束"
+    "task_description_caption": "任务描述（仅当前 issue）"
   },
   "run_confirm": {
     "title_assign": "确认指派？",

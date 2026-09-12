@@ -120,7 +120,11 @@
     "diagnostics_raw_output": "Raw JSON"
   },
   "execution_context": {
-    "add_entry": "Add entry",
+    "content_block_label": "from {{source}}",
+    "content_collapse": "Show less",
+    "content_expand": "Show more",
+    "content_filled": "filled",
+    "content_placeholder": "Repo URL: https://github.com/your-org/your-repo\nCode directories:\n  Linux: /mnt/.../your-repo\n  macOS: /Users/you/work/your-repo\n  Windows: D:\\work\\your-repo\nStart command: ./restart.sh\nTest command: pnpm test\nConstraints: run the existing test suite before committing",
     "entry_count": "{{count}} entries",
     "inherit_label": "Inherit to descendant issues",
     "inherited_empty": "No execution context to inherit",
@@ -131,17 +135,13 @@
     "kind_constraint": "Constraint",
     "kind_repo": "Repo",
     "kind_resource": "Resource",
-    "label_placeholder": "Label (e.g. monorepo backend)",
-    "os_all": "All OS",
     "own_title": "Issue-specific execution context",
-    "remove_entry": "Remove entry",
     "section_hint": "Injected into every descendant issue of this one; edits affect future tasks",
     "section_title": "Execution context",
     "sensitive_warning": "Never enter passwords, tokens or other secrets here",
     "source_label": "from {{source}}",
     "source_project": "Project resources",
-    "task_description_caption": "Task description (this issue only)",
-    "value_placeholder": "Repo URL, path, command or constraint"
+    "task_description_caption": "Task description (this issue only)"
   },
   "run_confirm": {
     "title_assign": "Confirm assignment?",

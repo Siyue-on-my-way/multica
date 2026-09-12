@@ -373,9 +373,11 @@
   },
   "execution_context_detail": {
     "cancel": "キャンセル",
+    "collapse": "折りたたむ",
     "edit": "編集",
     "edit_title": "実行コンテキストを編集",
     "empty_hint": "未設定",
+    "expand": "すべて表示",
     "inherit_off": "継承しない",
     "inherit_on": "子孫 issue に継承",
     "own_title": "実行コンテキスト",

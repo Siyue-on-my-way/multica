@@ -251,11 +251,12 @@ describe("SubIssuePreviewModal", () => {
     await user.click(screen.getByRole("button", { name: "Generate details" }));
     await screen.findByRole("button", { name: "Create 3 selected sub-issues" });
 
-    // Open the issue-specific context block and add one entry.
+    // Open the issue-specific context block and type the longtext (SIY-177
+    // feedback: one free-form content block, no structured entry rows).
     await user.click(screen.getByText("Issue-specific execution context"));
-    await user.click(screen.getByRole("button", { name: "Add entry" }));
-    const valueInputs = screen.getAllByPlaceholderText("Repo URL, path, command or constraint");
-    await user.type(valueInputs[valueInputs.length - 1]!, "https://github.com/acme/widget");
+    // The editor's textarea carries the default template as its placeholder.
+    const contextBox = screen.getByPlaceholderText(/Repo URL: https:\/\/github.com\/your-org\/your-repo/);
+    await user.type(contextBox, "Repo URL: https://github.com/acme/widget");
 
     await user.click(screen.getByRole("button", { name: "Create 3 selected sub-issues" }));
     await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(3));
@@ -263,7 +264,7 @@ describe("SubIssuePreviewModal", () => {
       expect(call[0]).toEqual(expect.objectContaining({
         execution_context: expect.objectContaining({
           inherit: true,
-          entries: [expect.objectContaining({ kind: "repo", value: "https://github.com/acme/widget" })],
+          content: expect.stringContaining("Repo URL: https://github.com/acme/widget"),
         }),
       }));
     }

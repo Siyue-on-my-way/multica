@@ -417,7 +417,11 @@ type AgentTaskResponse struct {
 	// filters by its own runtime OS and injects the result into the prompt
 	// exactly once.
 	ExecutionContextEntries []service.ExecutionContextEntryResolved `json:"execution_context_entries,omitempty"`
-	ExecutionContextSources []service.ExecutionContextSource        `json:"execution_context_sources,omitempty"`
+	// ExecutionContextContents carries the free-form longtext blocks (SIY-177
+	// feedback) inherited along the chain, each with the provenance of the
+	// issue that wrote it. Identical re-assertions collapse to one block.
+	ExecutionContextContents []service.ResolvedContent        `json:"execution_context_contents,omitempty"`
+	ExecutionContextSources  []service.ExecutionContextSource `json:"execution_context_sources,omitempty"`
 	// PriorSessionResumeUnavailable is set when a more recent Codex session was
 	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
 	// any) is then an older fallback. The daemon surfaces the continuity gap in

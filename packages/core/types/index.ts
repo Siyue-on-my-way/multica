@@ -23,6 +23,7 @@ export type {
   ExecutionContextSource,
   ResolvedExecutionContext,
   ResolvedExecutionContextEntry,
+  ResolvedContent,
 } from "./issue";
 export type {
   IssueStatusCategory,

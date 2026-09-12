@@ -216,18 +216,17 @@ var executionContextOS = normalizeGOOS(runtime.GOOS)
 // de-duplicated the entries (one line per distinct kind+label, identical
 // re-assertions collapsed, provenance in the sources); this final pass applies
 // the OS filter so a linux-tagged code directory can never surface on a
-// Windows or macOS runtime. Returns "" when nothing applies.
+// Windows or macOS runtime. Free-form content blocks (the longtext users write
+// in the create form) render after the entries as quoted blocks, each with its
+// own provenance. Returns "" when nothing applies.
 func buildExecutionContextBlock(task Task) string {
-	if len(task.ExecutionContextEntries) == 0 {
-		return ""
-	}
 	entries := make([]ExecutionContextEntryResolved, 0, len(task.ExecutionContextEntries))
 	for _, entry := range task.ExecutionContextEntries {
 		if entry.OS == "" || entry.OS == executionContextOS {
 			entries = append(entries, entry)
 		}
 	}
-	if len(entries) == 0 {
+	if len(entries) == 0 && len(task.ExecutionContextContents) == 0 {
 		return ""
 	}
 
@@ -238,6 +237,17 @@ func buildExecutionContextBlock(task Task) string {
 		if _, ok := sourceByID[source.IssueID]; !ok {
 			sourceByID[source.IssueID] = source
 		}
+	}
+	sourceName := func(issueID string) (string, int) {
+		source, ok := sourceByID[issueID]
+		if !ok {
+			return "", 0
+		}
+		name := source.Identifier
+		if name == "" {
+			name = source.Title
+		}
+		return name, source.Version
 	}
 
 	var b strings.Builder
@@ -255,20 +265,35 @@ func buildExecutionContextBlock(task Task) string {
 		} else {
 			fmt.Fprintf(&b, "- [%s] %s", kind, entry.Value)
 		}
-		if source, ok := sourceByID[entry.SourceIssueID]; ok {
-			name := source.Identifier
-			if name == "" {
-				name = source.Title
-			}
-			if name != "" {
-				if source.Version > 0 {
-					fmt.Fprintf(&b, " (from %s · v%d)", name, source.Version)
-				} else {
-					fmt.Fprintf(&b, " (from %s)", name)
-				}
+		if name, version := sourceName(entry.SourceIssueID); name != "" {
+			if version > 0 {
+				fmt.Fprintf(&b, " (from %s · v%d)", name, version)
+			} else {
+				fmt.Fprintf(&b, " (from %s)", name)
 			}
 		}
 		b.WriteString("\n")
+	}
+	for _, content := range task.ExecutionContextContents {
+		name, version := sourceName(content.SourceIssueID)
+		if name != "" && version > 0 {
+			fmt.Fprintf(&b, "\n### Inherited context from %s (v%d)\n\n", name, version)
+		} else if name != "" {
+			fmt.Fprintf(&b, "\n### Inherited context from %s\n\n", name)
+		} else {
+			b.WriteString("\n### Inherited context\n\n")
+		}
+		// Quote the block so authored text cannot forge prompt headings, and
+		// keep blank lines inside the quote.
+		for _, line := range strings.Split(strings.TrimRight(content.Text, "\n"), "\n") {
+			if strings.TrimSpace(line) == "" {
+				b.WriteString(">\n")
+			} else {
+				b.WriteString("> ")
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
 	}
 	b.WriteString("\nTreat these values as authoritative for where the code lives and how it is built, started and tested. Never re-copy them into issue descriptions or comments — they are inherited structurally and would duplicate.\n\n")
 	return b.String()

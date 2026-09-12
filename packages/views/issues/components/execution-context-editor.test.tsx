@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import {
   ExecutionContextEditor,
   emptyExecutionContextEditorValue,
+  firstLines,
   toExecutionContext,
 } from "./execution-context-editor";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -21,15 +22,16 @@ function renderEditor(value = emptyExecutionContextEditorValue(), onChange = vi.
 }
 
 describe("ExecutionContextEditor", () => {
-  it("shows the inheritance and sensitive-data warnings up front", () => {
+  it("shows the inheritance and sensitive-data warnings plus the template placeholder", () => {
     renderEditor();
     expect(screen.getByText("Injected into every descendant issue of this one; edits affect future tasks")).toBeInTheDocument();
     expect(screen.getByText("Never enter passwords, tokens or other secrets here")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Repo URL: https:\/\/github.com\/your-org\/your-repo/)).toBeInTheDocument();
   });
 
-  it("adds an entry, fills it, and reports the change", async () => {
+  it("accepts free-form longtext and reports the change", async () => {
     const user = userEvent.setup();
-    let latest: { entries: { kind: string; value: string }[] } | null = null;
+    let latest: { content: string; inherit: boolean } | null = null;
     function Harness() {
       const [value, setValue] = useState(emptyExecutionContextEditorValue());
       return (
@@ -48,27 +50,28 @@ describe("ExecutionContextEditor", () => {
       </I18nProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Add entry" }));
-    await user.type(screen.getByPlaceholderText("Repo URL, path, command or constraint"), "https://github.com/acme/widget");
+    const box = screen.getByRole("textbox");
+    await user.type(box, "Repo URL: https://github.com/acme/widget\nStart: ./restart.sh");
 
-    expect(latest!.entries).toHaveLength(1);
-    expect(latest!.entries[0]!.kind).toBe("repo");
-    expect(latest!.entries[0]!.value).toBe("https://github.com/acme/widget");
+    expect(latest!.content).toBe("Repo URL: https://github.com/acme/widget\nStart: ./restart.sh");
   });
 
-  it("round-trips a document and drops empty entries", () => {
+  it("round-trips the document and keeps an empty text context-free", () => {
     const document = toExecutionContext({
+      content: "  Repo URL: https://github.com/acme/widget  ",
       inherit: false,
-      entries: [
-        { kind: "repo", label: "widget", value: "https://github.com/acme/widget", os: "" },
-        { kind: "command", value: "   " },
-      ],
     });
     expect(document).toEqual({
       version: 1,
       inherit: false,
-      entries: [{ kind: "repo", label: "widget", value: "https://github.com/acme/widget", os: undefined }],
+      content: "Repo URL: https://github.com/acme/widget",
     });
     expect(toExecutionContext(emptyExecutionContextEditorValue())).toBeUndefined();
+  });
+
+  it("clamps display text to the first two lines", () => {
+    expect(firstLines("a\nb\nc\nd")).toBe("a\nb");
+    expect(firstLines("a\n\nb")).toBe("a\n");
+    expect(firstLines("single line")).toBe("single line");
   });
 });
