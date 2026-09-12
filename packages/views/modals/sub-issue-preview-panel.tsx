@@ -10,6 +10,7 @@ import type {
   SubIssuePlanDiagnostic,
   SubIssuePlanItem,
   SubIssueSuggestion,
+  ResolvedExecutionContext,
 } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -30,6 +31,13 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@multica/ui/components/ui/collapsible";
 import { IssuePickerModal } from "./issue-picker-modal";
+import { InheritedExecutionContextCard } from "../issues/components";
+import {
+  ExecutionContextEditor,
+  emptyExecutionContextEditorValue,
+  toExecutionContext,
+  type ExecutionContextEditorValue,
+} from "../issues/components";
 import { useT } from "../i18n";
 
 type ModalPhase = "outline" | "details";
@@ -134,6 +142,14 @@ export function SubIssuePreviewModal({
   const [humanConstraints, setHumanConstraints] = useState("");
   const [carryAncestorContext, setCarryAncestorContext] = useState(true);
   const [ancestorContextRefs, setAncestorContextRefs] = useState<{ id: string; updated_at: string }[]>([]);
+  // SIY-177: what the created children will inherit at runtime, resolved by
+  // the backend (chain + project resources), plus the issue-specific context
+  // the user can attach on top of it.
+  const [inheritedExecutionContext, setInheritedExecutionContext] = useState<ResolvedExecutionContext | null>(null);
+  const [ownExecutionContext, setOwnExecutionContext] = useState<ExecutionContextEditorValue>(
+    emptyExecutionContextEditorValue,
+  );
+  const [ownContextOpen, setOwnContextOpen] = useState(false);
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [planError, setPlanError] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -157,6 +173,7 @@ export function SubIssuePreviewModal({
         setPlans(response.plans);
         setDiagnostics(response.diagnostics ?? []);
         setAncestorContextRefs(response.ancestor_brief_refs ?? []);
+        setInheritedExecutionContext(response.inherited_execution_context ?? null);
         // SIY-147: default to the backend-verified full-coverage plan so the
         // panel never opens pre-selecting a partial decomposition. Reference
         // plans stay one click away.
@@ -297,6 +314,11 @@ export function SubIssuePreviewModal({
     if (selected.length === 0) return;
     setCreating(true);
     try {
+      // SIY-177: descriptions carry only the task's own content; the chain's
+      // execution context is inherited structurally at runtime. Anything the
+      // user typed into "本 issue 专属执行上下文" is stamped on every created
+      // child as its own context document.
+      const executionContextDocument = toExecutionContext(ownExecutionContext);
       const results = await Promise.allSettled(
         selected.map((draft) =>
           createIssue.mutateAsync({
@@ -307,6 +329,7 @@ export function SubIssuePreviewModal({
             parent_issue_id: draft.parentIssueId ?? undefined,
             stage: draft.stage,
             ancestor_context_refs: carryAncestorContext ? ancestorContextRefs : undefined,
+            execution_context: executionContextDocument,
           }),
         ),
       );
@@ -364,6 +387,10 @@ export function SubIssuePreviewModal({
                 </div>
                 <Checkbox checked={carryAncestorContext} onCheckedChange={(value) => setCarryAncestorContext(value === true)} />
               </div>
+
+              {/* SIY-177: the execution context the children will inherit —
+                  collapsed by default, read-only, with per-entry provenance. */}
+              <InheritedExecutionContextCard resolved={inheritedExecutionContext} />
 
               {loadingPlans && (
                 <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">
@@ -572,6 +599,27 @@ export function SubIssuePreviewModal({
 
           {phase === "details" && (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+              {/* SIY-177: issue-specific execution context — special directories
+                  or commands that apply only to the issues being created here.
+                  Whether they flow further down is decided by the inherit
+                  switch inside the editor. */}
+              <Collapsible open={ownContextOpen} onOpenChange={setOwnContextOpen}>
+                <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-2 text-left hover:bg-muted/30">
+                  <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${ownContextOpen ? "rotate-90" : ""}`} />
+                  <span className="text-body font-medium">
+                    {t(($) => $.execution_context.own_title)}
+                  </span>
+                  {ownExecutionContext.entries.length > 0 && (
+                    <span className="text-caption text-muted-foreground">
+                      {t(($) => $.execution_context.entry_count, { count: ownExecutionContext.entries.length })}
+                    </span>
+                  )}
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-1.5">
+                  <ExecutionContextEditor value={ownExecutionContext} onChange={setOwnExecutionContext} />
+                </CollapsibleContent>
+              </Collapsible>
+
               {loadingDetails && (
                 <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />

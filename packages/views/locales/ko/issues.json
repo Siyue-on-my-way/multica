@@ -371,6 +371,18 @@
     "project_directory_path_copied": "프로젝트 디렉터리 경로를 복사했습니다",
     "project_directory_path_copied_with_branch": "프로젝트 디렉터리 경로를 복사했습니다 — 작업은 {{branch}} 브랜치에 있습니다"
   },
+  "execution_context_detail": {
+    "cancel": "취소",
+    "edit": "편집",
+    "edit_title": "실행 컨텍스트 편집",
+    "empty_hint": "설정 없음",
+    "inherit_off": "상속 안 함",
+    "inherit_on": "하위 issue에 상속됨",
+    "own_title": "실행 컨텍스트",
+    "resolved_title": "이 issue 실행 시 전달되는 병합 결과:",
+    "save": "저장",
+    "toast_save_failed": "실행 컨텍스트 저장 실패"
+  },
   "timeline": {
     "loading": "불러오는 중..."
   },

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -205,6 +206,74 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	return body
 }
 
+// executionContextOS is this runtime's OS in the execution-context vocabulary
+// (linux / macos / windows), resolved once — the daemon process cannot change
+// OS mid-run.
+var executionContextOS = normalizeGOOS(runtime.GOOS)
+
+// buildExecutionContextBlock renders the structured execution context (SIY-177)
+// the server resolved along this issue's chain. The server already merged and
+// de-duplicated the entries (one line per distinct kind+label, identical
+// re-assertions collapsed, provenance in the sources); this final pass applies
+// the OS filter so a linux-tagged code directory can never surface on a
+// Windows or macOS runtime. Returns "" when nothing applies.
+func buildExecutionContextBlock(task Task) string {
+	if len(task.ExecutionContextEntries) == 0 {
+		return ""
+	}
+	entries := make([]ExecutionContextEntryResolved, 0, len(task.ExecutionContextEntries))
+	for _, entry := range task.ExecutionContextEntries {
+		if entry.OS == "" || entry.OS == executionContextOS {
+			entries = append(entries, entry)
+		}
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+
+	// First source wins as the block's headline provenance; per-entry
+	// provenance is rendered inline from the entry's own source match.
+	sourceByID := make(map[string]ExecutionContextSource, len(task.ExecutionContextSources))
+	for _, source := range task.ExecutionContextSources {
+		if _, ok := sourceByID[source.IssueID]; !ok {
+			sourceByID[source.IssueID] = source
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("## Execution Context (structured, inherited)\n\n")
+	b.WriteString("Machine-usable context for running this task, resolved from the issue's structured execution-context fields, its ancestors and project resources. The server merged the chain and de-duplicated it: each distinct value appears here exactly ONCE, tagged with where it came from. Values scoped to another OS were filtered out for this runtime (")
+	b.WriteString(executionContextOS)
+	b.WriteString(").\n\n")
+	for _, entry := range entries {
+		kind := strings.ToUpper(entry.Kind[:1]) + entry.Kind[1:]
+		if entry.OS != "" {
+			kind += " (" + entry.OS + ")"
+		}
+		if entry.Label != "" {
+			fmt.Fprintf(&b, "- [%s] %s: %s", kind, entry.Label, entry.Value)
+		} else {
+			fmt.Fprintf(&b, "- [%s] %s", kind, entry.Value)
+		}
+		if source, ok := sourceByID[entry.SourceIssueID]; ok {
+			name := source.Identifier
+			if name == "" {
+				name = source.Title
+			}
+			if name != "" {
+				if source.Version > 0 {
+					fmt.Fprintf(&b, " (from %s · v%d)", name, source.Version)
+				} else {
+					fmt.Fprintf(&b, " (from %s)", name)
+				}
+			}
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\nTreat these values as authoritative for where the code lives and how it is built, started and tested. Never re-copy them into issue descriptions or comments — they are inherited structurally and would duplicate.\n\n")
+	return b.String()
+}
+
 func buildPromptBody(task Task, provider string) string {
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
@@ -224,6 +293,9 @@ func buildPromptBody(task Task, provider string) string {
 	if task.AncestorBrief != "" {
 		b.WriteString(task.AncestorBrief)
 		b.WriteString("\n\n")
+	}
+	if block := buildExecutionContextBlock(task); block != "" {
+		b.WriteString(block)
 	}
 	if task.CurrentIssueTitle != "" || task.CurrentIssueDescription != "" {
 		b.WriteString("CURRENT_ISSUE (direct task context)\n")
@@ -393,6 +465,9 @@ func buildCommentPrompt(task Task, provider string) string {
 	if task.AncestorBrief != "" {
 		b.WriteString(task.AncestorBrief)
 		b.WriteString("\n\n")
+	}
+	if block := buildExecutionContextBlock(task); block != "" {
+		b.WriteString(block)
 	}
 	if task.CurrentIssueTitle != "" || task.CurrentIssueDescription != "" {
 		b.WriteString("CURRENT_ISSUE (direct task context)\n")

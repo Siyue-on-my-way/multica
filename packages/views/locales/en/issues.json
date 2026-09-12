@@ -446,6 +446,18 @@
     "workdir_path_copy_failed": "Failed to copy workdir path",
     "workdir_path_unavailable": "No local workdir yet — issue has not been run by a local agent"
   },
+  "execution_context_detail": {
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "edit_title": "Edit execution context",
+    "empty_hint": "none set",
+    "inherit_off": "not inherited",
+    "inherit_on": "inherited by descendants",
+    "own_title": "Execution context",
+    "resolved_title": "What a run of this issue receives (merged, de-duplicated):",
+    "save": "Save",
+    "toast_save_failed": "Failed to save execution context"
+  },
   "timeline": {
     "loading": "Loading..."
   },

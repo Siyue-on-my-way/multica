@@ -410,6 +410,14 @@ type AgentTaskResponse struct {
 	CurrentIssueDescription string                     `json:"current_issue_description,omitempty"`
 	AncestorBrief           string                     `json:"ancestor_brief,omitempty"`
 	AncestorBriefRefs       []service.AncestorBriefRef `json:"ancestor_brief_refs,omitempty"`
+	// ExecutionContextEntries / ExecutionContextSources carry the merged,
+	// de-duplicated structured execution context (SIY-177): repo URLs, per-OS
+	// code directory mappings, commands and run constraints along the ancestor
+	// chain, each entry tagged with its target OS ("" = every OS). The daemon
+	// filters by its own runtime OS and injects the result into the prompt
+	// exactly once.
+	ExecutionContextEntries []service.ExecutionContextEntryResolved `json:"execution_context_entries,omitempty"`
+	ExecutionContextSources []service.ExecutionContextSource        `json:"execution_context_sources,omitempty"`
 	// PriorSessionResumeUnavailable is set when a more recent Codex session was
 	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
 	// any) is then an older fallback. The daemon surfaces the continuity gap in

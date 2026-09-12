@@ -234,6 +234,8 @@ import type {
   CreateCommentSubIssueManualRequest,
   CreateCommentSubIssueAgentRequest,
   CreateCommentSubIssueRequest,
+  ExecutionContext,
+  ResolvedExecutionContext,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -1066,6 +1068,17 @@ export class ApiClient {
    * an ApiError 404, so `issueIdentifierOptions` propagates it instead of
    * caching it as "no such issue".
    */
+  /** Structured execution context (SIY-177): the issue's own document plus
+   *  the merged, de-duplicated view its runs receive. */
+  async getIssueExecutionContext(
+    id: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ own: ExecutionContext; inherited: ResolvedExecutionContext }> {
+    return this.fetch(`/api/issues/${encodeURIComponent(id)}/execution-context`, {
+      signal: options?.signal,
+    });
+  }
+
   async getIssue(id: string, options?: { signal?: AbortSignal }): Promise<Issue> {
     const raw = await this.fetch<unknown>(
       `/api/issues/${encodeURIComponent(id)}`,

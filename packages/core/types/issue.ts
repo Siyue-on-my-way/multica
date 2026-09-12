@@ -169,6 +169,66 @@ export interface IssueSourceContext {
   snapshot: SourceContextSnapshot;
 }
 
+// ---------------------------------------------------------------------------
+// Structured execution context (SIY-177)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kind of one execution-context entry. `code_dir` entries describe a
+ * per-machine checkout path and MUST carry an `os` scope; `repo`, `command`,
+ * `constraint` and `resource` default to every OS.
+ */
+export type ExecutionContextKind =
+  | "repo"
+  | "code_dir"
+  | "command"
+  | "constraint"
+  | "resource";
+
+/** OS scope of an entry: "" / undefined = every OS, or linux | macos | windows. */
+export type ExecutionContextOS = "" | "linux" | "macos" | "windows" | (string & {});
+
+export interface ExecutionContextEntry {
+  kind: ExecutionContextKind;
+  label?: string;
+  /** The URL / path / command / constraint text itself. */
+  value: string;
+  /** Platform scope — a linux-tagged code_dir never reaches a macOS runtime. */
+  os?: ExecutionContextOS;
+}
+
+/**
+ * One issue's persisted execution context. `inherit` is the "继承给后代
+ * issue" switch (the create form defaults it on): when true, this issue's
+ * entries flow into every descendant's resolved context.
+ */
+export interface ExecutionContext {
+  version: number;
+  inherit: boolean;
+  entries: ExecutionContextEntry[];
+}
+
+/** Where a resolved entry came from; issue_id + version is the dedup key. */
+export interface ExecutionContextSource {
+  issue_id?: string;
+  identifier?: string;
+  title?: string;
+  version: number;
+  updated_at?: string;
+  project?: boolean;
+}
+
+/** A resolved entry carries the provenance of the node whose value won. */
+export interface ResolvedExecutionContextEntry extends ExecutionContextEntry {
+  source_issue_id?: string;
+}
+
+/** The merged, de-duplicated view a run of an issue receives. */
+export interface ResolvedExecutionContext {
+  entries: ResolvedExecutionContextEntry[];
+  sources: ExecutionContextSource[];
+}
+
 export interface Issue {
   id: string;
   workspace_id: string;
@@ -177,6 +237,13 @@ export interface Issue {
   title: string;
   description: string | null;
   status: IssueStatus;
+  /**
+   * Structured execution context (SIY-177): machine-usable, descendant-
+   * inheriting task setup (repo URLs, per-OS code directories, commands,
+   * run constraints). Null/absent on issues that never set one. The merged
+   * descendant view is served separately via the execution-context endpoint.
+   */
+  execution_context?: ExecutionContext | null;
   /**
    * The category `status` belongs to, when the endpoint resolved it. Optional
    * because a BUILT-IN status is its own category and needs no resolution —

@@ -845,7 +845,7 @@ func logSubissueAttempt(operation, commentID string, attempt int, stats llm.Gene
 
 const subissueDetailSystemPrompt = `你是一个 Multica 子issue详情生成助手。用户已经人工确认了拆分草稿，你只能为草稿中的每个条目补充可执行的详细 description、stage、依赖关系、建议父issue和 confidence。
 
-必须严格保留 approved_outline 中每个条目的 id、title、goal、数量和顺序，不得增加、删除、合并、拆分或改写这些字段。description 必须让接手者不需要回看原始讨论就能开工，并包含背景、已经确定的约束、工作范围和验收标准。summary_test 条目必须写集成测试、联调和整体验收步骤，服务端会把它安排到所属业务所有开发条目之后。严格只输出 JSON，不要输出 Markdown 或解释文字。
+必须严格保留 approved_outline 中每个条目的 id、title、goal、数量和顺序，不得增加、删除、合并、拆分或改写这些字段。description 必须让接手者不需要回看原始讨论就能开工，并包含背景、已经确定的约束、工作范围和验收标准。summary_test 条目必须写集成测试、联调和整体验收步骤，服务端会把它安排到所属业务所有开发条目之后。执行上下文（仓库地址、代码目录、路径映射、启动/测试命令等）由系统按结构化字段自动继承，ancestor brief 仅作理解背景的参考：都不要整段复制进 description。严格只输出 JSON，不要输出 Markdown 或解释文字。
 
 输出结构：
 {"subissues":[{"id":"plan-1-item-1","title":"...","goal":"...","description":"...","stage":1,"depends_on_ids":[],"suggested_parent_identifier":null,"confidence":0.86}]}`
@@ -937,7 +937,7 @@ func ExpandSubissuePlan(
 		}
 		logSubissueAttempt("subissue detail", commentID, attempt, stats, "item_count", len(details), err)
 		if err == nil {
-			return includeAncestorBriefInSubissueDescriptions(details, sourceIssue.AncestorBrief), nil
+	return details, nil
 		}
 		lastErr = err
 	}

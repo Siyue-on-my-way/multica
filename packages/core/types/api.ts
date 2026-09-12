@@ -1,4 +1,4 @@
-import type { Issue, IssueMetadata, IssueStatus, IssueStatusCategory, IssuePriority, IssueAssigneeType } from "./issue";
+import type { Issue, IssueMetadata, IssueStatus, IssueStatusCategory, IssuePriority, IssueAssigneeType, ExecutionContext, ResolvedExecutionContext } from "./issue";
 import type { PropertyFilterValue } from "./property";
 import type { MemberRole } from "./workspace";
 import type { Project } from "./project";
@@ -23,6 +23,11 @@ export interface CreateIssueRequest {
   label_ids?: string[];
   /** Ancestor IDs and update timestamps captured when a sub-issue was generated. */
   ancestor_context_refs?: { id: string; updated_at: string }[];
+  /**
+   * Structured execution context (SIY-177): the block that will be inherited
+   * by every descendant issue. Kept out of `description` on purpose.
+   */
+  execution_context?: ExecutionContext;
 }
 
 export interface CreateCommentSubIssueManualRequest {
@@ -79,6 +84,12 @@ export interface UpdateIssueRequest {
    *  MUL-3375). The assignee/status change still applies. Control field —
    *  strip from optimistic cache patches; never written onto the Issue. */
   suppress_run?: boolean;
+  /**
+   * Structured execution context (SIY-177). Presence — even `null`, which
+   * clears it — triggers the write; the server bumps the document version so
+   * descendants can tell the refreshed snapshot from an older one.
+   */
+  execution_context?: ExecutionContext | null;
 }
 
 /**
@@ -160,6 +171,9 @@ export interface SuggestSubissuePlansResponse {
 	plans: SubIssuePlan[];
 	diagnostics?: SubIssuePlanDiagnostic[];
 	ancestor_brief_refs?: { id: string; updated_at: string }[];
+	/** Merged execution context the created children will inherit at runtime
+	 *  (SIY-177); rendered as the read-only inherited-context card. */
+	inherited_execution_context?: ResolvedExecutionContext;
 }
 
 export interface ExpandSubissuePlanRequest extends SuggestSubIssuesRequest {

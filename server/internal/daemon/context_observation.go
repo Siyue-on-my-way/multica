@@ -214,6 +214,14 @@ func buildContextSections(p observationParams) []ContextSection {
 		out = append(out, s)
 	}
 
+	// Structured execution context (SIY-177): merged and de-duplicated
+	// server-side, OS-filtered for this runtime, injected once by
+	// buildExecutionContextBlock.
+	execContextText := buildExecutionContextBlock(p.task)
+	if execContextText != "" {
+		out = append(out, sectionFromText("execution_context", "task.execution_context", deliveryProviderPrompt, true, execContextText))
+	}
+
 	// Handoff: structured checkpoint (in prompt + sidecar) plus the legacy note.
 	handoffText := handoffSourceText(p.task)
 	if handoffText != "" {
@@ -256,7 +264,7 @@ func buildContextSections(p observationParams) []ContextSection {
 	// turn-mode marker, and perTurnContextBlocks (initiator, connected apps,
 	// continuity notice, shared-dir, worktree conflicts). It is an estimate by
 	// subtraction, so it never goes negative and is marked estimated downstream.
-	embedded := len(issueText) + len(p.task.AncestorBrief) + len(handoffText) + len(manifestText) + len(p.task.TriggerCommentContent) + len(coalescedCommentsText(p.task))
+	embedded := len(issueText) + len(p.task.AncestorBrief) + len(execContextText) + len(handoffText) + len(manifestText) + len(p.task.TriggerCommentContent) + len(coalescedCommentsText(p.task))
 	residual := len(p.prompt) - embedded
 	if residual < 0 {
 		residual = 0

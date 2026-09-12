@@ -82,6 +82,7 @@ import { CommentCard } from "./comment-card";
 import { SourceContextBadge } from "./source-context-viewer";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { CommentInput } from "./comment-input";
+import { IssueExecutionContextSection } from "./execution-context-section";
 import { CurrentIssueRenderContextProvider } from "../current-issue-render-context";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { getShortcut, shortcutMatchesEvent } from "@multica/core/shortcuts";
@@ -3261,6 +3262,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
             {descDragOver && <FileDropOverlay />}
           </div>
+
+          {/* Structured execution context (SIY-177): own document + the merged
+              chain view, so the origin and inheritance state of every entry
+              stays visible on the issue itself. */}
+          <IssueExecutionContextSection issue={issue} />
 
           {/* Keep sub-issues in the primary detail flow as well as the
               collapsible sidebar, so the hierarchy remains visible when the

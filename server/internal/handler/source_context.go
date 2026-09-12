@@ -698,6 +698,14 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		}
 		stage = pgtype.Int4{Int32: *input.Stage, Valid: true}
 	}
+	// Structured execution context (SIY-177): a child captured from a comment
+	// inherits the chain's context at runtime; an explicit document here is
+	// the issue's OWN context (special directories / commands), versioned from 1.
+	executionContextWrite, err := normalizeExecutionContextCreate(input.ExecutionContext)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid execution_context: "+err.Error())
+		return errSourceContextResponseWritten
+	}
 	prefix := h.getIssuePrefix(r.Context(), workspaceID)
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID: workspaceID, Title: title, Description: ptrToText(input.Description), Status: status, Priority: priority,
@@ -717,7 +725,13 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return err
 	}
-	response := issueToResponse(result.Issue, prefix)
+	created := result.Issue
+	if executionContextWrite != nil {
+		if updated, ok := persistIssueExecutionContext(h, r, created, executionContextWrite); ok {
+			created = updated
+		}
+	}
+	response := issueToResponse(created, prefix)
 	h.fillStatusCategory(r.Context(), workspaceID, &response)
 	labelResponses := labelsToResponse(result.Labels)
 	response.Labels = &labelResponses

@@ -55,7 +55,7 @@ func (q *Queries) ChildIssueProgress(ctx context.Context, arg ChildIssueProgress
 const clearIssueManualPositionLock = `-- name: ClearIssueManualPositionLock :one
 UPDATE issue SET manual_position_locked = false
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type ClearIssueManualPositionLockParams struct {
@@ -113,6 +113,7 @@ func (q *Queries) ClearIssueManualPositionLock(ctx context.Context, arg ClearIss
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -283,7 +284,7 @@ INSERT INTO issue (
     CASE WHEN $19::jsonb IS NULL THEN NULL ELSE now() END,
     CASE WHEN $19::jsonb IS NULL THEN 0 ELSE 1 END,
     now(), COALESCE($20::uuid, gen_random_uuid())
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type CreateIssueParams struct {
@@ -380,6 +381,7 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -402,7 +404,7 @@ INSERT INTO issue (
     CASE WHEN $21::jsonb IS NULL THEN NULL ELSE now() END,
     CASE WHEN $21::jsonb IS NULL THEN 0 ELSE 1 END,
     now(), COALESCE($22::uuid, gen_random_uuid())
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type CreateIssueWithOriginParams struct {
@@ -503,6 +505,7 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -557,7 +560,7 @@ UPDATE issue SET
     END,
     updated_at = now()
 WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type DeleteIssueMetadataKeyParams struct {
@@ -618,6 +621,7 @@ func (q *Queries) DeleteIssueMetadataKey(ctx context.Context, arg DeleteIssueMet
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -632,7 +636,7 @@ SET parent_issue_id = NULL,
 WHERE workspace_id = $1
   AND parent_issue_id = $2
   AND NOT COALESCE(id = ANY($3::uuid[]), false)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type DetachDirectChildIssuesParams struct {
@@ -697,6 +701,7 @@ func (q *Queries) DetachDirectChildIssues(ctx context.Context, arg DetachDirectC
 			&i.DerivedSummarySourceTaskID,
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
+			&i.ExecutionContext,
 		); err != nil {
 			return nil, err
 		}
@@ -709,7 +714,7 @@ func (q *Queries) DetachDirectChildIssues(ctx context.Context, arg DetachDirectC
 }
 
 const findActiveDuplicateIssue = `-- name: FindActiveDuplicateIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains active.
   AND NOT (status = ANY($2::text[]))
@@ -784,12 +789,13 @@ func (q *Queries) FindActiveDuplicateIssue(ctx context.Context, arg FindActiveDu
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const findRecentAutopilotDuplicateIssue = `-- name: FindRecentAutopilotDuplicateIssue :one
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version FROM issue i
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains active.
   AND NOT (i.status = ANY($3::text[]))
@@ -875,12 +881,13 @@ func (q *Queries) FindRecentAutopilotDuplicateIssue(ctx context.Context, arg Fin
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE id = $1
 `
 
@@ -934,12 +941,13 @@ func (q *Queries) GetIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const getIssueByNumber = `-- name: GetIssueByNumber :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE workspace_id = $1 AND number = $2
 `
 
@@ -998,12 +1006,13 @@ func (q *Queries) GetIssueByNumber(ctx context.Context, arg GetIssueByNumberPara
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const getIssueByOrigin = `-- name: GetIssueByOrigin :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
@@ -1071,6 +1080,7 @@ func (q *Queries) GetIssueByOrigin(ctx context.Context, arg GetIssueByOriginPara
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -1095,7 +1105,7 @@ func (q *Queries) GetIssueGCStatus(ctx context.Context, id pgtype.UUID) (GetIssu
 }
 
 const getIssueInWorkspace = `-- name: GetIssueInWorkspace :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1154,12 +1164,13 @@ func (q *Queries) GetIssueInWorkspace(ctx context.Context, arg GetIssueInWorkspa
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const listChildIssues = `-- name: ListChildIssues :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE parent_issue_id = $1
 ORDER BY number ASC
 `
@@ -1226,6 +1237,7 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 			&i.DerivedSummarySourceTaskID,
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
+			&i.ExecutionContext,
 		); err != nil {
 			return nil, err
 		}
@@ -1238,7 +1250,7 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 }
 
 const listChildrenByParents = `-- name: ListChildrenByParents :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id = ANY($2::uuid[])
 ORDER BY parent_issue_id, number ASC
@@ -1312,6 +1324,7 @@ func (q *Queries) ListChildrenByParents(ctx context.Context, arg ListChildrenByP
 			&i.DerivedSummarySourceTaskID,
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
+			&i.ExecutionContext,
 		); err != nil {
 			return nil, err
 		}
@@ -1840,7 +1853,7 @@ func (q *Queries) LockIssueForDelete(ctx context.Context, arg LockIssueForDelete
 }
 
 const lockIssueForDescriptionUpdate = `-- name: LockIssueForDescriptionUpdate :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -1904,13 +1917,14 @@ func (q *Queries) LockIssueForDescriptionUpdate(ctx context.Context, arg LockIss
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const markIssueAgentResult = `-- name: MarkIssueAgentResult :one
 WITH current_issue AS (
-    SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version FROM issue WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+    SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue WHERE id = $1 AND workspace_id = $2 FOR UPDATE
 ), top_position AS (
     SELECT COALESCE(MIN(i.position) - 1, 0)::double precision AS position
     FROM issue i, current_issue c
@@ -1926,7 +1940,7 @@ SET agent_result_at = now(),
     END,
     updated_at = now()
 WHERE issue.id = $1 AND issue.workspace_id = $2
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type MarkIssueAgentResultParams struct {
@@ -1984,6 +1998,7 @@ func (q *Queries) MarkIssueAgentResult(ctx context.Context, arg MarkIssueAgentRe
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -2058,7 +2073,7 @@ SET description = CASE
     updated_at = now()
 WHERE id = $4
   AND workspace_id = $5
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type MaterializeIssueChannelMediaMarkdownParams struct {
@@ -2132,6 +2147,7 @@ func (q *Queries) MaterializeIssueChannelMediaMarkdown(ctx context.Context, arg 
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -2153,7 +2169,7 @@ WHERE id = $7
   AND workspace_id = $8
   AND revision = $3::bigint
   AND handoff_version = $9::bigint
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type SetIssueDerivedSummaryCASParams struct {
@@ -2234,6 +2250,7 @@ func (q *Queries) SetIssueDerivedSummaryCAS(ctx context.Context, arg SetIssueDer
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -2250,7 +2267,7 @@ SET manual_checkpoint = $1::jsonb,
 WHERE id = $3
   AND workspace_id = $4
   AND handoff_version = $5::bigint
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type SetIssueManualCheckpointCASParams struct {
@@ -2323,6 +2340,7 @@ func (q *Queries) SetIssueManualCheckpointCAS(ctx context.Context, arg SetIssueM
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -2339,7 +2357,7 @@ UPDATE issue SET
     END,
     updated_at = now()
 WHERE id = $3 AND workspace_id = $4
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type SetIssueMetadataKeyParams struct {
@@ -2408,6 +2426,7 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -2554,7 +2573,7 @@ WHERE i.id = changed.id
   -- Referenced so the actor_config CTE always executes; the issue_status_history
   -- trigger reads these transaction-local settings (259_issue_status_history_trigger).
   AND (SELECT true FROM actor_config)
-RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version
+RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context
 `
 
 type UpdateIssueParams struct {
@@ -2653,6 +2672,7 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -2687,7 +2707,7 @@ UPDATE issue AS i SET
     updated_at = now()
 WHERE i.id = $1 AND i.workspace_id = $3
   AND (SELECT true FROM actor_config)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type UpdateIssueStatusParams struct {
@@ -2759,6 +2779,7 @@ func (q *Queries) UpdateIssueStatus(ctx context.Context, arg UpdateIssueStatusPa
 		&i.DerivedSummarySourceTaskID,
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
+		&i.ExecutionContext,
 	)
 	return i, err
 }

@@ -29,6 +29,12 @@ type SuggestSubissuePlansResponse struct {
 	Plans             []service.SubissuePlan           `json:"plans"`
 	Diagnostics       []service.SubissuePlanDiagnostic `json:"diagnostics,omitempty"`
 	AncestorBriefRefs []service.AncestorBriefRef       `json:"ancestor_brief_refs,omitempty"`
+	// InheritedExecutionContext is the merged, de-duplicated execution context
+	// the created children will receive at runtime (SIY-177): project
+	// resources, ancestors that left inheritance on, and the source issue's
+	// own entries. The preview panel renders it as the read-only
+	// "已继承执行上下文" card — the descriptions below never embed it.
+	InheritedExecutionContext *service.ResolvedExecutionContext `json:"inherited_execution_context,omitempty"`
 }
 
 type ExpandSubissuePlanRequest struct {
@@ -78,11 +84,18 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to generate subissue plans")
 		return
 	}
+	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: generation.Plans, Diagnostics: generation.Diagnostics, AncestorBriefRefs: func() []service.AncestorBriefRef {
 		if req.CarryAncestorContext != nil && !*req.CarryAncestorContext {
 			return nil
 		}
 		return service.BuildAncestorBrief(r.Context(), h.Queries, issue).Refs
+	}(), InheritedExecutionContext: func() *service.ResolvedExecutionContext {
+		resolved := h.resolveInheritedExecutionContext(r, issue, prefix)
+		if resolved.Empty() {
+			return nil
+		}
+		return &resolved
 	}()})
 }
 

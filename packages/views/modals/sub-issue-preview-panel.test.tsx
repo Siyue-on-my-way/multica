@@ -210,4 +210,62 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.getByDisplayValue("【Payments】First task")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Payments")).toBeInTheDocument();
   });
+
+  it("renders the inherited execution context card from the plan response", async () => {
+    mockSuggestPlans.mockResolvedValue({
+      plans: [twoItemPlan],
+      ancestor_brief_refs: [{ id: "root-1", updated_at: "2026-09-12T00:00:00Z" }],
+      inherited_execution_context: {
+        entries: [
+          { kind: "repo", value: "https://github.com/acme/widget", source_issue_id: "root-1" },
+          { kind: "code_dir", label: "checkout", value: "/mnt/a/widget", os: "linux", source_issue_id: "root-1" },
+        ],
+        sources: [{ issue_id: "root-1", identifier: "SIY-30", title: "Root", version: 3 }],
+      },
+    });
+    renderModal();
+    const user = userEvent.setup();
+
+    // Collapsed by default: only the header shows.
+    expect(await screen.findByText("Inherited execution context")).toBeInTheDocument();
+    expect(screen.queryByText("/mnt/a/widget")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Inherited execution context"));
+    expect(screen.getByText(/\/mnt\/a\/widget/)).toBeInTheDocument();
+    expect(screen.getByText("https://github.com/acme/widget")).toBeInTheDocument();
+    expect(screen.getAllByText("from SIY-30").length).toBe(2);
+    expect(screen.getByText("SIY-30 · v3")).toBeInTheDocument();
+  });
+
+  it("hides the inherited context card when nothing resolves", async () => {
+    renderModal();
+    expect(await screen.findByText("Balanced split")).toBeInTheDocument();
+    expect(screen.queryByText("Inherited execution context")).not.toBeInTheDocument();
+  });
+
+  it("stamps the issue-specific execution context onto every created child", async () => {
+    renderModal();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByText("Balanced split"));
+    await user.click(screen.getByRole("button", { name: "Generate details" }));
+    await screen.findByRole("button", { name: "Create 3 selected sub-issues" });
+
+    // Open the issue-specific context block and add one entry.
+    await user.click(screen.getByText("Issue-specific execution context"));
+    await user.click(screen.getByRole("button", { name: "Add entry" }));
+    const valueInputs = screen.getAllByPlaceholderText("Repo URL, path, command or constraint");
+    await user.type(valueInputs[valueInputs.length - 1]!, "https://github.com/acme/widget");
+
+    await user.click(screen.getByRole("button", { name: "Create 3 selected sub-issues" }));
+    await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(3));
+    for (const call of mockCreateIssue.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({
+        execution_context: expect.objectContaining({
+          inherit: true,
+          entries: [expect.objectContaining({ kind: "repo", value: "https://github.com/acme/widget" })],
+        }),
+      }));
+    }
+  });
 });

@@ -117,6 +117,11 @@ type IssueResponse struct {
 	ManualPositionLocked bool                         `json:"manual_position_locked"`
 	AgentResultAt        *string                      `json:"agent_result_at,omitempty"`
 	HasUnreadAgentResult bool                         `json:"has_unread_agent_result"`
+	// ExecutionContext is the issue's own structured execution context
+	// (SIY-177) as persisted — the raw document, absent when the issue has
+	// none. The merged descendant view is served separately by
+	// GET /api/issues/{id}/execution-context.
+	ExecutionContext json.RawMessage `json:"execution_context,omitempty"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -350,6 +355,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		Latency:              derivedLatencyMs(i),
 		ManualPositionLocked: i.ManualPositionLocked,
 		AgentResultAt:        timestampToPtr(i.AgentResultAt),
+		ExecutionContext:     issueExecutionContextRaw(i.ExecutionContext),
 	}
 }
 
@@ -2875,7 +2881,13 @@ type CreateIssueRequest struct {
 	// LabelIDs are issue-scoped labels to attach to the new issue in the same
 	// transaction as the create. Unknown or non-issue ids are rejected with
 	// 400 (service.ErrIssueLabelNotFound) rather than silently dropped.
-	LabelIDs            []string        `json:"label_ids,omitempty"`
+	LabelIDs []string `json:"label_ids,omitempty"`
+	// ExecutionContext is the structured, descendant-inheriting execution
+	// context (SIY-177): repos, per-OS code directories, commands, run
+	// constraints. Validated and versioned server-side; a malformed document
+	// fails the create with 400 rather than creating an issue that would
+	// silently miss the context its author typed.
+	ExecutionContext  json.RawMessage `json:"execution_context,omitempty"`
 	AncestorContextRefs json.RawMessage `json:"ancestor_context_refs,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
@@ -2933,6 +2945,11 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Stage != nil && *req.Stage < 1 {
 		writeError(w, http.StatusBadRequest, "stage must be >= 1")
+		return
+	}
+	executionContextWrite, err := normalizeExecutionContextCreate(req.ExecutionContext)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid execution_context: "+err.Error())
 		return
 	}
 
@@ -3209,6 +3226,14 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issue := res.Issue
+	if executionContextWrite != nil {
+		// The write bumps revision/updated_at; the response must carry the
+		// stored document. A failed write is logged and the create still
+		// succeeds — the issue itself is valid.
+		if updated, ok := persistIssueExecutionContext(h, r, issue, executionContextWrite); ok {
+			issue = updated
+		}
+	}
 	if len(req.AncestorContextRefs) > 0 {
 		refsValue, marshalErr := json.Marshal(string(req.AncestorContextRefs))
 		if marshalErr != nil {
@@ -3280,6 +3305,14 @@ type UpdateIssueRequest struct {
 	// predate the handoff UI removal. It is consumed only when this write starts
 	// a run and is never stored on the issue itself.
 	HandoffNote string `json:"handoff_note,omitempty"`
+	// ExecutionContext is accepted in the JSON body for the structured,
+	// descendant-inheriting execution context (SIY-177). Presence — even
+	// `null`, which clears it — triggers the write; the server bumps the
+	// document version so descendants can distinguish the refreshed snapshot
+	// from what earlier runs already consumed. Decoded via the raw-field map
+	// (see UpdateIssue) because JSON null is not representable on a pointer
+	// field.
+	ExecutionContext *json.RawMessage `json:"execution_context,omitempty"`
 }
 
 func mergeIssueChannelMediaDescription(current, incoming string, base *string, attachments []db.Attachment) string {
@@ -3764,6 +3797,27 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
+
+	// Structured execution context (SIY-177): presence in the request body —
+	// including explicit null, which clears it — triggers the write. Read via
+	// rawFields because encoding/json leaves a *RawMessage field nil for a
+	// JSON null, and the clear case must be distinguishable from absent.
+	// Validated before the update ran, so a malformed document never strands a
+	// half applied issue edit.
+	if rawContext, touched := rawFields["execution_context"]; touched {
+		encoded, err := normalizeExecutionContextUpdate(rawContext, prevIssue.ExecutionContext)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid execution_context: "+err.Error())
+			return
+		}
+		if updated, ok := persistIssueExecutionContext(h, r, issue, encoded); ok {
+			// The write bumps revision/updated_at; the response must reflect
+			// the row as it now stands so the client's next CAS does not fail
+			// against a revision it never saw.
+			issue = updated
+			resp = issueToResponse(issue, prefix)
+		}
+	}
 
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&

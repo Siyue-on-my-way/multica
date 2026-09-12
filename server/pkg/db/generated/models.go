@@ -803,6 +803,7 @@ type Issue struct {
 	DerivedSummarySourceTaskID    pgtype.UUID        `json:"derived_summary_source_task_id"`
 	DerivedSummaryLatencyMs       pgtype.Int4        `json:"derived_summary_latency_ms"`
 	HandoffVersion                int64              `json:"handoff_version"`
+	ExecutionContext              []byte             `json:"execution_context"`
 }
 
 type IssueAgentResultRead struct {

@@ -1890,6 +1890,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
 					r.Put("/", h.UpdateIssue)
+					r.Get("/execution-context", h.GetIssueExecutionContext)
 					r.Post("/move-workspace", h.MoveIssueToWorkspace)
 					r.Post("/move", h.MoveIssue)
 					r.Post("/agent-result-read", h.MarkIssueAgentResultRead)

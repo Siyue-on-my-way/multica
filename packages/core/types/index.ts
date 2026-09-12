@@ -16,6 +16,13 @@ export type {
   SourceContextPreview,
   SourceContextAuthorState,
   IssueSourceContext,
+  ExecutionContext,
+  ExecutionContextKind,
+  ExecutionContextOS,
+  ExecutionContextEntry,
+  ExecutionContextSource,
+  ResolvedExecutionContext,
+  ResolvedExecutionContextEntry,
 } from "./issue";
 export type {
   IssueStatusCategory,

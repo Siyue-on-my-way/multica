@@ -11,3 +11,6 @@ export { CommentInput } from "./comment-input";
 export { ReplyInput } from "./reply-input";
 export { IssueMentionCard } from "./issue-mention-card";
 export { IssueChip } from "./issue-chip";
+export { ExecutionContextEditor, type ExecutionContextEditorValue, emptyExecutionContextEditorValue, toExecutionContext } from "./execution-context-editor";
+export { InheritedExecutionContextCard } from "./execution-context-card";
+export { IssueExecutionContextSection } from "./execution-context-section";

@@ -2424,10 +2424,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ThreadName = issue.Title
 		resp.CurrentIssueTitle = issue.Title
-		resp.CurrentIssueDescription = issue.Description.String
 		ancestorBrief := service.BuildAncestorBrief(r.Context(), h.Queries, issue)
 		resp.AncestorBrief = ancestorBrief.Text
 		resp.AncestorBriefRefs = ancestorBrief.Refs
+		// SIY-177: the live brief replaces, not repeats, the ANCESTOR_BRIEF
+		// copy the pre-SIY-177 flow baked into this description. An embedded
+		// block survives only when the walk could not reach one of the issues
+		// it references (broken chain) — then it is the only remaining copy.
+		resp.CurrentIssueDescription = service.StripRedundantAncestorBrief(
+			issue.Description.String,
+			service.AncestorBriefCoveredIDs(ancestorBrief.Refs, uuidToString(issue.ID)),
+		)
 		// Inject handoff state written by the previous agent so the new
 		// agent can resume without re-reading the full comment history.
 		if issue.WorkingBranch.Valid {
@@ -3247,6 +3254,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		if ws.Context.Valid {
 			resp.WorkspaceContext = ws.Context.String
+		}
+		// Structured execution context (SIY-177): the merged, de-duplicated
+		// chain view for THIS issue — project resources and every ancestor
+		// that left inheritance on (root-most first), then the issue's own
+		// entries. The daemon filters OS-tagged entries by its own runtime and
+		// renders the block once; identical inherited content can never appear
+		// twice because the resolution collapses it at the source. Project
+		// repo resources are deliberately excluded here (nil): they already
+		// ride the claim as resp.Repos / resp.ProjectResources.
+		if task.IssueID.Valid {
+			if issueForCtx, ctxErr := h.Queries.GetIssue(r.Context(), task.IssueID); ctxErr == nil {
+				resolved := service.ResolveInheritedExecutionContextForIssue(
+					r.Context(), h.Queries, issueForCtx, ws.IssuePrefix, nil,
+				)
+				resp.ExecutionContextEntries = resolved.Entries
+				resp.ExecutionContextSources = resolved.Sources
+			}
 		}
 	} else {
 		slog.Warn("task claim: failed to load workspace for context injection",

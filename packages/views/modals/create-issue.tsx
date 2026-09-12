@@ -15,6 +15,7 @@ import {
   ChevronRight,
   CircleUser,
   FolderKanban,
+  Layers,
   Maximize2,
   Minimize2,
   MoreHorizontal,
@@ -99,6 +100,13 @@ import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
 import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
+import {
+  ExecutionContextEditor,
+  emptyExecutionContextEditorValue,
+  toExecutionContext,
+  type ExecutionContextEditorValue,
+} from "../issues/components";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@multica/ui/components/ui/collapsible";
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -296,6 +304,13 @@ export function ManualCreatePanel({
     typeof data?.stage === "number" ? (data.stage as number) : null,
   );
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
+  // Structured execution context (SIY-177): the descendant-inheriting block,
+  // kept separate from the task description. Starts collapsed; the block
+  // header stays visible so the two-section structure is always apparent.
+  const [executionContext, setExecutionContext] = useState<ExecutionContextEditorValue>(
+    emptyExecutionContextEditorValue,
+  );
+  const [executionContextOpen, setExecutionContextOpen] = useState(false);
   // Toolbar fields hidden via Settings → Issue reuse the overflow reveal
   // pattern: the ⋯ menu item flips this open, which mounts the inline pill
   // (the popover's anchor) AND opens the picker. Closing without a value
@@ -428,6 +443,8 @@ export function ManualCreatePanel({
     setParentIssueId(undefined);
     setStage(null);
     setChildIssues([]);
+    setExecutionContext(emptyExecutionContextEditorValue());
+    setExecutionContextOpen(false);
     // Keep the just-used assignee for the next issue in the batch; reset
     // everything else across the manual + shared slots.
     setManual({
@@ -485,6 +502,9 @@ export function ManualCreatePanel({
       const activeAttachmentIds = draftAttachments
         .filter((a) => contentReferencesAttachment(description ?? "", a))
         .map((a) => a.id);
+      // SIY-177: the structured execution context rides beside the
+      // description; the description itself stays the task's own words.
+      const executionContextDocument = toExecutionContext(executionContext);
       let issue: Issue;
       if (anchorCommentId && sourcePreview) {
         issue = await createCommentSubIssueMutation.mutateAsync({
@@ -505,6 +525,7 @@ export function ManualCreatePanel({
               label_ids: labelIds.length > 0 ? labelIds : undefined,
               stage: parentIssueId && stage != null ? stage : undefined,
               project_id: projectId,
+              execution_context: executionContextDocument,
             },
           },
         });
@@ -529,6 +550,7 @@ export function ManualCreatePanel({
           // Stage is only meaningful for a sub-issue (relative to its siblings).
           stage: parentIssueId && stage != null ? stage : undefined,
           project_id: projectId,
+          execution_context: executionContextDocument,
         });
       }
 
@@ -942,8 +964,14 @@ export function ManualCreatePanel({
               />
             </div>
 
-            {/* Description — takes remaining space */}
+            {/* Description — takes remaining space. The caption keeps the
+                two-block structure visible: this body is THIS issue's task
+                description only; the execution-context block below is what
+                descendants inherit. */}
             <div {...descDropZoneProps} className="relative flex flex-1 min-h-0 overflow-y-auto px-5">
+              <div className="pb-1 text-caption text-muted-foreground">
+                {t(($) => $.execution_context.task_description_caption)}
+              </div>
               <ContentEditor
                 ref={descEditorRef}
                 defaultValue={draft.manual.description}
@@ -970,6 +998,30 @@ export function ManualCreatePanel({
                 onExpandedChange={onSourceContextExpandedChange}
               />
             )}
+
+            {/* Execution context (SIY-177) — the descendant-inheriting block,
+                kept visibly separate from the task description above. */}
+            <div className="shrink-0 px-5 pb-2">
+              <Collapsible open={executionContextOpen} onOpenChange={setExecutionContextOpen}>
+                <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-muted/30">
+                  <ChevronRight
+                    className={`h-3.5 w-3.5 shrink-0 transition-transform ${executionContextOpen ? "rotate-90" : ""}`}
+                  />
+                  <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="text-caption font-medium">
+                    {t(($) => $.execution_context.section_title)}
+                  </span>
+                  {executionContext.entries.length > 0 && (
+                    <span className="text-caption text-muted-foreground">
+                      {t(($) => $.execution_context.entry_count, { count: executionContext.entries.length })}
+                    </span>
+                  )}
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-1">
+                  <ExecutionContextEditor value={executionContext} onChange={setExecutionContext} />
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
 
             {/* Pre-trigger preview — a passive caption above the toolbar; reveals
                 when an agent assignee will pick the issue up. */}

@@ -438,7 +438,8 @@ vi.mock("../editor", async () => {
   };
 });
 
-vi.mock("../issues/components", () => ({
+vi.mock("../issues/components", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../issues/components")>()),
   StatusIcon: ({ status }: { status: string }) => <span data-testid="status-icon">{status}</span>,
   StatusPicker: () => <div data-testid="status-picker" />,
   PriorityPicker: () => <div data-testid="priority-picker" />,

@@ -1,0 +1,22 @@
+-- Structured execution context for an issue (SIY-177).
+--
+-- Execution context is the machine-actionable subset of an issue that every
+-- descendant needs to run the task: repository URLs / project resources,
+-- per-OS code directory mappings, start/test/deploy commands and run
+-- constraints. It is deliberately a first-class JSONB column — NOT text baked
+-- into `description` — so the runtime can merge it along the ancestor chain,
+-- de-duplicate by issue+version, and filter OS-specific entries without
+-- re-parsing free prose.
+--
+-- Shape (validated in server/internal/service/execution_context.go):
+--   {"version": 1, "inherit": true, "entries": [
+--     {"kind": "repo", "label": "...", "value": "https://...", "os": "*"},
+--     {"kind": "code_dir", "label": "...", "value": "/path", "os": "linux"},
+--     {"kind": "command", "label": "...", "value": "./restart.sh", "os": "*"},
+--     {"kind": "constraint", "label": "...", "value": "...", "os": "*"}
+--   ]}
+--
+-- `inherit` is the user-facing "继承给后代 issue" switch: when true, this
+-- issue's entries flow into every descendant's resolved execution context.
+-- NULL means the issue predates the feature and contributes nothing.
+ALTER TABLE issue ADD COLUMN execution_context JSONB;

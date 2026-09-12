@@ -220,7 +220,8 @@ const subissueSuggestSystemPrompt = `你是一个任务拆解助手，帮用户�
 1. 识别里面包含的一个或多个可执行任务；没有依赖关系、能同时开工的任务归入同一个 stage，有先后依赖的任务放到更晚的 stage。stage 从 1 开始。
 2. 每个子issue的 description 必须让接手的人或agent不需要回看原始对话就能独立开工——所以必须写清楚：背景/为什么要做这件事、讨论中已经拍板的技术方案或约束（不要让新agent重新纠结这些已经决定的事）、具体要做的事情和范围、验收标准、依赖哪些其他子issue。
 3. 给出建议挂载的父issue（从候选列表里选，用候选列表给出的 identifier 原样填写；选不出来就填 null，不要编造一个不在候选列表里的 identifier）。
-4. 严格输出JSON，不要输出多余文字，不要使用markdown代码块包裹。
+4. 执行上下文（仓库地址、代码目录、按操作系统的路径映射、启动/测试命令等运行必需信息）由系统按结构化字段自动继承给子issue，不要把这些内容复制进 description；description 只承载本条任务的背景、方案、范围、验收标准和依赖。上面的 ancestor brief 仅作为理解背景的参考，同样不要整段复制。
+5. 严格输出JSON，不要输出多余文字，不要使用markdown代码块包裹。
 
 输出结构：
 {"subissues":[{"title":"...","description":"...(按上面4点组织：背景/已拍板约束/范围/验收标准/依赖)","stage":1,"depends_on_titles":[],"suggested_parent_identifier":"SIY-30","confidence":0.86}]}`
@@ -278,7 +279,7 @@ func SuggestSubissues(
 	if err != nil {
 		return nil, err
 	}
-	return includeAncestorBriefInSubissueDescriptions(suggestions, sourceIssue.AncestorBrief), nil
+	return suggestions, nil
 }
 
 // SuggestSubissuesWithConfig is the per-business counterpart of
@@ -311,7 +312,7 @@ func SuggestSubissuesWithConfig(
 	if err != nil {
 		return nil, err
 	}
-	return includeAncestorBriefInSubissueDescriptions(suggestions, sourceIssue.AncestorBrief), nil
+	return suggestions, nil
 }
 
 func parseSubissueSuggestResponse(raw string) ([]SubissueSuggestion, error) {

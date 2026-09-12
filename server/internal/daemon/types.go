@@ -12,6 +12,38 @@ type AncestorBriefRef struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// ExecutionContextEntry mirrors one structured execution-context line from
+// the claim payload (SIY-177). Mirror field: internal/handler/service
+// service.ExecutionContextEntry, same JSON names. OS is "" (every OS),
+// linux, macos or windows; the daemon drops entries that do not match its
+// own runtime before rendering the block.
+type ExecutionContextEntry struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label,omitempty"`
+	Value string `json:"value"`
+	OS    string `json:"os,omitempty"`
+}
+
+// ExecutionContextSource mirrors one provenance record of the resolved
+// execution context (issue_id + version snapshot the entries came from).
+// Mirror field: service.ExecutionContextSource, same JSON names.
+type ExecutionContextSource struct {
+	IssueID    string `json:"issue_id,omitempty"`
+	Identifier string `json:"identifier,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Version    int    `json:"version"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
+	Project    bool   `json:"project,omitempty"`
+}
+
+// ExecutionContextEntryResolved is one resolved entry plus the provenance of
+// the chain node whose value won the merge. Mirror field:
+// service.ExecutionContextEntryResolved, same JSON names.
+type ExecutionContextEntryResolved struct {
+	ExecutionContextEntry
+	SourceIssueID string `json:"source_issue_id,omitempty"`
+}
+
 type AgentEntry struct {
 	Path string // stable startup-resolved CLI entry point; launch resolution may follow platform links to a concrete path
 	// Command is the bare command name or MULTICA_*_PATH value that Path was
@@ -104,6 +136,12 @@ type Task struct {
 	CurrentIssueDescription       string                 `json:"current_issue_description,omitempty"`
 	AncestorBrief                 string                 `json:"ancestor_brief,omitempty"`
 	AncestorBriefRefs             []AncestorBriefRef     `json:"ancestor_brief_refs,omitempty"`
+	// Structured execution context (SIY-177): already merged and de-duplicated
+	// by the server along the ancestor chain (issue_id + version provenance in
+	// the sources); the daemon applies the final OS filter for its own runtime
+	// and injects the block exactly once.
+	ExecutionContextEntries []ExecutionContextEntryResolved `json:"execution_context_entries,omitempty"`
+	ExecutionContextSources []ExecutionContextSource        `json:"execution_context_sources,omitempty"`
 	Agent                         *AgentData             `json:"agent,omitempty"`
 	ConnectedApps                 []ConnectedAppData     `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
 	Repos                         []RepoData             `json:"repos,omitempty"`

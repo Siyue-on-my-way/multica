@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,30 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		return "", false, nil
 	}
 	return util.UnescapeBackslashEscapes(inline), true, nil
+}
+
+// readExecutionContextMenuFile loads the structured execution-context
+// document (SIY-177) for --execution-context-file. The payload must be a JSON
+// object (or null, which clears the context on update); the workdir guard
+// matches --description-file so a stale file from another environment fails
+// loudly instead of silently seeding the context.
+func readExecutionContextMenuFile(cmd *cobra.Command, path string) (json.RawMessage, error) {
+	if err := ensureFileFlagWithinWorkdir(cmd, "execution-context-file", "execution-context", path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file for --execution-context-file: %w", err)
+	}
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return json.RawMessage("null"), nil
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &probe); err != nil {
+		return nil, fmt.Errorf("--execution-context-file must contain a JSON object: %w", err)
+	}
+	return json.RawMessage(trimmed), nil
 }
 
 // ensureFileFlagWithinWorkdir fails closed when a --<name>-file path resolves
@@ -535,6 +560,7 @@ func init() {
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
+	issueCreateCmd.Flags().String("execution-context-file", "", "Read the issue's structured execution context (SIY-177 JSON object: {version, inherit, entries}) from a UTF-8 file. The path must be inside the current working directory unless --allow-external-file is set.")
 
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
@@ -553,6 +579,7 @@ func init() {
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
 	issueUpdateCmd.Flags().String("working-branch", "", "Git branch the agent is currently working on (e.g. feat/issue-SIY-2); pass empty string to clear")
+	issueUpdateCmd.Flags().String("execution-context-file", "", "Read the issue's structured execution context (SIY-177 JSON object) from a UTF-8 file; a file containing null clears it. Path rules match --description-file.")
 	issueUpdateCmd.Flags().String("agent-status", "", "Machine-readable agent progress stage (e.g. analyzing, coding, in_review); pass empty string to clear")
 	issueUpdateCmd.Flags().String("handoff-summary", "", "JSON checkpoint for the next agent (e.g. '{\"current_progress\":\"...\",\"key_decisions\":[...],\"next_steps\":[...]}'); pass empty string to clear")
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
@@ -1209,6 +1236,13 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if priorityFlag != "" {
 		body["priority"] = priorityFlag
 	}
+	if v, _ := cmd.Flags().GetString("execution-context-file"); v != "" {
+		doc, err := readExecutionContextMenuFile(cmd, v)
+		if err != nil {
+			return err
+		}
+		body["execution_context"] = doc
+	}
 	if v, _ := cmd.Flags().GetString("parent"); v != "" {
 		parent, err := resolveIssueRef(ctx, client, v)
 		if err != nil {
@@ -1466,6 +1500,18 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 			body["handoff_summary"] = nil
 		} else {
 			body["handoff_summary"] = json.RawMessage(v)
+		}
+	}
+	if cmd.Flags().Changed("execution-context-file") {
+		v, _ := cmd.Flags().GetString("execution-context-file")
+		if v == "" {
+			body["execution_context"] = nil
+		} else {
+			doc, err := readExecutionContextMenuFile(cmd, v)
+			if err != nil {
+				return err
+			}
+			body["execution_context"] = doc
 		}
 	}
 
