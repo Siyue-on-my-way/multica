@@ -55,12 +55,12 @@ type taskContextSection struct {
 	Raw        string `json:"raw,omitempty"`
 }
 
-// ReportTaskContextObservation receives the daemon's redacted context
-// observation for a task and stores it. The body is the already-redacted
-// ContextObservation JSON (secrets/emails/absolute paths scrubbed; MCP raw
-// withheld), so it is stored verbatim without further parsing. A store
-// failure never returns success to the daemon, but the daemon treats a report
-// failure as non-fatal, so this only affects observability, not the run.
+// ReportTaskContextObservation receives the daemon's context observation for a
+// task and stores it. The body is the ContextObservation JSON as captured —
+// sections are stored verbatim by owner decision (SIY-180); no further
+// parsing or scrubbing happens here. A store failure never returns success to
+// the daemon, but the daemon treats a report failure as non-fatal, so this
+// only affects observability, not the run.
 func (h *Handler) ReportTaskContextObservation(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
@@ -109,7 +109,7 @@ func (h *Handler) ReportTaskContextObservation(w http.ResponseWriter, r *http.Re
 // the daemon's boundary estimate is returned (token_mode "estimated"). The full
 // session id and per-section raw text are withheld unless the caller is a
 // workspace owner/admin and requests them via ?raw=<key> (or ?raw=all); the
-// default response carries only redacted previews and a shortened session id.
+// default response carries only capped previews and a shortened session id.
 func (h *Handler) GetTaskContext(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
@@ -139,9 +139,10 @@ func (h *Handler) GetTaskContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The session id and raw section text are redacted (no secrets), but the
-	// issue requires the full values to be permission-gated. Owner/admin may
-	// request them; everyone else gets a shortened session id and previews only.
+	// Raw section text is stored verbatim (SIY-180 owner decision) and
+	// permission-gated on read: owner/admin may request it; everyone else gets
+	// previews only. The session id is shortened the same way — the resumable
+	// pointer is not needed to identify a run.
 	member, hasMember := ctxMember(r.Context())
 	canSeeFull := hasMember && roleAllowed(member.Role, "owner", "admin")
 	rawKey := r.URL.Query().Get("raw")

@@ -109,8 +109,10 @@ func TestRefineContextObservation_FallbackRetry(t *testing.T) {
 	if obs.FallbackReason == "" {
 		t.Fatalf("fallback must carry the failure reason")
 	}
-	mustNotContain(t, obs.FallbackReason, "/root/private", "fallback reason leaked absolute path")
-	mustNotContain(t, obs.FallbackReason, "owner@example.com", "fallback reason leaked email")
+	// Verbatim policy (SIY-180): the reason is stored as-is so the audit view
+	// shows the real failure text.
+	mustContain(t, obs.FallbackReason, "/root/private", "fallback reason lost absolute path")
+	mustContain(t, obs.FallbackReason, "owner@example.com", "fallback reason lost email")
 	if obs.SessionID != "fresh-after-retry" {
 		t.Fatalf("fallback must record the fresh retry's session id")
 	}
@@ -164,50 +166,56 @@ func TestFinalizeContextObservation_ProviderStartFailureIsUnknown(t *testing.T) 
 	if obs.ResumeActual != resumeActualUnknown {
 		t.Fatalf("provider startup failure must be unknown, got %q", obs.ResumeActual)
 	}
-	mustNotContain(t, obs.FallbackReason, "/root/provider", "startup error leaked absolute path")
-	mustNotContain(t, obs.FallbackReason, "owner@example.com", "startup error leaked email")
+	// Verbatim policy (SIY-180): the fallback reason is stored as-is so the
+	// audit view shows the real failure text.
+	mustContain(t, obs.FallbackReason, "/root/provider", "startup error lost absolute path")
+	mustContain(t, obs.FallbackReason, "owner@example.com", "startup error lost email")
 	promptSection := findSection(obs.Sections, "task_prompt")
 	if promptSection == nil || promptSection.Raw != prompt {
 		t.Fatal("startup failure must retain the assembled prompt for on-demand inspection")
 	}
 }
 
-func TestRedaction_StripsSecretsEmailsAndPaths(t *testing.T) {
+// TestObservationSections_StoreContentVerbatim is the SIY-180 owner-decision
+// regression: every observation section stores the delivered content verbatim —
+// emails, paths, tokens and MCP credentials included — because the audit view
+// exists to show exactly what reached the provider. Serving still
+// permission-gates Raw behind owner/admin (task_context.go).
+func TestObservationSections_StoreContentVerbatim(t *testing.T) {
 	task := baseTask()
 	task.TriggerCommentContent = "Reach me at owner@example.com and check /root/secret/config.yaml token=sk-abcd1234efgh5678ijklmnopqrstuv0123"
+	brief := "MULTICA_TOKEN=supersecretvalue123456 path /etc/ssl/private.key"
+	prompt := "issue body owner@example.com /abs/path/to/repo"
+	mcpConfig := json.RawMessage(`{"mcpServers":{"x":{"command":"x","env":{"API_KEY":"sk-live-token-1234567890abcdef"}}}}`)
 	obs := buildContextObservation(observationParams{
 		task:            task,
 		provider:        "claude",
 		runtimeID:       task.RuntimeID,
-		runtimeBrief:    "MULTICA_TOKEN=supersecretvalue123456 path /etc/ssl/private.key",
-		prompt:          "issue body owner@example.com /abs/path/to/repo",
-		mcpConfig:       json.RawMessage(`{"mcpServers":{"x":{"command":"x","env":{"API_KEY":"sk-live-token-1234567890abcdef"}}}}`),
+		runtimeBrief:    brief,
+		prompt:          prompt,
+		mcpConfig:       mcpConfig,
 		resumeSessionID: "",
 		resumeExpected:  false,
 		workdirReused:   false,
 	}, time.Time{})
 
-	for _, s := range obs.Sections {
-		if s.Preview == "" {
-			continue
-		}
-		mustNotContain(t, s.Preview, "owner@example.com", "preview leaked email")
-		mustNotContain(t, s.Preview, "/root/secret", "preview leaked abs path")
-		mustNotContain(t, s.Preview, "/etc/ssl/private.key", "preview leaked abs path")
-		mustNotContain(t, s.Preview, "sk-abcd1234", "preview leaked secret")
-		if s.Raw != "" {
-			mustNotContain(t, s.Raw, "owner@example.com", "raw leaked email")
-			mustNotContain(t, s.Raw, "supersecretvalue", "raw leaked token value")
-			mustNotContain(t, s.Raw, "/etc/ssl/private.key", "raw leaked abs path")
-		}
+	if section := findSection(obs.Sections, "brief"); section == nil || section.Raw != brief {
+		t.Fatalf("brief section must be verbatim, got %+v", section)
 	}
-	// MCP raw is withheld entirely — it carries live server credentials.
+	if section := findSection(obs.Sections, "trigger_comment"); section == nil || !strings.Contains(section.Raw, "owner@example.com") {
+		t.Fatalf("trigger_comment section must keep the email verbatim: %+v", section)
+	}
+	if section := findSection(obs.Sections, "task_prompt"); section == nil || section.Raw != prompt {
+		t.Fatalf("task_prompt section must be the assembled prompt verbatim, got %+v", section)
+	}
+	// MCP raw is stored verbatim too — the owner reads the observation to see
+	// everything the provider received.
 	mcp := findSection(obs.Sections, "mcp")
 	if mcp == nil {
 		t.Fatalf("mcp section must be present when config is non-empty")
 	}
-	if mcp.Raw != "" {
-		t.Fatalf("mcp raw must be withheld, got %q", mcp.Raw)
+	if !strings.Contains(mcp.Raw, "sk-live-token-1234567890abcdef") {
+		t.Fatalf("mcp raw must be verbatim, got %q", mcp.Raw)
 	}
 	if mcp.Injected {
 		t.Fatalf("mcp is not injected into the prompt text")
@@ -243,5 +251,12 @@ func mustNotContain(t *testing.T, s, substr, msg string) {
 	t.Helper()
 	if strings.Contains(s, substr) {
 		t.Fatalf("%s: %q contains %q", msg, s, substr)
+	}
+}
+
+func mustContain(t *testing.T, s, substr, msg string) {
+	t.Helper()
+	if !strings.Contains(s, substr) {
+		t.Fatalf("%s: %q does not contain %q", msg, s, substr)
 	}
 }

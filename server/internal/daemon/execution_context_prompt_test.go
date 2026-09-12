@@ -136,8 +136,8 @@ func TestBuildContextSectionsExecutionContextVerbatim(t *testing.T) {
 	if strings.Contains(execSection.Raw, "[REDACTED:path]") {
 		t.Fatalf("execution_context audit copy must not redact paths")
 	}
-	// The ancestor section keeps the existing privacy redaction — only the
-	// dedicated structured channel is verbatim.
+	// Every section is verbatim now (SIY-180 owner decision) — the ancestor
+	// audit copy shows the real path too; no [REDACTED:path] anywhere.
 	task2 := task
 	task2.AncestorBrief = "代码地址：/mnt/some/repo\n"
 	task2.ExecutionContextContents = nil
@@ -149,8 +149,11 @@ func TestBuildContextSectionsExecutionContextVerbatim(t *testing.T) {
 		prompt:       BuildPrompt(task2, "claude"),
 	})
 	for i := range sections2 {
-		if sections2[i].Key == "ancestor" && !strings.Contains(sections2[i].Raw, "[REDACTED:path]") {
-			t.Fatalf("ancestor section must keep path redaction, got %q", sections2[i].Raw)
+		if sections2[i].Key == "ancestor" && !strings.Contains(sections2[i].Raw, "/mnt/some/repo") {
+			t.Fatalf("ancestor section must be verbatim, got %q", sections2[i].Raw)
+		}
+		if sections2[i].Key == "task_prompt" && strings.Contains(sections2[i].Raw, "[REDACTED:path]") {
+			t.Fatalf("task_prompt audit copy must not redact paths, got %q", sections2[i].Raw)
 		}
 	}
 }

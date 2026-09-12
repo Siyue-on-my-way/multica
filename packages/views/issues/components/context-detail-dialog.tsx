@@ -22,7 +22,7 @@ import { formatTokens } from "../../runtimes/utils";
 // SIY-125: three-layer context detail. Overview summarizes the run's resume
 // and workdir state; Token breakdown shows each section's share of the input;
 // Field details lists every delivered section with its delivery channel,
-// injection flag, and a redacted preview, expanding the full (still-redacted)
+// injection flag, and a verbatim preview, expanding the full (verbatim)
 // raw text per section on demand behind an owner/admin-gated fetch.
 
 const DELIVERY_LABEL: Record<string, string> = {

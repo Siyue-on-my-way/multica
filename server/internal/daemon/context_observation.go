@@ -4,13 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // This file implements context observation: a structured, read-only record of
@@ -52,9 +49,12 @@ const (
 )
 
 // ContextSection is one delivered context fragment with its origin, delivery
-// channel, injection status, size, integrity digest, and a redacted preview.
-// Raw holds the full redacted text and is only returned by the API on explicit
-// demand after a permission check; previews are always safe to surface.
+// channel, injection status, size, integrity digest, and a verbatim preview.
+// Raw holds the full verbatim text and is only returned by the API on explicit
+// demand after a permission check; previews are capped excerpts. Everything is
+// stored verbatim by owner decision (SIY-180): the observation exists to show
+// exactly what the provider received, and redacting the audit copy made it
+// misrepresent the prompt.
 type ContextSection struct {
 	Key        string `json:"key"`
 	Source     string `json:"source"`
@@ -63,9 +63,9 @@ type ContextSection struct {
 	Bytes      int    `json:"bytes"`
 	TokenCount int    `json:"token_count"`
 	Truncated  bool   `json:"truncated"`
-	Digest     string `json:"digest"`        // first 8 hex chars of sha256 over the redacted raw
-	Preview    string `json:"preview"`       // redacted, capped excerpt
-	Raw        string `json:"raw,omitempty"` // redacted full text; only served on demand with permission
+	Digest     string `json:"digest"`        // first 8 hex chars of sha256 over the section text
+	Preview    string `json:"preview"`       // capped verbatim excerpt
+	Raw        string `json:"raw,omitempty"` // full verbatim text; only served on demand with permission
 }
 
 // ContextObservation is the full observation record for one task run. The
@@ -162,7 +162,7 @@ func refineContextObservation(obs *ContextObservation, sessionID string, freshRe
 	switch {
 	case freshRetryFired:
 		obs.ResumeActual = resumeActualFallback
-		obs.FallbackReason = redactForObservation(fallbackReason)
+		obs.FallbackReason = fallbackReason
 	case obs.SessionReused:
 		obs.ResumeActual = resumeActualResumed
 	default:
@@ -178,7 +178,7 @@ func refineContextObservation(obs *ContextObservation, sessionID string, freshRe
 func finalizeContextObservation(obs *ContextObservation, providerStarted bool, startupError, sessionID string, freshRetryFired bool, fallbackReason string, completedAt time.Time) {
 	if !providerStarted {
 		obs.ResumeActual = resumeActualUnknown
-		obs.FallbackReason = redactForObservation(startupError)
+		obs.FallbackReason = startupError
 		obs.CompletedAt = &completedAt
 		return
 	}
@@ -218,16 +218,14 @@ func buildContextSections(p observationParams) []ContextSection {
 	// server-side, OS-filtered for this runtime, injected once by
 	// buildExecutionContextBlock.
 	//
-	// Stored VERBATIM — no path/secret redaction (SIY-177 feedback). The
-	// execution context is user-authored machine info (repos, directories,
-	// commands) whose entire purpose is verbatim injection; redacting the
-	// audit copy made it look like the agent received "[REDACTED:path]"
-	// instead of the real paths. The create form warns against secrets; if
-	// one is entered anyway it will appear here exactly as it does in the
-	// provider prompt.
+	// Stored VERBATIM like every other section (SIY-177 feedback, then made
+	// universal in SIY-180): the execution context is user-authored machine
+	// info (repos, directories, commands) whose entire purpose is verbatim
+	// injection; redacting the audit copy made it look like the agent received
+	// "[REDACTED:path]" instead of the real paths.
 	execContextText := buildExecutionContextBlock(p.task)
 	if execContextText != "" {
-		out = append(out, sectionFromTextVerbatim("execution_context", "task.execution_context", deliveryProviderPrompt, true, execContextText))
+		out = append(out, sectionFromText("execution_context", "task.execution_context", deliveryProviderPrompt, true, execContextText))
 	}
 
 	// Handoff: structured checkpoint (in prompt + sidecar) plus the legacy note.
@@ -248,11 +246,11 @@ func buildContextSections(p observationParams) []ContextSection {
 		out = append(out, sectionFromText("coalesced_comments", "task.coalesced_comments", deliveryProviderPrompt, true, coalesced))
 	}
 
-	// MCP config delivered to the provider outside the prompt text. MCP config
-	// carries live server credentials (tokens, connection strings), so — matching
-	// the platform's own redactMcpConfig pattern — its raw text is never stored
-	// or surfaced, even on demand. The section reports only its size and that it
-	// was delivered.
+	// MCP config delivered to the provider outside the prompt text. Stored
+	// verbatim like every section (SIY-180 owner decision): it carries live
+	// server credentials, but this is a single-operator self-hosted workspace
+	// whose owner reads the observation to see exactly what the provider got,
+	// and the serving API still permission-gates Raw behind owner/admin.
 	if len(p.mcpConfig) > 0 && string(p.mcpConfig) != "null" {
 		out = append(out, ContextSection{
 			Key:        "mcp",
@@ -262,8 +260,8 @@ func buildContextSections(p observationParams) []ContextSection {
 			Bytes:      len(p.mcpConfig),
 			TokenCount: estimateTokensLength(len(p.mcpConfig)),
 			Digest:     digestString(string(p.mcpConfig)),
-			Preview:    "MCP config delivered to provider (withheld — contains secrets)",
-			Raw:        "",
+			Preview:    cappedExcerpt(string(p.mcpConfig)),
+			Raw:        string(p.mcpConfig),
 		})
 	}
 
@@ -286,8 +284,8 @@ func buildContextSections(p observationParams) []ContextSection {
 			Bytes:      residual,
 			TokenCount: estimateTokensLength(residual),
 			Digest:     digestString(p.prompt),
-			Preview:    redactedPreview(p.prompt),
-			Raw:        redactForObservation(p.prompt),
+			Preview:    cappedExcerpt(p.prompt),
+			Raw:        p.prompt,
 		})
 	}
 
@@ -319,8 +317,11 @@ func buildContextSections(p observationParams) []ContextSection {
 	return out
 }
 
-// sectionFromText builds a section from a source string, redacting both the
-// preview and the stored raw so no secret ever lands in the DB payload.
+// sectionFromText builds a section from a source string. The audit record
+// must match what the provider received, so both the preview and the stored
+// raw are the text verbatim — no masking (SIY-180 owner decision). Secret
+// hygiene stays upstream: form warnings, transcript auth layers, and the
+// serving API's owner/admin gate on Raw.
 func sectionFromText(key, source, delivery string, injected bool, text string) ContextSection {
 	return ContextSection{
 		Key:        key,
@@ -330,32 +331,7 @@ func sectionFromText(key, source, delivery string, injected bool, text string) C
 		Bytes:      len(text),
 		TokenCount: estimateTokens(text),
 		Digest:     digestString(text),
-		Preview:    redactedPreview(text),
-		Raw:        redactForObservation(text),
-	}
-}
-
-// sectionFromTextVerbatim is sectionFromText without redaction: the audit
-// record must match the prompt verbatim. Used only for the structured
-// execution context, whose user-authored paths and commands are the payload.
-func sectionFromTextVerbatim(key, source, delivery string, injected bool, text string) ContextSection {
-	preview := []rune(text)
-	if len(preview) > maxPreviewRunes {
-		preview = preview[:maxPreviewRunes]
-	}
-	previewExcerpt := string(preview)
-	if utf8.RuneCountInString(text) > maxPreviewRunes {
-		previewExcerpt += "…"
-	}
-	return ContextSection{
-		Key:        key,
-		Source:     source,
-		Delivery:   delivery,
-		Injected:   injected,
-		Bytes:      len(text),
-		TokenCount: estimateTokens(text),
-		Digest:     digestString(text),
-		Preview:    previewExcerpt,
+		Preview:    cappedExcerpt(text),
 		Raw:        text,
 	}
 }
@@ -452,58 +428,33 @@ func digestString(s string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// ---- redaction ----------------------------------------------------------
+// ---- redaction policy ----------------------------------------------------
 //
-// Previews and stored raw are both redacted: tokens, secrets, emails, and
-// absolute paths are removed before anything is persisted or surfaced. IDs
-// (issue/task/agent/runtime) are structural and kept. This mirrors the
-// courseware dump's redaction rules so the observation never carries a secret.
-//
-// Secret patterns (API keys, bearer tokens, JWTs, connection strings) are
-// scrubbed by the shared redact.Text, which is the house scrubber for
-// transcripts. The observation surface additionally redacts emails and absolute
-// paths — redact.Text deliberately leaves those to the auth layer, but the
-// issue requires the observation to withhold them explicitly.
+// None. Every section is stored and displayed verbatim (SIY-180 owner
+// decision): this is a single-operator self-hosted workspace and the
+// observation exists to show exactly what reached the provider — a redacted
+// audit copy misrepresented the prompt and broke path verification. Secret
+// hygiene stays upstream of this surface: the create forms warn against
+// credentials, transcripts are auth-gated, and the serving API permission-
+// gates Raw and the full session id behind owner/admin.
 
-var (
-	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
-	// reAbsPath matches any absolute-path token (a leading slash followed by a
-	// name char) regardless of what precedes it, so redaction survives the
-	// placeholder reshuffling redact.Text performs on the surrounding text.
-	reAbsPath = regexp.MustCompile(`(/[A-Za-z0-9][A-Za-z0-9_\-./]*)`)
-	// reSecret is a narrow net for provider/API key prefixes redact.Text may
-	// not classify; it deliberately does not match generic long alphanumeric
-	// runs (those would erase legitimate content like UUIDs).
-	reSecret = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._\-]{16,})`)
-)
-
-// redactForObservation scrubs secrets, emails, and absolute paths. Structural
-// content and markers ([NEW COMMENT], [Background source: Issue X], [truncated])
-// survive. The name avoids clashing with the imported redact package.
-func redactForObservation(s string) string {
-	s = redact.Text(s)
-	s = reSecret.ReplaceAllString(s, "[REDACTED]")
-	s = reEmail.ReplaceAllString(s, "[REDACTED:email]")
-	s = reAbsPath.ReplaceAllString(s, "[REDACTED:path]")
-	return s
-}
-
-// redactedPreview returns a short redacted excerpt for list/drawer summaries.
+// cappedExcerpt returns the first maxPreviewRunes of text with an ellipsis
+// when truncated. Verbatim by policy — no masking.
 const maxPreviewRunes = 200
 
-func redactedPreview(s string) string {
-	if s == "" {
+func cappedExcerpt(text string) string {
+	if text == "" {
 		return ""
 	}
-	r := []rune(s)
+	r := []rune(text)
 	if len(r) > maxPreviewRunes {
 		r = r[:maxPreviewRunes]
 	}
 	preview := string(r)
-	if utf8.RuneCountInString(s) > maxPreviewRunes {
+	if utf8.RuneCountInString(text) > maxPreviewRunes {
 		preview += "…"
 	}
-	return redactForObservation(preview)
+	return preview
 }
 
 func pluralCount(n int, singular, plural string) string {
