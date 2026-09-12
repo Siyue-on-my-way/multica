@@ -163,15 +163,22 @@ func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request
 		return subissuePlanContext{}, false
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
-	ancestorBrief := service.BuildAncestorBrief(r.Context(), h.Queries, issue)
-	if carryAncestorContext != nil && !*carryAncestorContext {
-		ancestorBrief = service.AncestorBrief{}
+	// SIY-177 feedback: the split/detail prompts carry the merged execution
+	// context (repos / directories / commands with provenance), never the
+	// ancestor issue descriptions. The carry switch gates whether that context
+	// feeds the model at all.
+	executionContext := ""
+	if carryAncestorContext == nil || *carryAncestorContext {
+		executionContext = service.RenderExecutionContextForPrompt(
+			h.resolveInheritedExecutionContext(r, issue, prefix),
+			service.SubissueExecutionContextPromptBudget,
+		)
 	}
 	sourceIssue := service.SubissueSuggestSourceIssue{
-		Identifier:    prefix + "-" + strconv.Itoa(int(issue.Number)),
-		Title:         issue.Title,
-		Description:   issue.Description.String,
-		AncestorBrief: ancestorBrief.Text,
+		Identifier:      prefix + "-" + strconv.Itoa(int(issue.Number)),
+		Title:           issue.Title,
+		Description:     issue.Description.String,
+		ExecutionContext: executionContext,
 	}
 	siblings, err := h.Queries.ListChildIssues(r.Context(), issue.ID)
 	if err != nil {

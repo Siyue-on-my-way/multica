@@ -167,7 +167,7 @@ const subissuePlanUserTemplate = `原始评论内容：
 当前 issue description：
 {{issue_description}}
 
-{{ancestor_brief}}
+{{execution_context}}
 
 已识别的原文任务清单（若提供，这就是权威任务来源，source_task_ids 必须使用这里的 id）：
 {{identified_tasks}}
@@ -221,7 +221,7 @@ const subissueStrategyUserTemplate = `原始评论内容：
 当前 issue description：
 {{issue_description}}
 
-{{ancestor_brief}}
+{{execution_context}}
 
 已识别的原文任务清单（这是权威清单，source_task_ids 只能使用这里的 id）：
 {{identified_tasks}}
@@ -845,7 +845,7 @@ func logSubissueAttempt(operation, commentID string, attempt int, stats llm.Gene
 
 const subissueDetailSystemPrompt = `你是一个 Multica 子issue详情生成助手。用户已经人工确认了拆分草稿，你只能为草稿中的每个条目补充可执行的详细 description、stage、依赖关系、建议父issue和 confidence。
 
-必须严格保留 approved_outline 中每个条目的 id、title、goal、数量和顺序，不得增加、删除、合并、拆分或改写这些字段。description 必须让接手者不需要回看原始讨论就能开工，并包含背景、已经确定的约束、工作范围和验收标准。summary_test 条目必须写集成测试、联调和整体验收步骤，服务端会把它安排到所属业务所有开发条目之后。执行上下文（仓库地址、代码目录、路径映射、启动/测试命令等）由系统按结构化字段自动继承，ancestor brief 仅作理解背景的参考：都不要整段复制进 description。严格只输出 JSON，不要输出 Markdown 或解释文字。
+必须严格保留 approved_outline 中每个条目的 id、title、goal、数量和顺序，不得增加、删除、合并、拆分或改写这些字段。description 必须让接手者不需要回看原始讨论就能开工，并包含背景、已经确定的约束、工作范围和验收标准。summary_test 条目必须写集成测试、联调和整体验收步骤，服务端会把它安排到所属业务所有开发条目之后。执行上下文（仓库地址、代码目录、路径映射、启动/测试命令等）由系统按结构化字段自动继承给子issue，prompt 中提供的执行上下文仅供理解任务环境：不要把这些内容或祖先 issue 的描述全文复制进 description。严格只输出 JSON，不要输出 Markdown 或解释文字。
 
 输出结构：
 {"subissues":[{"id":"plan-1-item-1","title":"...","goal":"...","description":"...","stage":1,"depends_on_ids":[],"suggested_parent_identifier":null,"confidence":0.86}]}`
@@ -857,7 +857,7 @@ const subissueDetailUserTemplate = `原始评论内容：
 当前 issue description：
 {{issue_description}}
 
-{{ancestor_brief}}
+{{execution_context}}
 
 当前业务概念（已用于确认草稿的标题前缀）：
 {{business_context}}
@@ -957,7 +957,7 @@ func buildSubissuePlanVariables(
 		"issue_identifier":  sourceIssue.Identifier,
 		"issue_title":       sourceIssue.Title,
 		"issue_description": truncateSubissueSuggestContent(strings.TrimSpace(sourceIssue.Description)),
-		"ancestor_brief":    sourceIssue.AncestorBrief,
+		"execution_context":  sourceIssue.ExecutionContext,
 		"business_context":  businessContextForPrompt(inferSubissueBusiness(sourceIssue, sourceContent)),
 		"siblings":          formatSubissueSuggestCandidates(siblings),
 		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),
@@ -1314,7 +1314,7 @@ func inferSubissueBusiness(sourceIssue SubissueSuggestSourceIssue, sourceContent
 	// The triggering comment is the closest business signal: it often contains
 	// an explicit label such as “订单支付” or 【日报/周报/年报生成】. The issue
 	// title and description then provide stable fallbacks for short comments.
-	texts := []string{sourceContent, sourceIssue.Title, sourceIssue.Description, sourceIssue.AncestorBrief}
+	texts := []string{sourceContent, sourceIssue.Title, sourceIssue.Description, sourceIssue.ExecutionContext}
 	for _, text := range texts {
 		if business := extractDelimitedSubissueBusiness(text); business != "" {
 			return business

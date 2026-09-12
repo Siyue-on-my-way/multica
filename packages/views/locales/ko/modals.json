@@ -113,8 +113,8 @@
     "diagnostics_system_prompt": "System prompt",
     "diagnostics_user_prompt": "User prompt",
     "diagnostics_raw_output": "원본 JSON",
-    "ancestor_context_label": "상위 Issue 컨텍스트 포함",
-    "ancestor_context_hint": "기본 사용：상위 Issue의 제목과 설명만 포함하며, 토론 내용은 포함하지 않습니다."
+    "ancestor_context_label": "분할 시 실행 컨텍스트 전달",
+    "ancestor_context_hint": "기본 사용：분할 시 병합된 실행 컨텍스트(저장소·디렉터리·명령)를 AI에 전달하며, 상위 issue 설명 전문은 전달하지 않습니다."
   },
   "execution_context": {
     "content_block_label": "{{source}}에서",

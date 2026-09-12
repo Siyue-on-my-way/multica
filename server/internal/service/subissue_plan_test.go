@@ -180,7 +180,7 @@ func TestBuildSubissuePlanVariablesIncludesBusinessContext(t *testing.T) {
 			Identifier:    "SIY-63",
 			Title:         "在评论区实现「一键生成子issue」功能",
 			Description:   "把评论中的任务拆成可执行的子issue。",
-			AncestorBrief: "上级业务：生成子issue",
+			ExecutionContext: "上级业务：生成子issue",
 		},
 		"我现在做的是“生成子issue”的业务，请拆分这个功能",
 		nil,
@@ -191,8 +191,8 @@ func TestBuildSubissuePlanVariablesIncludesBusinessContext(t *testing.T) {
 	if variables["issue_description"] != "把评论中的任务拆成可执行的子issue。" {
 		t.Fatalf("issue description = %q", variables["issue_description"])
 	}
-	if variables["ancestor_brief"] != "上级业务：生成子issue" {
-		t.Fatalf("ancestor brief = %q", variables["ancestor_brief"])
+	if variables["execution_context"] != "上级业务：生成子issue" {
+		t.Fatalf("execution context = %q", variables["execution_context"])
 	}
 	if variables["business_context"] != "生成子issue" {
 		t.Fatalf("business context = %q, want 生成子issue", variables["business_context"])

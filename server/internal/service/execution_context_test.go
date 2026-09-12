@@ -271,3 +271,33 @@ func TestResolveExecutionContextChainContentCollapse(t *testing.T) {
 		t.Fatalf("content-only resolution is not empty")
 	}
 }
+
+func TestRenderExecutionContextForPrompt(t *testing.T) {
+	resolved := ResolveExecutionContextChain([]ExecutionContextChainNode{
+		{IssueID: "root", Identifier: "SIY-1", Context: ExecutionContext{
+			Version: 2, Inherit: true,
+			Content: "启动：./restart.sh",
+			Entries: []ExecutionContextEntry{
+				{Kind: ExecutionContextKindRepo, Value: "https://github.com/acme/widget"},
+				{Kind: ExecutionContextKindCodeDir, Value: "/mnt/a/widget", OS: "linux"},
+			},
+		}, Apply: true},
+	})
+	text := RenderExecutionContextForPrompt(resolved, 0)
+	if !strings.Contains(text, "https://github.com/acme/widget") || !strings.Contains(text, "（来自 SIY-1）") {
+		t.Fatalf("entries with provenance missing: %q", text)
+	}
+	if !strings.Contains(text, "> 启动：./restart.sh") {
+		t.Fatalf("content block missing: %q", text)
+	}
+	if strings.Contains(text, "/mnt/a/widget") && !strings.Contains(text, "linux") {
+		t.Fatalf("OS tag must be visible: %q", text)
+	}
+	// Budget truncation.
+	if got := RenderExecutionContextForPrompt(resolved, 20); !strings.HasSuffix(got, "…[截断]") {
+		t.Fatalf("budget truncation missing: %q", got)
+	}
+	if got := RenderExecutionContextForPrompt(ResolvedExecutionContext{}, 0); got != "" {
+		t.Fatalf("empty resolution must render nothing, got %q", got)
+	}
+}

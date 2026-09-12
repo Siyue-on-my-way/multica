@@ -113,8 +113,8 @@
     "diagnostics_system_prompt": "System prompt",
     "diagnostics_user_prompt": "User prompt",
     "diagnostics_raw_output": "元の JSON",
-    "ancestor_context_label": "祖先 Issue のコンテキストを含める",
-    "ancestor_context_hint": "デフォルトで有効：祖先 Issue のタイトルと説明のみを含み、議論の履歴は含みません。"
+    "ancestor_context_label": "分割時に実行コンテキストを渡す",
+    "ancestor_context_hint": "デフォルトで有効：分割時にマージ済みの実行コンテキスト（リポジトリ・ディレクトリ・コマンド）を AI に渡します。祖先 issue の説明全文は渡しません。"
   },
   "execution_context": {
     "content_block_label": "{{source}}から",

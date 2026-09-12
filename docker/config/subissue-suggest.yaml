@@ -76,8 +76,8 @@ stages:
         当前 issue description：
         {{issue_description}}
 
-        上级 issue 上下文：
-        {{ancestor_brief}}
+        执行上下文（系统已按继承链合并，子issue运行时会自动获得，不要复制进 description）：
+        {{execution_context}}
 
         已识别的原文任务清单（若提供，这就是权威任务来源，source_task_ids 必须使用这里的 id）：
         {{identified_tasks}}
@@ -146,7 +146,7 @@ stages:
         当前 issue description：
         {{issue_description}}
 
-        {{ancestor_brief}}
+        {{execution_context}}
 
         已识别的原文任务清单（这是权威清单，source_task_ids 只能使用这里的 id）：
         {{identified_tasks}}
@@ -214,7 +214,7 @@ stages:
         当前 issue description：
         {{issue_description}}
 
-        {{ancestor_brief}}
+        {{execution_context}}
 
         已识别的原文任务清单（这是权威清单，source_task_ids 只能使用这里的 id）：
         {{identified_tasks}}
@@ -282,8 +282,8 @@ stages:
         当前 issue description：
         {{issue_description}}
 
-        上级 issue 上下文：
-        {{ancestor_brief}}
+        执行上下文（系统已按继承链合并，子issue运行时会自动获得，不要复制进 description）：
+        {{execution_context}}
 
         当前业务概念（已用于确认草稿的标题前缀）：
         {{business_context}}

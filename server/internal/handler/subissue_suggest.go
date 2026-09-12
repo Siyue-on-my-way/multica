@@ -79,12 +79,18 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
-	ancestorBrief := service.BuildAncestorBrief(r.Context(), h.Queries, issue)
+	// SIY-177 feedback: the generation prompt carries the merged execution
+	// context (repos / directories / commands with provenance), never the
+	// ancestor issue descriptions.
+	executionContext := service.RenderExecutionContextForPrompt(
+		h.resolveInheritedExecutionContext(r, issue, prefix),
+		service.SubissueExecutionContextPromptBudget,
+	)
 	sourceIssue := service.SubissueSuggestSourceIssue{
-		Identifier:    prefix + "-" + strconv.Itoa(int(issue.Number)),
-		Title:         issue.Title,
-		Description:   issue.Description.String,
-		AncestorBrief: ancestorBrief.Text,
+		Identifier:      prefix + "-" + strconv.Itoa(int(issue.Number)),
+		Title:           issue.Title,
+		Description:     issue.Description.String,
+		ExecutionContext: executionContext,
 	}
 
 	siblings, err := h.Queries.ListChildIssues(r.Context(), issue.ID)

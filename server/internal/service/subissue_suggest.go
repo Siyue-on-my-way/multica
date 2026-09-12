@@ -182,12 +182,14 @@ func (c LegacySubissueSuggestConfiguredLLM) DescribeTemplate(
 
 // SubissueSuggestSourceIssue is the minimal shape the prompt needs for the
 // issue whose comment is being decomposed, its existing children (to avoid
-// suggesting a duplicate), and the candidate parent list.
+// suggesting a duplicate), and the candidate parent list. ExecutionContext
+// carries the rendered inherited execution context (SIY-177 feedback) — the
+// generation prompt carries THAT, never the ancestor issue descriptions.
 type SubissueSuggestSourceIssue struct {
-	Identifier    string
-	Title         string
-	Description   string
-	AncestorBrief string
+	Identifier      string
+	Title           string
+	Description     string
+	ExecutionContext string
 }
 
 type SubissueCandidateParent struct {
@@ -220,7 +222,7 @@ const subissueSuggestSystemPrompt = `你是一个任务拆解助手，帮用户�
 1. 识别里面包含的一个或多个可执行任务；没有依赖关系、能同时开工的任务归入同一个 stage，有先后依赖的任务放到更晚的 stage。stage 从 1 开始。
 2. 每个子issue的 description 必须让接手的人或agent不需要回看原始对话就能独立开工——所以必须写清楚：背景/为什么要做这件事、讨论中已经拍板的技术方案或约束（不要让新agent重新纠结这些已经决定的事）、具体要做的事情和范围、验收标准、依赖哪些其他子issue。
 3. 给出建议挂载的父issue（从候选列表里选，用候选列表给出的 identifier 原样填写；选不出来就填 null，不要编造一个不在候选列表里的 identifier）。
-4. 执行上下文（仓库地址、代码目录、按操作系统的路径映射、启动/测试命令等运行必需信息）由系统按结构化字段自动继承给子issue，不要把这些内容复制进 description；description 只承载本条任务的背景、方案、范围、验收标准和依赖。上面的 ancestor brief 仅作为理解背景的参考，同样不要整段复制。
+4. 执行上下文（仓库地址、代码目录、按操作系统的路径映射、启动/测试命令等运行必需信息）由系统按结构化字段自动继承给子issue；prompt 中提供的执行上下文仅供你理解任务环境，不要把这些内容复制进 description。不要在 description 里复述祖先 issue 的描述全文——子issue 在运行时会由系统自动获得需要的上下文。description 只承载本条任务的背景、方案、范围、验收标准和依赖。
 5. 严格输出JSON，不要输出多余文字，不要使用markdown代码块包裹。
 
 输出结构：
@@ -237,7 +239,7 @@ const subissueSuggestUserTemplate = `要拆解的评论原文：
 当前 issue description：
 {{issue_description}}
 
-{{ancestor_brief}}
+{{execution_context}}
 
 当前 issue 下已有的兄弟子issue（避免拆出重复任务）：
 {{siblings}}
@@ -366,7 +368,7 @@ func buildSubissueSuggestVariables(
 		"issue_identifier":  sourceIssue.Identifier,
 		"issue_title":       sourceIssue.Title,
 		"issue_description": truncateSubissueSuggestContent(strings.TrimSpace(sourceIssue.Description)),
-		"ancestor_brief":    sourceIssue.AncestorBrief,
+		"execution_context":  sourceIssue.ExecutionContext,
 		"siblings":          formatSubissueSuggestCandidates(siblings),
 		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),
 	}

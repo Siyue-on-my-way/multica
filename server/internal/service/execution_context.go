@@ -469,3 +469,69 @@ func ResolveInheritedExecutionContextForIssue(
 
 	return ResolveExecutionContextChain(nodes)
 }
+
+// SubissueExecutionContextPromptBudget caps the execution-context text fed to
+// the sub-issue generation pass (SIY-177 feedback: the generation prompt
+// carries the merged execution context, never the ancestor descriptions).
+const SubissueExecutionContextPromptBudget = 4000
+
+// RenderExecutionContextForPrompt renders the resolved context as bounded
+// prompt text: OS-filtered entries first, then the free-form content blocks,
+// each tagged with its source. Nothing here duplicates ancestor descriptions —
+// the caller feeds this INSTEAD of the ancestor brief.
+func RenderExecutionContextForPrompt(resolved ResolvedExecutionContext, maxRunes int) string {
+	if resolved.Empty() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("执行上下文（系统已按继承链合并去重，来源标注在括号内；子issue运行时会自动获得这些信息，不要复制进 description）：\n")
+	for _, entry := range resolved.Entries {
+		kind := entry.Kind
+		if entry.OS != "" {
+			kind += "(" + entry.OS + ")"
+		}
+		if entry.Label != "" {
+			fmt.Fprintf(&b, "- [%s] %s: %s", kind, entry.Label, entry.Value)
+		} else {
+			fmt.Fprintf(&b, "- [%s] %s", kind, entry.Value)
+		}
+		if name := resolved.SourceName(entry.SourceIssueID); name != "" {
+			fmt.Fprintf(&b, "（来自 %s）", name)
+		}
+		b.WriteString("\n")
+	}
+	for _, content := range resolved.Contents {
+		name := resolved.SourceName(content.SourceIssueID)
+		if name != "" {
+			fmt.Fprintf(&b, "继承文本（来自 %s）：\n", name)
+		} else {
+			b.WriteString("继承文本：\n")
+		}
+		for _, line := range strings.Split(strings.TrimRight(content.Text, "\n"), "\n") {
+			b.WriteString("> ")
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	text := strings.TrimRight(b.String(), "\n")
+	if maxRunes > 0 {
+		if runes := []rune(text); len(runes) > maxRunes {
+			text = string(runes[:maxRunes]) + "\n…[截断]"
+		}
+	}
+	return text
+}
+
+// SourceName returns the display identifier (or title fallback) for a
+// contributing issue, used to tag prompt lines with provenance.
+func (r ResolvedExecutionContext) SourceName(issueID string) string {
+	for _, source := range r.Sources {
+		if source.IssueID == issueID {
+			if source.Identifier != "" {
+				return source.Identifier
+			}
+			return source.Title
+		}
+	}
+	return ""
+}
