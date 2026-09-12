@@ -110,6 +110,21 @@ export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
         <>
           {hasOwnContent && (
             <div className="rounded-md border border-border/50 p-2">
+              {/* Toggle sits top-right and reads 展开→收起, mirroring the
+                  inherited-context card's per-block header (SIY-177 feedback). */}
+              {content.split("\n").length > 2 && (
+                <div className="mb-1 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    className="text-caption text-primary hover:underline"
+                    onClick={() => setContentExpanded((value) => !value)}
+                  >
+                    {contentExpanded
+                      ? t(($) => $.execution_context_detail.collapse)
+                      : t(($) => $.execution_context_detail.expand)}
+                  </button>
+                </div>
+              )}
               <pre
                 className={`whitespace-pre-wrap break-words font-sans text-caption ${
                   contentExpanded ? "" : "line-clamp-2"
@@ -117,17 +132,6 @@ export function IssueExecutionContextSection({ issue }: { issue: Issue }) {
               >
                 {content}
               </pre>
-              {content.split("\n").length > 2 && (
-                <button
-                  type="button"
-                  className="mt-1 text-caption text-primary hover:underline"
-                  onClick={() => setContentExpanded((value) => !value)}
-                >
-                  {contentExpanded
-                    ? t(($) => $.execution_context_detail.collapse)
-                    : t(($) => $.execution_context_detail.expand)}
-                </button>
-              )}
             </div>
           )}
           <div>

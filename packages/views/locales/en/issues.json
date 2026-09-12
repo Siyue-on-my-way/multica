@@ -452,7 +452,7 @@
     "edit": "Edit",
     "edit_title": "Edit execution context",
     "empty_hint": "none set",
-    "expand": "Show all",
+    "expand": "Show more",
     "inherit_off": "not inherited",
     "inherit_on": "inherited by descendants",
     "own_title": "Execution context",
