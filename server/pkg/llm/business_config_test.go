@@ -254,7 +254,7 @@ func TestCheckedInSubissueConfigUsesThreeStrategiesAndDetail(t *testing.T) {
 		if !strings.Contains(strategy.Prompt.System, strategyNameForTest(stage)) {
 			t.Fatalf("%s prompt must name its strategy", stage)
 		}
-		for _, variable := range []string{"{{issue_description}}", "{{ancestor_brief}}", "{{business_context}}", "{{identified_tasks}}", "{{retry_feedback}}"} {
+		for _, variable := range []string{"{{issue_description}}", "{{execution_context}}", "{{business_context}}", "{{identified_tasks}}", "{{retry_feedback}}"} {
 			if !strings.Contains(strategy.Prompt.UserTemplate, variable) {
 				t.Fatalf("%s prompt missing business context variable %q", stage, variable)
 			}
@@ -543,8 +543,29 @@ func TestDockerBusinessConfigTemplatesMatchRegistry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read Docker config %s: %v", definition.fileName, err)
 		}
-		if _, err := parseBusinessFile(business, definition, data); err != nil {
+		parsed, err := parseBusinessFile(business, definition, data)
+		if err != nil {
 			t.Fatalf("parse Docker config %s: %v", definition.fileName, err)
+		}
+		// Every {{variable}} a checked-in template uses must be declared in the
+		// registry's allowlist — otherwise the file fails validation at load
+		// time and the deployment silently falls back to the legacy snapshot
+		// (SIY-177: an ancestor_brief → execution_context rename shipped
+		// without updating the allowlists and took the whole flow down).
+		validate := func(label string, allowed map[string]struct{}, prompt *businessFilePrompt) {
+			if prompt == nil {
+				return
+			}
+			for _, template := range []string{prompt.System, prompt.UserTemplate} {
+				if err := validateBusinessTemplate(template, allowed); err != nil {
+					t.Fatalf("%s %s: %v", label, business, err)
+				}
+			}
+		}
+		validate("top-level", definition.variables, parsed.Prompt)
+		for stageName, stageFile := range parsed.Stages {
+			stageAllowed := definition.stages[stageName].variables
+			validate("stage "+stageName, stageAllowed, stageFile.Prompt)
 		}
 	}
 }
