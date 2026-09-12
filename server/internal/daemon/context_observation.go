@@ -217,9 +217,17 @@ func buildContextSections(p observationParams) []ContextSection {
 	// Structured execution context (SIY-177): merged and de-duplicated
 	// server-side, OS-filtered for this runtime, injected once by
 	// buildExecutionContextBlock.
+	//
+	// Stored VERBATIM — no path/secret redaction (SIY-177 feedback). The
+	// execution context is user-authored machine info (repos, directories,
+	// commands) whose entire purpose is verbatim injection; redacting the
+	// audit copy made it look like the agent received "[REDACTED:path]"
+	// instead of the real paths. The create form warns against secrets; if
+	// one is entered anyway it will appear here exactly as it does in the
+	// provider prompt.
 	execContextText := buildExecutionContextBlock(p.task)
 	if execContextText != "" {
-		out = append(out, sectionFromText("execution_context", "task.execution_context", deliveryProviderPrompt, true, execContextText))
+		out = append(out, sectionFromTextVerbatim("execution_context", "task.execution_context", deliveryProviderPrompt, true, execContextText))
 	}
 
 	// Handoff: structured checkpoint (in prompt + sidecar) plus the legacy note.
@@ -324,6 +332,31 @@ func sectionFromText(key, source, delivery string, injected bool, text string) C
 		Digest:     digestString(text),
 		Preview:    redactedPreview(text),
 		Raw:        redactForObservation(text),
+	}
+}
+
+// sectionFromTextVerbatim is sectionFromText without redaction: the audit
+// record must match the prompt verbatim. Used only for the structured
+// execution context, whose user-authored paths and commands are the payload.
+func sectionFromTextVerbatim(key, source, delivery string, injected bool, text string) ContextSection {
+	preview := []rune(text)
+	if len(preview) > maxPreviewRunes {
+		preview = preview[:maxPreviewRunes]
+	}
+	previewExcerpt := string(preview)
+	if utf8.RuneCountInString(text) > maxPreviewRunes {
+		previewExcerpt += "…"
+	}
+	return ContextSection{
+		Key:        key,
+		Source:     source,
+		Delivery:   delivery,
+		Injected:   injected,
+		Bytes:      len(text),
+		TokenCount: estimateTokens(text),
+		Digest:     digestString(text),
+		Preview:    previewExcerpt,
+		Raw:        text,
 	}
 }
 

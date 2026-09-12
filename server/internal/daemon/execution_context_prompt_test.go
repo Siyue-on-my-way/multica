@@ -89,3 +89,68 @@ func TestBuildExecutionContextBlockEmpty(t *testing.T) {
 		t.Fatalf("content-only task must render, got %q", got)
 	}
 }
+
+// TestBuildContextSectionsExecutionContextVerbatim is the SIY-177 feedback
+// regression: the user's execution-context paths must reach the provider
+// prompt VERBATIM, and the observation's execution_context audit section must
+// store the same verbatim text (no [REDACTED:path] in the audit copy that
+// would make it look like the agent cannot see the real paths).
+func TestBuildContextSectionsExecutionContextVerbatim(t *testing.T) {
+	realPath := "'/mnt/a-opensource-tools/Toonflow/Toonflow-web'"
+	task := Task{
+		IssueID:                 "issue-1",
+		CurrentIssueTitle:       "T",
+		CurrentIssueDescription: "D",
+		ExecutionContextContents: []ExecutionContextContent{
+			{Text: "前端根目录：\n" + realPath, SourceIssueID: "root-id"},
+		},
+		ExecutionContextSources: []ExecutionContextSource{
+			{IssueID: "root-id", Identifier: "SIY-38", Version: 1},
+		},
+	}
+
+	prompt := BuildPrompt(task, "claude")
+	if !strings.Contains(prompt, realPath) {
+		t.Fatalf("provider prompt must carry the execution-context path verbatim")
+	}
+
+	sections := buildContextSections(observationParams{
+		task:         task,
+		provider:     "claude",
+		runtimeID:    "rt-1",
+		runtimeBrief: "# brief\n",
+		prompt:       prompt,
+	})
+	var execSection *ContextSection
+	for i := range sections {
+		if sections[i].Key == "execution_context" {
+			execSection = &sections[i]
+		}
+	}
+	if execSection == nil {
+		t.Fatalf("execution_context section missing from observation")
+	}
+	if !strings.Contains(execSection.Raw, realPath) {
+		t.Fatalf("execution_context audit copy must be verbatim, got %q", execSection.Raw)
+	}
+	if strings.Contains(execSection.Raw, "[REDACTED:path]") {
+		t.Fatalf("execution_context audit copy must not redact paths")
+	}
+	// The ancestor section keeps the existing privacy redaction — only the
+	// dedicated structured channel is verbatim.
+	task2 := task
+	task2.AncestorBrief = "代码地址：/mnt/some/repo\n"
+	task2.ExecutionContextContents = nil
+	sections2 := buildContextSections(observationParams{
+		task:         task2,
+		provider:     "claude",
+		runtimeID:    "rt-1",
+		runtimeBrief: "# brief\n",
+		prompt:       BuildPrompt(task2, "claude"),
+	})
+	for i := range sections2 {
+		if sections2[i].Key == "ancestor" && !strings.Contains(sections2[i].Raw, "[REDACTED:path]") {
+			t.Fatalf("ancestor section must keep path redaction, got %q", sections2[i].Raw)
+		}
+	}
+}
