@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -32,4 +33,20 @@ type Presigner interface {
 
 type DownloadPresigner interface {
 	PresignGetWithContentDisposition(ctx context.Context, key string, ttl time.Duration, contentDisposition string) (string, error)
+}
+
+// URLResolver is implemented by a storage facade that can distinguish the
+// backend which produced a persisted object URL. It is intentionally
+// optional: the common single-backend storage implementations only need the
+// Storage methods above, while a migration facade can use it for legacy URLs
+// without changing the public storage contract.
+type URLResolver interface {
+	ResolveURL(rawURL string) (Storage, string)
+}
+
+// LocalUploadServer is the small optional surface used by the compatibility
+// /uploads/* route. A hybrid backend implements it with its legacy local
+// reader; the primary backend remains responsible for every new write.
+type LocalUploadServer interface {
+	ServeFile(w http.ResponseWriter, r *http.Request, filename string)
 }

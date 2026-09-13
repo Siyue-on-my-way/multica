@@ -402,16 +402,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		daemonHub = daemonws.NewHub()
 	}
 
-	// Initialize storage with S3 as primary, fallback to local
+	// Initialize storage with the configured object store as the write path.
+	// When a local upload volume exists, keep it behind a hybrid facade so
+	// historical /uploads URLs remain readable while the migration script moves
+	// them to MinIO. The facade never writes new objects to that volume.
 	var store storage.Storage
 	s3 := storage.NewS3StorageFromEnv()
-	if s3 != nil {
+	local := storage.NewLocalStorageFromEnv()
+	if s3 != nil && local != nil {
+		store = storage.NewHybridStorage(s3, local)
+	} else if s3 != nil {
 		store = s3
-	} else {
-		local := storage.NewLocalStorageFromEnv()
-		if local != nil {
-			store = local
-		}
+	} else if local != nil {
+		store = local
 	}
 
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
@@ -1347,7 +1350,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// clients can then iframe-preview PDFs/HTML fetched straight from the
 	// static route instead of hitting the global frame-ancestors 'none' CSP.
 	// See MUL-3821 / #4477.
-	if _, ok := store.(*storage.LocalStorage); ok {
+	if _, ok := store.(storage.LocalUploadServer); ok {
 		r.Get("/uploads/*", h.ServeLocalUpload)
 	}
 

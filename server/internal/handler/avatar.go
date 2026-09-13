@@ -337,6 +337,12 @@ func attachmentIDFromStorageKey(key string) (pgtype.UUID, bool) {
 // yield a plausible-looking key. Re-deriving the URL from the key and
 // requiring an exact match rejects anything this storage did not mint.
 func (h *Handler) ownedStorageKey(rawURL string) string {
+	if resolver, ok := h.Storage.(storage.URLResolver); ok {
+		backend, key := resolver.ResolveURL(rawURL)
+		if backend != nil && key != "" && (backend.ObjectURL(key) == rawURL || strings.HasPrefix(rawURL, "/uploads/") || isUploadPath(rawURL)) {
+			return key
+		}
+	}
 	key := h.Storage.KeyFromURL(rawURL)
 	if key == "" || key == rawURL {
 		return ""
@@ -347,12 +353,26 @@ func (h *Handler) ownedStorageKey(rawURL string) string {
 	return key
 }
 
+func isUploadPath(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	return err == nil && strings.HasPrefix(parsed.Path, "/uploads/")
+}
+
 // avatarObjectLoadsUnauthenticated reports whether the raw storage URL is
 // already loadable by an unauthenticated browser fetch, in which case
 // rewriting it would only add a pointless hop through the API.
 func (h *Handler) avatarObjectLoadsUnauthenticated(rawURL string) bool {
 	// LocalStorage objects are served by the public /uploads/* route, whether
 	// the stored URL is site-relative or absolute via LOCAL_UPLOAD_BASE_URL.
+	// HybridStorage exposes the same route for legacy objects while MinIO stays
+	// the primary backend, so recognize the URL shape rather than the concrete
+	// storage type.
+	if _, ok := h.Storage.(storage.LocalUploadServer); ok {
+		parsed, err := url.Parse(rawURL)
+		if strings.HasPrefix(rawURL, "/uploads/") || (err == nil && strings.HasPrefix(parsed.Path, "/uploads/")) {
+			return true
+		}
+	}
 	if _, ok := h.Storage.(*storage.LocalStorage); ok {
 		return true
 	}

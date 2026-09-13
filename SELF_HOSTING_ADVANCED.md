@@ -91,8 +91,11 @@ Changes take effect after restarting the backend / compose stack. The web UI rea
 
 ### File Storage (Optional)
 
-Uploads and attachments are written to local disk by default. Set `S3_BUCKET` to
-use S3-compatible object storage instead.
+New attachments, screenshots, avatars, channel media, and source-context
+objects are written to the configured S3-compatible object store. The local
+upload volume is retained only as a read-only compatibility source while an
+existing deployment is migrated. If no object-store bucket is configured,
+Multica keeps the original local-disk behavior.
 
 #### Local disk (default)
 
@@ -100,6 +103,33 @@ use S3-compatible object storage instead.
 |----------|-------------|
 | `LOCAL_UPLOAD_DIR` | Directory attachments are written to (default: `./data/uploads`). The default is **relative to the backend's working directory** — `/app` in the bundled image, where the compose file mounts the `backend_uploads` volume. When running the binary manually it resolves against whatever directory you launched from, so set an absolute path; otherwise uploads land somewhere new each time the launch directory changes, and existing `attachment` rows point at files the server no longer looks for |
 | `LOCAL_UPLOAD_BASE_URL` | Optional absolute base for attachment URLs (e.g. `http://localhost:8080`). Leave empty to store `/uploads/...` paths that stay relative to the API origin |
+
+#### MinIO
+
+MinIO uses its native variable names. They take precedence over the legacy
+`S3_*` / `AWS_*` variables:
+
+| Variable | Description |
+|----------|-------------|
+| `MINIO_ENDPOINT` | MinIO endpoint without a scheme, for example `minio.example.internal:9000` |
+| `MINIO_BUCKET` | Bucket name only |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | MinIO credentials; keep them in the untracked deployment `.env` |
+| `MINIO_USE_SSL` | `true` for HTTPS, `false` for HTTP (default: `false`) |
+| `MINIO_REGION` | Signing region (default: `us-east-1`) |
+| `MINIO_USE_PATH_STYLE` | Optional addressing override (default: `true` for MinIO) |
+| `MINIO_PUBLIC_ENDPOINT` | Optional browser/database URL endpoint when it differs from `MINIO_ENDPOINT`; uses the same path-style setting and SSL default |
+
+For the shared middleware deployment, copy these values from
+`/mnt/middleware-center/projects/multica/.env` into `docker/.env`. The
+container must be able to resolve `host.docker.internal`; the supplied
+Compose file adds the Linux `host-gateway` mapping. Do not commit either env
+file or place the secret in source code, logs, issue comments, or migration
+reports.
+
+MinIO object URLs may be private or only reachable from the backend network.
+`ATTACHMENT_DOWNLOAD_MODE=auto` detects that shape and proxies downloads
+through the API; use `proxy` explicitly when the browser cannot reach the
+MinIO endpoint. Avatars use the same policy.
 
 #### S3 / CloudFront
 
@@ -138,6 +168,41 @@ cannot be turned into a public link by way of the avatar field.
 
 No configuration is required, and avatars uploaded before this behavior
 existed are fixed without a backfill.
+
+#### Migrating an existing local volume
+
+Run the migration while the backend is stopped, after taking a PostgreSQL
+backup and applying the `454_file_storage_migration` database migration:
+
+```bash
+# Inspect the local files and database references; this is the default mode.
+./scripts/migrate-local-files-to-minio.sh
+
+# Upload every legacy object, verify its SHA-256, rewrite URLs, and record the
+# source URL/key, target key, checksum, and retention deadline in PostgreSQL.
+./scripts/migrate-local-files-to-minio.sh --apply
+
+# Only after the retention window and a stability check have passed:
+./scripts/migrate-local-files-to-minio.sh --delete-legacy --apply
+```
+
+The script migrates attachment URLs, user/agent/squad/workspace avatars,
+channel-media intent URLs, and source-context intent URLs. It skips local
+storage sidecars and interrupted staging files. The first `--apply` keeps the
+legacy files and marks each rewritten row as `updated`; deletion is refused
+until the configured `MIGRATE_MINIO_RETAIN_FOR` interval has elapsed, the
+database has no remaining legacy URL reference, and the local file's checksum
+still matches the migration ledger. A changed or untracked file is retained
+for manual review.
+
+Set `MIGRATE_LOCAL_UPLOAD_DIR` when the legacy volume is not
+`docker/volumes/backend_uploads`, and `MIGRATE_MINIO_RETAIN_FOR` to another
+PostgreSQL interval such as `14 days`. The wrapper reads database and MinIO
+settings from `docker/.env` without sourcing unrelated values; host-side
+`host.docker.internal` endpoints are translated to loopback automatically for
+the migration SDK connection while the original endpoint remains the stored
+public URL. Set `MINIO_PUBLIC_ENDPOINT` explicitly when the backend's container
+endpoint and the browser-visible endpoint are different.
 
 ### Cookies
 

@@ -3,9 +3,11 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -17,30 +19,38 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 type S3Storage struct {
-	client       *s3.Client
-	bucket       string
-	region       string // used to construct virtual-hosted-style public URLs when no CDN/endpoint is set
-	cdnDomain    string // if set, returned URLs use this instead of bucket name
-	endpointURL  string // custom S3-compatible endpoint (e.g. MinIO)
-	usePathStyle bool   // controls path-style S3 addressing
+	client            *s3.Client
+	bucket            string
+	region            string // used to construct virtual-hosted-style public URLs when no CDN/endpoint is set
+	cdnDomain         string // if set, returned URLs use this instead of bucket name
+	endpointURL       string // custom S3-compatible endpoint (e.g. MinIO)
+	publicEndpointURL string // optional reader-facing endpoint; uploads still use endpointURL
+	usePathStyle      bool   // controls path-style S3 addressing
 }
 
 // NewS3StorageFromEnv creates an S3Storage from environment variables.
-// Returns nil if S3_BUCKET is not set.
+// Returns nil if neither S3_BUCKET nor MINIO_BUCKET is set.
 //
 // Environment variables:
-//   - S3_BUCKET (required)
-//   - S3_REGION (default: us-west-2)
+//   - MINIO_BUCKET / MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY /
+//     MINIO_USE_SSL (optional MinIO-native names; take precedence when set)
+//   - S3_BUCKET (required when MinIO is not configured)
+//   - S3_REGION (default: us-west-2; MinIO defaults to us-east-1)
 //   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional; falls back to default credential chain)
 //   - AWS_ENDPOINT_URL (optional S3-compatible endpoint)
-//   - S3_USE_PATH_STYLE (optional; defaults to true when AWS_ENDPOINT_URL is set)
+//   - MINIO_PUBLIC_ENDPOINT (optional reader-facing MinIO endpoint; when it
+//     differs from MINIO_ENDPOINT, uploads still use MINIO_ENDPOINT)
+//   - S3_USE_PATH_STYLE (optional; defaults to true when a custom endpoint is set)
 func NewS3StorageFromEnv() *S3Storage {
-	bucket := os.Getenv("S3_BUCKET")
+	minioConfigured := firstNonEmptyEnv("MINIO_BUCKET", "MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY") != ""
+	bucket := firstNonEmptyEnv("MINIO_BUCKET", "S3_BUCKET")
 	if bucket == "" {
-		slog.Info("S3_BUCKET not set, cloud upload disabled")
+		slog.Info("S3_BUCKET/MINIO_BUCKET not set, cloud upload disabled")
 		return nil
 	}
 	if looksLikeS3Hostname(bucket) {
@@ -50,17 +60,20 @@ func NewS3StorageFromEnv() *S3Storage {
 		)
 	}
 
-	region := os.Getenv("S3_REGION")
+	region := firstNonEmptyEnv("MINIO_REGION", "S3_REGION")
 	if region == "" {
 		region = "us-west-2"
+		if minioConfigured {
+			region = "us-east-1"
+		}
 	}
 
 	opts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
 	}
 
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	accessKey := firstNonEmptyEnv("MINIO_ACCESS_KEY", "AWS_ACCESS_KEY_ID")
+	secretKey := firstNonEmptyEnv("MINIO_SECRET_KEY", "AWS_SECRET_ACCESS_KEY")
 	if accessKey != "" && secretKey != "" {
 		opts = append(opts, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
@@ -75,8 +88,20 @@ func NewS3StorageFromEnv() *S3Storage {
 
 	cdnDomain := os.Getenv("CLOUDFRONT_DOMAIN")
 
-	endpointURL := os.Getenv("AWS_ENDPOINT_URL")
+	endpointURL := firstNonEmptyEnv("MINIO_ENDPOINT", "AWS_ENDPOINT_URL")
+	if minioConfigured {
+		endpointURL = normalizeS3Endpoint(endpointURL, envBoolOrDefault("MINIO_USE_SSL", false))
+	} else {
+		endpointURL = normalizeS3Endpoint(endpointURL, true)
+	}
+	publicEndpointURL := endpointURL
+	if publicEndpoint := firstNonEmptyEnv("MINIO_PUBLIC_ENDPOINT"); publicEndpoint != "" {
+		publicEndpointURL = normalizeS3Endpoint(publicEndpoint, envBoolOrDefault("MINIO_USE_SSL", false))
+	}
 	usePathStyle := s3UsePathStyleFromEnv(endpointURL)
+	if minioConfigured && !hasEnvValue("MINIO_USE_PATH_STYLE") && !hasEnvValue("S3_USE_PATH_STYLE") {
+		usePathStyle = true
+	}
 	s3Opts := []func(*s3.Options){}
 	if endpointURL != "" || usePathStyle {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
@@ -87,15 +112,55 @@ func NewS3StorageFromEnv() *S3Storage {
 		})
 	}
 
-	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain, "endpoint_url", endpointURL, "use_path_style", usePathStyle)
+	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain, "endpoint_url", endpointURL, "public_endpoint_url", publicEndpointURL, "use_path_style", usePathStyle)
 	return &S3Storage{
-		client:       s3.NewFromConfig(cfg, s3Opts...),
-		bucket:       bucket,
-		region:       region,
-		cdnDomain:    cdnDomain,
-		endpointURL:  endpointURL,
-		usePathStyle: usePathStyle,
+		client:            s3.NewFromConfig(cfg, s3Opts...),
+		bucket:            bucket,
+		region:            region,
+		cdnDomain:         cdnDomain,
+		endpointURL:       endpointURL,
+		publicEndpointURL: publicEndpointURL,
+		usePathStyle:      usePathStyle,
 	}
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func hasEnvValue(name string) bool {
+	value, ok := os.LookupEnv(name)
+	return ok && strings.TrimSpace(value) != ""
+}
+
+func envBoolOrDefault(name string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := parseBoolEnv(raw)
+	if err != nil {
+		slog.Warn("invalid boolean storage environment value, using default", "name", name, "value", raw, "default", fallback)
+		return fallback
+	}
+	return value
+}
+
+func normalizeS3Endpoint(endpoint string, useSSL bool) string {
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if endpoint == "" || strings.Contains(endpoint, "://") {
+		return endpoint
+	}
+	scheme := "http"
+	if useSSL {
+		scheme = "https"
+	}
+	return scheme + "://" + endpoint
 }
 
 func (s *S3Storage) CdnDomain() string {
@@ -209,10 +274,13 @@ func (s *S3Storage) storageClass() types.StorageClass {
 //
 //	"https://my-bucket.s3.us-east-1.amazonaws.com/uploads/x/y.png" → "uploads/x/y.png"
 func (s *S3Storage) KeyFromURL(rawURL string) string {
-	if s.endpointURL != "" {
+	for _, endpointURL := range []string{s.publicEndpointURL, s.endpointURL} {
+		if endpointURL == "" {
+			continue
+		}
 		for _, prefix := range []string{
-			customEndpointObjectPrefix(s.endpointURL, s.bucket, true),
-			customEndpointObjectPrefix(s.endpointURL, s.bucket, false),
+			customEndpointObjectPrefix(endpointURL, s.bucket, true),
+			customEndpointObjectPrefix(endpointURL, s.bucket, false),
 		} {
 			if strings.HasPrefix(rawURL, prefix) {
 				return strings.TrimPrefix(rawURL, prefix)
@@ -268,6 +336,26 @@ func (s *S3Storage) GetReader(ctx context.Context, key string) (io.ReadCloser, e
 		return nil, fmt.Errorf("s3 GetObject: %w", err)
 	}
 	return out.Body, nil
+}
+
+// isS3NotFoundError classifies the SDK's API and HTTP wrappers without
+// depending on one particular S3-compatible server's error type. It is used
+// by the migration facade to fall back to a legacy local object only when the
+// primary object is genuinely absent; network/authentication failures must
+// remain visible instead of silently serving stale disk data.
+func isS3NotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch strings.ToLower(apiErr.ErrorCode()) {
+		case "nosuchkey", "notfound", "nosuchobject", "nosuchbucket", "no such key":
+			return true
+		}
+	}
+	var responseErr *smithyhttp.ResponseError
+	return errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusNotFound
 }
 
 func (s *S3Storage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
@@ -391,13 +479,20 @@ func (s *S3Storage) uploadedURL(key string) string {
 	if s.cdnDomain != "" {
 		return fmt.Sprintf("https://%s/%s", s.cdnDomain, key)
 	}
-	if s.endpointURL != "" {
-		return customEndpointObjectURL(s.endpointURL, s.bucket, key, s.usePathStyle)
+	if endpointURL := s.publicEndpoint(); endpointURL != "" {
+		return customEndpointObjectURL(endpointURL, s.bucket, key, s.usePathStyle)
 	}
 	if s.usePathStyle || strings.Contains(s.bucket, ".") {
 		return fmt.Sprintf("https://s3.%s.amazonaws.com/%s/%s", s.region, s.bucket, key)
 	}
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", s.bucket, s.region, key)
+}
+
+func (s *S3Storage) publicEndpoint() string {
+	if s.publicEndpointURL != "" {
+		return s.publicEndpointURL
+	}
+	return s.endpointURL
 }
 
 func customEndpointObjectURL(endpointURL, bucket, key string, usePathStyle bool) string {

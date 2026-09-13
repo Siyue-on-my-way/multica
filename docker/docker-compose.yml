@@ -44,6 +44,8 @@ services:
     environment:
       MULTICA_LLM_CONFIG_DIR: /app/config/llm
       MULTICA_LLM_CONFIG_POLL_INTERVAL: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - ./.env
     restart: unless-stopped

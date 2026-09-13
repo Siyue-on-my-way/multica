@@ -530,6 +530,108 @@ func TestNewS3StorageFromEnv_ConfiguresEndpointPathStyle(t *testing.T) {
 	})
 }
 
+func TestNewS3StorageFromEnvSupportsMinIONames(t *testing.T) {
+	for _, name := range []string{
+		"S3_BUCKET", "S3_REGION", "S3_USE_PATH_STYLE",
+		"AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+		"MINIO_BUCKET", "MINIO_REGION", "MINIO_ENDPOINT",
+		"MINIO_PUBLIC_ENDPOINT",
+		"MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_USE_SSL",
+		"MINIO_USE_PATH_STYLE",
+	} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("MINIO_BUCKET", "multica-bucket")
+	t.Setenv("MINIO_ENDPOINT", "minio.internal:9000")
+	t.Setenv("MINIO_ACCESS_KEY", "minio-access")
+	t.Setenv("MINIO_SECRET_KEY", "minio-secret")
+	t.Setenv("MINIO_USE_SSL", "false")
+
+	store := NewS3StorageFromEnv()
+	if store == nil {
+		t.Fatal("NewS3StorageFromEnv() = nil")
+	}
+	if store.bucket != "multica-bucket" {
+		t.Fatalf("bucket = %q, want %q", store.bucket, "multica-bucket")
+	}
+	if store.region != "us-east-1" {
+		t.Fatalf("region = %q, want MinIO default us-east-1", store.region)
+	}
+	if store.endpointURL != "http://minio.internal:9000" {
+		t.Fatalf("endpointURL = %q, want normalized http endpoint", store.endpointURL)
+	}
+	if !store.usePathStyle || !store.client.Options().UsePathStyle {
+		t.Fatal("MinIO endpoint should default to path-style addressing")
+	}
+	if got, want := store.uploadedURL("workspaces/ws/file.txt"), "http://minio.internal:9000/multica-bucket/workspaces/ws/file.txt"; got != want {
+		t.Fatalf("uploadedURL() = %q, want %q", got, want)
+	}
+}
+
+func TestNewS3StorageFromEnvMinIOHTTPS(t *testing.T) {
+	for _, name := range []string{
+		"S3_BUCKET", "S3_REGION", "S3_USE_PATH_STYLE",
+		"AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+		"MINIO_BUCKET", "MINIO_REGION", "MINIO_ENDPOINT",
+		"MINIO_PUBLIC_ENDPOINT",
+		"MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_USE_SSL",
+		"MINIO_USE_PATH_STYLE",
+	} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("MINIO_BUCKET", "secure-bucket")
+	t.Setenv("MINIO_ENDPOINT", "minio.internal:9443")
+	t.Setenv("MINIO_ACCESS_KEY", "minio-access")
+	t.Setenv("MINIO_SECRET_KEY", "minio-secret")
+	t.Setenv("MINIO_USE_SSL", "true")
+
+	store := NewS3StorageFromEnv()
+	if store == nil {
+		t.Fatal("NewS3StorageFromEnv() = nil")
+	}
+	if got := store.endpointURL; got != "https://minio.internal:9443" {
+		t.Fatalf("endpointURL = %q, want normalized https endpoint", got)
+	}
+}
+
+func TestNewS3StorageFromEnvUsesSeparateMinIOPublicEndpoint(t *testing.T) {
+	for _, name := range []string{
+		"S3_BUCKET", "S3_REGION", "S3_USE_PATH_STYLE",
+		"AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+		"MINIO_BUCKET", "MINIO_REGION", "MINIO_ENDPOINT", "MINIO_PUBLIC_ENDPOINT",
+		"MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_USE_SSL", "MINIO_USE_PATH_STYLE",
+	} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("MINIO_BUCKET", "multica-bucket")
+	t.Setenv("MINIO_ENDPOINT", "127.0.0.1:1883")
+	t.Setenv("MINIO_PUBLIC_ENDPOINT", "host.docker.internal:1883")
+	t.Setenv("MINIO_ACCESS_KEY", "minio-access")
+	t.Setenv("MINIO_SECRET_KEY", "minio-secret")
+	t.Setenv("MINIO_USE_SSL", "false")
+
+	store := NewS3StorageFromEnv()
+	if store == nil {
+		t.Fatal("NewS3StorageFromEnv() = nil")
+	}
+	if got, want := store.endpointURL, "http://127.0.0.1:1883"; got != want {
+		t.Fatalf("endpointURL = %q, want %q", got, want)
+	}
+	if got, want := store.publicEndpointURL, "http://host.docker.internal:1883"; got != want {
+		t.Fatalf("publicEndpointURL = %q, want %q", got, want)
+	}
+	key := "workspaces/ws/file.txt"
+	if got, want := store.ObjectURL(key), "http://host.docker.internal:1883/multica-bucket/"+key; got != want {
+		t.Fatalf("ObjectURL() = %q, want %q", got, want)
+	}
+	if got := store.KeyFromURL(store.ObjectURL(key)); got != key {
+		t.Fatalf("KeyFromURL(public URL) = %q, want %q", got, key)
+	}
+	if got := store.KeyFromURL(store.endpointURL + "/multica-bucket/" + key); got != key {
+		t.Fatalf("KeyFromURL(connection URL) = %q, want %q", got, key)
+	}
+}
+
 func TestS3StorageUploadedURL(t *testing.T) {
 	const key = "uploads/abc/file.png"
 

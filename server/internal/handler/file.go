@@ -176,7 +176,7 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 	// Only CloudFront mode overrides the stable path here; the presign and proxy
 	// modes already leave DownloadURL as the stable path and resolve it at
 	// download time, so stable mode is a no-op for them.
-	if h.CFSigner != nil && mode != attachmentURLModeStable {
+	if h.CFSigner != nil && mode != attachmentURLModeStable && !h.isLegacyStorageURL(a.Url) {
 		resp.DownloadURL = h.CFSigner.SignedURL(a.Url, time.Now().Add(h.attachmentDownloadURLTTL()))
 	}
 	if a.IssueID.Valid {
@@ -686,8 +686,7 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 	case attachmentDownloadModePresign:
-		if presigner, ok := h.Storage.(storage.DownloadPresigner); ok {
-			key := h.Storage.KeyFromURL(att.Url)
+		if presigner, key, ok := h.downloadPresignerForURL(att.Url); ok {
 			signedURL, err := presigner.PresignGetWithContentDisposition(r.Context(), key, h.attachmentDownloadURLTTL(), "")
 			if err != nil {
 				slog.Warn("failed to presign inline attachment URL", "id", uuidToString(att.ID), "key", key, "error", err)
@@ -853,7 +852,7 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 			http.StatusFound,
 		)
 	case attachmentDownloadModePresign:
-		presigner, ok := h.Storage.(storage.DownloadPresigner)
+		presigner, key, ok := h.downloadPresignerForURL(att.Url)
 		if !ok {
 			writeError(w, http.StatusInternalServerError, "attachment storage does not support presigned downloads")
 			return
@@ -879,6 +878,12 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) resolveAttachmentDownloadMode(rawURL string) attachmentDownloadMode {
+	// A local URL belongs to the migration fallback. Never try to sign it with
+	// MinIO/CloudFront credentials even when the operator explicitly selected
+	// presign or CloudFront mode for newly-created objects.
+	if h.isLegacyStorageURL(rawURL) {
+		return attachmentDownloadModeProxy
+	}
 	switch h.attachmentDownloadMode() {
 	case attachmentDownloadModeCloudFront:
 		return attachmentDownloadModeCloudFront
@@ -897,6 +902,31 @@ func (h *Handler) resolveAttachmentDownloadMode(rawURL string) attachmentDownloa
 		return attachmentDownloadModePresign
 	}
 	return attachmentDownloadModeProxy
+}
+
+func (h *Handler) downloadPresignerForURL(rawURL string) (storage.DownloadPresigner, string, bool) {
+	if resolver, ok := h.Storage.(storage.URLResolver); ok {
+		backend, key := resolver.ResolveURL(rawURL)
+		presigner, canPresign := backend.(storage.DownloadPresigner)
+		return presigner, key, canPresign
+	}
+	presigner, ok := h.Storage.(storage.DownloadPresigner)
+	if !ok {
+		return nil, "", false
+	}
+	return presigner, h.Storage.KeyFromURL(rawURL), true
+}
+
+func (h *Handler) isLegacyStorageURL(rawURL string) bool {
+	if resolver, ok := h.Storage.(storage.URLResolver); ok {
+		backend, _ := resolver.ResolveURL(rawURL)
+		_, isLocal := backend.(*storage.LocalStorage)
+		return isLocal
+	}
+	if _, ok := h.Storage.(*storage.LocalStorage); ok {
+		return true
+	}
+	return strings.HasPrefix(rawURL, "/uploads/") || isUploadPath(rawURL)
 }
 
 func shouldProxyAttachmentURL(rawURL string) bool {
@@ -938,7 +968,7 @@ func shouldProxyAttachmentURL(rawURL string) bool {
 // headers the global "frame-ancestors 'none'" policy blocks those previews.
 // See MUL-3821 / #4477.
 func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
-	local, ok := h.Storage.(*storage.LocalStorage)
+	local, ok := h.Storage.(storage.LocalUploadServer)
 	if !ok {
 		http.NotFound(w, r)
 		return
