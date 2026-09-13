@@ -1497,11 +1497,15 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, skillID := range skillUUIDs {
-		if _, err := h.Queries.GetSkillInWorkspace(r.Context(), db.GetSkillInWorkspaceParams{
+		// Same visibility rule as the skill picker: the workspace's own skills
+		// plus global skills are assignable. A strict same-workspace lookup
+		// here rejected exactly the cross-workspace global skills the picker
+		// offered.
+		if _, err := h.Queries.GetSkillVisibleInWorkspace(r.Context(), db.GetSkillVisibleInWorkspaceParams{
 			ID:          skillID,
 			WorkspaceID: wsUUID,
 		}); err != nil {
-			writeError(w, http.StatusBadRequest, "skill does not belong to this workspace")
+			writeError(w, http.StatusBadRequest, "skill not available in this workspace")
 			return
 		}
 	}

@@ -2988,7 +2988,7 @@ func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.validateAgentSkillIDsInWorkspace(w, r, agent, skillUUIDs) {
+	if !h.validateAgentSkillIDsAssignable(w, r, agent, skillUUIDs) {
 		return
 	}
 
@@ -3043,7 +3043,7 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.validateAgentSkillIDsInWorkspace(w, r, agent, skillUUIDs) {
+	if !h.validateAgentSkillIDsAssignable(w, r, agent, skillUUIDs) {
 		return
 	}
 
@@ -3134,7 +3134,16 @@ func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 	h.writeUpdatedAgentSkills(w, r, agent)
 }
 
-func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
+// validateAgentSkillIDsAssignable checks every skill id the caller wants to
+// attach to an agent is one this workspace can actually see. The add-skill
+// picker lists the workspace's own skills PLUS global skills (they are
+// readable everywhere by design), so the check must use the same visibility
+// rule — a strict same-workspace lookup here rejects exactly the global
+// skills the picker offered, and the assignment fails with "skill not found"
+// (a cross-workspace global skill was the repro). Runtime dispatch loads
+// assigned skills by id with no workspace filter, so a visible global skill
+// dispatches like any other.
+func (h *Handler) validateAgentSkillIDsAssignable(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
 	seen := map[string]struct{}{}
 	for _, skillID := range skillUUIDs {
 		key := uuidToString(skillID)
@@ -3142,7 +3151,7 @@ func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *htt
 			continue
 		}
 		seen[key] = struct{}{}
-		if _, err := h.Queries.GetSkillInWorkspace(r.Context(), db.GetSkillInWorkspaceParams{
+		if _, err := h.Queries.GetSkillVisibleInWorkspace(r.Context(), db.GetSkillVisibleInWorkspaceParams{
 			ID:          skillID,
 			WorkspaceID: agent.WorkspaceID,
 		}); err != nil {

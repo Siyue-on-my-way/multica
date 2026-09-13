@@ -1932,6 +1932,42 @@ func insertHandlerTestSkillInForeignWorkspace(t *testing.T, namePrefix, content 
 	return skillID
 }
 
+// A cross-workspace skill that is GLOBAL is offered by the add-skill picker
+// (visibility = own skills + globals) and must be assignable: the strict
+// same-workspace check here rejected exactly the skills the picker offered,
+// so the assignment died with "skill not found". A foreign skill without
+// is_global stays rejected (TestAddAgentSkillsRejectsCrossWorkspaceSkillID).
+func TestAddAgentSkillsAcceptsCrossWorkspaceGlobalSkill(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Add Global Skill", nil)
+	slug := "global-skill-" + strings.ToLower(strings.ReplaceAll(t.Name(), "_", "-"))
+	foreignWsID := dbfx.Insert(t, "workspace", testutil.Cols{
+		"name":         "Global Skill Workspace " + t.Name(),
+		"slug":         slug,
+		"description":  "",
+		"issue_prefix": "GSW",
+	})
+	globalSkillID := dbfx.Insert(t, "skill", testutil.Cols{
+		"workspace_id": foreignWsID,
+		"name":         "add-global-" + t.Name(),
+		"description":  "fixture",
+		"content":      "global body",
+		"config":       testutil.Raw("'{}'::jsonb"),
+		"created_by":   testUserID,
+		"is_global":    true,
+	})
+
+	req := newRequest("POST", "/api/agents/"+agentID+"/skills/add", map[string]any{
+		"skill_ids": []string{globalSkillID},
+	})
+	req = withURLParam(req, "id", agentID)
+	w := testutil.Call(t, testHandler.AddAgentSkills, req).Want(http.StatusOK)
+
+	var resp []SkillSummaryResponse
+	w.JSON(&resp)
+	assertSkillIDsPresent(t, resp, globalSkillID)
+	assertAgentSkillRowCount(t, agentID, 1)
+}
+
 func assertSkillIDsPresent(t *testing.T, skills []SkillSummaryResponse, wantIDs ...string) {
 	t.Helper()
 	got := make(map[string]bool, len(skills))
