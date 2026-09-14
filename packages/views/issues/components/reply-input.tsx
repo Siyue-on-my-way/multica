@@ -15,6 +15,8 @@ import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
+import { SavedPhrasePicker } from "./saved-phrase-picker";
+import type { SavedPhrase } from "@multica/core/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,6 +75,7 @@ function ReplyInput({
   const [content, setContent] = useState(initialDraft ?? "");
   const setDraft = useCommentDraftStore((s) => s.setDraft);
   const [isEmpty, setIsEmpty] = useState(!initialDraft?.trim());
+  const [pendingPhrase, setPendingPhrase] = useState<string | null>(null);
   const [suppressedAgentIds, setSuppressedAgentIds] = useState<Set<string>>(() => new Set());
   const triggerPreview = useCommentTriggerPreview({ issueId, parentId, content });
   // Uploads for this reply session (MUL-5181) — owned by the coordinator. With
@@ -98,6 +101,20 @@ function ReplyInput({
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
+
+  useEffect(() => {
+    if (!lazy.ready || !pendingPhrase) return;
+    if (editorRef.current?.insertMarkdownAtEnd(pendingPhrase)) {
+      setPendingPhrase(null);
+    }
+  }, [lazy.ready, pendingPhrase]);
+
+  const insertSavedPhrase = useCallback((phrase: SavedPhrase) => {
+    const fragment = `${phrase.content.trim()}\n\n`;
+    if (lazy.ready && editorRef.current?.insertMarkdownAtEnd(fragment)) return;
+    setPendingPhrase(fragment);
+    lazy.activate();
+  }, [lazy]);
 
   // Flush on tab close / mobile background — same rationale as CommentInput.
   useEffect(() => {
@@ -295,6 +312,7 @@ function ReplyInput({
           />
         </div>
         <div className="absolute bottom-0 right-0 flex items-center gap-1">
+          <SavedPhrasePicker draft={content} onInsert={insertSavedPhrase} />
           <FileUploadButton
             size="sm"
             multiple

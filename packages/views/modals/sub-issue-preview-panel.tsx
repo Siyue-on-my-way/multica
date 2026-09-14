@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronRight, Loader2 } from "lucide-react";
@@ -155,6 +155,7 @@ export function SubIssuePreviewModal({
   const { t } = useT("modals");
   const issueId = (data?.issueId as string) || "";
   const commentId = (data?.commentId as string) || "";
+  const initialProposalId = (data?.proposalId as string) || (data?.proposal_id as string) || "";
   const wsId = useWorkspaceId();
   const createIssue = useCreateIssue();
 
@@ -164,6 +165,8 @@ export function SubIssuePreviewModal({
   });
 
   const [phase, setPhase] = useState<ModalPhase>("outline");
+  const [proposalId, setProposalId] = useState(initialProposalId);
+  const proposalIdRef = useRef(initialProposalId);
   const [plans, setPlans] = useState<SubIssuePlan[]>([]);
   const [diagnostics, setDiagnostics] = useState<SubIssuePlanDiagnostic[]>([]);
   const [generationSummary, setGenerationSummary] = useState<SubIssuePlanGenerationSummary | null>(null);
@@ -187,18 +190,21 @@ export function SubIssuePreviewModal({
   const [detailError, setDetailError] = useState(false);
   const [drafts, setDrafts] = useState<SubIssueDraft[]>([]);
   const [creating, setCreating] = useState(false);
+  const [createMode, setCreateMode] = useState<"backlog" | "todo">("backlog");
+  const [generationKey, setGenerationKey] = useState<string | null>(null);
   const [pickingParentFor, setPickingParentFor] = useState<string | null>(null);
 
   const loadPlans = useCallback(
     async (constraints: string) => {
-      if (!issueId || !commentId) return;
+      if (!issueId || (!commentId && !initialProposalId)) return;
       setLoadingPlans(true);
       setPlanError(false);
       setDiagnostics([]);
       setGenerationSummary(null);
       try {
         const response = await api.suggestSubissuePlans(issueId, {
-          comment_id: commentId,
+          ...(commentId ? { comment_id: commentId } : {}),
+          ...(proposalIdRef.current ? { proposal_id: proposalIdRef.current } : {}),
           human_constraints: constraints.trim() || undefined,
           carry_ancestor_context: carryAncestorContext,
         });
@@ -207,6 +213,9 @@ export function SubIssuePreviewModal({
         setGenerationSummary(response.summary ?? null);
         setAncestorContextRefs(response.ancestor_brief_refs ?? []);
         setInheritedExecutionContext(response.inherited_execution_context ?? null);
+        const nextProposalId = response.proposal_id ?? initialProposalId;
+        proposalIdRef.current = nextProposalId;
+        setProposalId(nextProposalId);
         // SIY-147: default to the backend-verified full-coverage plan so the
         // panel never opens pre-selecting a partial decomposition. Reference
         // plans stay one click away.
@@ -226,7 +235,7 @@ export function SubIssuePreviewModal({
         setLoadingPlans(false);
       }
     },
-    [carryAncestorContext, commentId, issueId],
+    [carryAncestorContext, commentId, initialProposalId, issueId],
   );
 
   useEffect(() => {
@@ -327,12 +336,14 @@ export function SubIssuePreviewModal({
     setDetailError(false);
     try {
       const response = await api.expandSubissuePlan(issueId, {
-        comment_id: commentId,
+        ...(commentId ? { comment_id: commentId } : {}),
+        ...(proposalId ? { proposal_id: proposalId } : {}),
         human_constraints: humanConstraints.trim() || undefined,
         carry_ancestor_context: carryAncestorContext,
         plan: selectedPlan,
       });
       setDrafts(response.subissues.map(draftFromSuggestion));
+      setGenerationKey((current) => current ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
       setPhase("details");
     } catch {
       setDetailError(true);
@@ -355,12 +366,36 @@ export function SubIssuePreviewModal({
       // user typed into "本 issue 专属执行上下文" is stamped on every created
       // child as its own context document.
       const executionContextDocument = toExecutionContext(ownExecutionContext);
+      if (proposalId) {
+        // The create mode is part of the user's reviewed decision. Keep it in
+        // the idempotency scope so switching from backlog to todo (or back)
+        // creates the corresponding independent generation instead of
+        // reusing the first mode's response.
+        const baseGenerationKey = generationKey ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const generation = await api.createProposalGeneration(proposalId, {
+          strategy: selectedPlan?.strategy ?? selectedPlan?.id ?? "manual",
+          create_mode: createMode,
+          idempotency_key: `${baseGenerationKey}:${createMode}`,
+          items: selected.map((draft) => ({
+            id: draft.id,
+            title: draft.title.trim(),
+            goal: draft.goal.trim() || undefined,
+            description: draft.description.trim() || undefined,
+            stage: draft.stage,
+            parent_issue_id: draft.parentIssueId ?? undefined,
+            execution_context: executionContextDocument,
+          })),
+        });
+        toast.success(`已创建 ${generation.issues.length} 个子 issue${createMode === "backlog" ? "（暂不执行）" : ""}`);
+        onClose();
+        return;
+      }
       const results = await Promise.allSettled(
         selected.map((draft) =>
           createIssue.mutateAsync({
             title: draft.title.trim(),
             description: draft.description.trim() || undefined,
-            status: "todo",
+            status: createMode,
             project_id: sourceIssue?.project_id ?? undefined,
             parent_issue_id: draft.parentIssueId ?? undefined,
             stage: draft.stage,
@@ -710,6 +745,39 @@ export function SubIssuePreviewModal({
 
           {phase === "details" && (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+              <fieldset className="rounded-lg border border-border/60 p-3">
+                <legend className="px-1 text-caption font-medium">创建方式</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className={`flex cursor-pointer gap-2 rounded-md border p-2.5 text-left ${createMode === "backlog" ? "border-primary bg-primary/5" : "border-border/60"}`}>
+                    <input
+                      type="radio"
+                      name="proposal-create-mode"
+                      value="backlog"
+                      checked={createMode === "backlog"}
+                      onChange={() => setCreateMode("backlog")}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-body font-medium">仅创建，暂不执行</span>
+                      <span className="block text-caption text-muted-foreground">子 issue 进入 backlog，不启动 agent（默认）</span>
+                    </span>
+                  </label>
+                  <label className={`flex cursor-pointer gap-2 rounded-md border p-2.5 text-left ${createMode === "todo" ? "border-primary bg-primary/5" : "border-border/60"}`}>
+                    <input
+                      type="radio"
+                      name="proposal-create-mode"
+                      value="todo"
+                      checked={createMode === "todo"}
+                      onChange={() => setCreateMode("todo")}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-body font-medium">创建并开始执行</span>
+                      <span className="block text-caption text-muted-foreground">提交事务后将 todo 子 issue 交给 agent</span>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
               {/* SIY-177: issue-specific execution context — special directories
                   or commands that apply only to the issues being created here.
                   Whether they flow further down is decided by the inherit

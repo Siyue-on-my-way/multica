@@ -8,12 +8,14 @@ import enModals from "../locales/en/modals.json";
 const mockSuggestPlans = vi.hoisted(() => vi.fn());
 const mockExpandPlan = vi.hoisted(() => vi.fn());
 const mockCreateIssue = vi.hoisted(() => vi.fn());
+const mockCreateProposalGeneration = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/api", () => ({
   api: {
     suggestSubissuePlans: mockSuggestPlans,
     expandSubissuePlan: mockExpandPlan,
+    createProposalGeneration: mockCreateProposalGeneration,
   },
 }));
 
@@ -45,6 +47,17 @@ function renderModal() {
   return render(
     <I18nProvider locale="en" resources={{ en: { modals: enModals } }}>
       <SubIssuePreviewModal data={{ issueId: "issue-1", commentId: "comment-1" }} onClose={vi.fn()} />
+    </I18nProvider>,
+  );
+}
+
+function renderProposalModal() {
+  return render(
+    <I18nProvider locale="en" resources={{ en: { modals: enModals } }}>
+      <SubIssuePreviewModal
+        data={{ issueId: "issue-1", commentId: "comment-1", proposalId: "proposal-1" }}
+        onClose={vi.fn()}
+      />
     </I18nProvider>,
   );
 }
@@ -105,6 +118,15 @@ describe("SubIssuePreviewModal", () => {
       ],
     });
     mockCreateIssue.mockResolvedValue({ id: "created" });
+    mockCreateProposalGeneration.mockResolvedValue({
+      id: "generation-1",
+      proposal_id: "proposal-1",
+      strategy: "parallel",
+      create_mode: "backlog",
+      snapshot: {},
+      issues: [{ id: "child-1", identifier: "SIY-2", title: "First task", status: "backlog" }],
+      created_at: "2026-09-14T00:00:00Z",
+    });
   });
 
   it("preselects the full-coverage plan by default", async () => {
@@ -197,14 +219,14 @@ describe("SubIssuePreviewModal", () => {
       title: "First task",
       description: "First details",
       project_id: "project-1",
-      status: "todo",
+      status: "backlog",
       stage: 1,
     }));
     expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({
       title: "Second task",
       description: "Second details",
       project_id: "project-1",
-      status: "todo",
+      status: "backlog",
       stage: 2,
     }));
     expect(mockCreateIssue).toHaveBeenNthCalledWith(3, expect.objectContaining({
@@ -213,6 +235,41 @@ describe("SubIssuePreviewModal", () => {
       stage: 3,
     }));
     expect(mockToastSuccess).toHaveBeenCalledWith("Created 3 sub-issues");
+  });
+
+  it("only starts children when the user explicitly chooses execution", async () => {
+    renderModal();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByText("Balanced split"));
+    await user.click(screen.getByRole("button", { name: "Generate details" }));
+    await user.click(await screen.findByRole("radio", { name: /创建并开始执行/ }));
+    await user.click(screen.getByRole("button", { name: "Create 3 selected sub-issues" }));
+
+    await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(3));
+    expect(mockCreateIssue).toHaveBeenNthCalledWith(1, expect.objectContaining({ status: "todo" }));
+    expect(mockCreateIssue).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: "todo" }));
+    expect(mockCreateIssue).toHaveBeenNthCalledWith(3, expect.objectContaining({ status: "todo" }));
+  });
+
+  it("scopes proposal batch idempotency to the selected create mode", async () => {
+    renderProposalModal();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByText("Balanced split"));
+    await user.click(screen.getByRole("button", { name: "Generate details" }));
+    await user.click(await screen.findByRole("radio", { name: /创建并开始执行/ }));
+    await user.click(screen.getByRole("button", { name: "Create 3 selected sub-issues" }));
+
+    await waitFor(() => expect(mockCreateProposalGeneration).toHaveBeenCalledTimes(1));
+    expect(mockCreateProposalGeneration).toHaveBeenCalledWith(
+      "proposal-1",
+      expect.objectContaining({
+        create_mode: "todo",
+        idempotency_key: expect.stringMatching(/:todo$/),
+      }),
+    );
+    expect(mockCreateIssue).not.toHaveBeenCalled();
   });
 
   it("updates the title prefix and business together", async () => {

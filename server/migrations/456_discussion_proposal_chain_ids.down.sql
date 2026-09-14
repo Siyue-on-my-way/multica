@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS saved_phrase_id_idx;

@@ -368,7 +368,9 @@ describe("comment composers", () => {
     activateComposer("comment-composer-shell");
     expect(screen.getByPlaceholderText("Leave a comment...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Attach file" })).toBeInTheDocument();
-    expect(container.querySelectorAll("button")).toHaveLength(2);
+    // The composer now includes the draft-only saved-phrase picker next to
+    // upload and submit. Selecting a phrase never submits the comment.
+    expect(container.querySelectorAll("button")).toHaveLength(3);
 
     const shell = screen.getByTestId("drop-zone");
     expect(shell.className).not.toMatch(/max-h-/);
@@ -382,7 +384,9 @@ describe("comment composers", () => {
     activateComposer("reply-composer-shell");
     expect(screen.getByPlaceholderText("Leave a reply...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Attach file" })).toBeInTheDocument();
-    expect(container.querySelectorAll("button")).toHaveLength(2);
+    // Reply composers expose the same saved-phrase picker as top-level
+    // composers; it only edits the draft.
+    expect(container.querySelectorAll("button")).toHaveLength(3);
 
     const shell = screen.getByTestId("drop-zone");
     expect(shell.className).not.toMatch(/max-h-/);

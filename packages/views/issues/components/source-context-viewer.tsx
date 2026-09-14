@@ -134,6 +134,9 @@ export function SourceContextBadge({
     : t(($) => $.source_context.changed);
   const originIdentifier = parentIssue?.identifier ?? snapshot.source_issue.identifier;
   const originTitle = parentIssue?.title ?? snapshot.source_issue.title;
+  const proposalTag = snapshot.proposal_id
+    ? `来源方案 · ${snapshot.proposal_strategy || "manual"}`
+    : null;
 
   return (
     <>
@@ -178,6 +181,11 @@ export function SourceContextBadge({
               <span className="tabular-nums text-micro font-medium">
                 {parentProgress.done}/{parentProgress.total}
               </span>
+            </span>
+          )}
+          {proposalTag && (
+            <span className="inline-flex shrink-0 items-center rounded bg-primary/10 px-1.5 py-0.5 text-micro font-medium text-primary" data-slot="source-proposal-badge">
+              {proposalTag}
             </span>
           )}
         </div>

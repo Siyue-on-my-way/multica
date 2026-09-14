@@ -78,6 +78,10 @@ type CommentResponse struct {
 	// reports that here instead of silently dropping the trigger, so the client
 	// can show "comment posted, but N targets were not triggered".
 	TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes,omitempty"`
+	// Proposal is a durable, immutable discussion plan associated with this
+	// comment. It is a sidecar so ordinary comments remain ordinary when the
+	// model output is not a valid proposal.
+	Proposal *DiscussionProposalResponse `json:"proposal,omitempty"`
 }
 
 // CommentTriggerOutcome is the per-target result of an explicit @agent / @squad
@@ -634,11 +638,21 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	}
 	grouped := h.groupReactions(r, commentIDs)
 	groupedAtt := h.groupAttachments(r, commentIDs)
+	proposals, proposalErr := proposalForCommentMap(h, r, commentIDs, issue.WorkspaceID)
+	if proposalErr != nil {
+		// Proposal data is additive. A rolling deploy may serve this handler
+		// before the proposal migration has run; the comment timeline must remain
+		// readable in that state.
+		proposals = map[string]DiscussionProposalResponse{}
+	}
 
 	resp := make([]CommentResponse, len(result.Comments))
 	for i, c := range result.Comments {
 		cid := uuidToString(c.ID)
 		resp[i] = commentToResponse(c, grouped[cid], groupedAtt[cid])
+		if proposal, exists := proposals[cid]; exists {
+			resp[i].Proposal = &proposal
+		}
 		// Attach roots_only orientation stats when present (nil map elsewhere).
 		if st, ok := result.RootStats[cid]; ok {
 			rc := st.ReplyCount
@@ -1876,6 +1890,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	comment := created.Comment()
+	if authorType == "agent" {
+		if proposalErr := service.MaybeCreateDiscussionProposal(r.Context(), h.Queries, comment); proposalErr != nil {
+			slog.Warn("save structured discussion proposal failed", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "error", proposalErr)...)
+		}
+	}
 
 	// Link uploaded attachments to this comment.
 	if len(attachmentIDs) > 0 {
@@ -1885,6 +1904,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// Fetch linked attachments so the response includes them.
 	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
 	resp := commentToResponse(comment, nil, groupedAtt[uuidToString(comment.ID)])
+	if proposals, proposalErr := proposalForCommentMap(h, r, []pgtype.UUID{comment.ID}, issue.WorkspaceID); proposalErr == nil {
+		if proposal, exists := proposals[uuidToString(comment.ID)]; exists {
+			resp.Proposal = &proposal
+		}
+	}
 	resp.IssueRevision = created.IssueRevision
 	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
 	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), authorType, authorID, map[string]any{
@@ -3482,6 +3506,11 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
 	cid := uuidToString(comment.ID)
 	resp := commentToResponse(comment, grouped[cid], groupedAtt[cid])
+	if proposals, proposalErr := proposalForCommentMap(h, r, []pgtype.UUID{comment.ID}, existing.WorkspaceID); proposalErr == nil {
+		if proposal, exists := proposals[cid]; exists {
+			resp.Proposal = &proposal
+		}
+	}
 	resp.IssueRevision = issueRevision
 	slog.Info("comment updated", append(logger.RequestAttrs(r), "comment_id", commentId)...)
 	eventPayload := map[string]any{"comment": resp}

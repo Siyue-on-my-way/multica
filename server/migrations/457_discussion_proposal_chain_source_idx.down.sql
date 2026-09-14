@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS discussion_proposal_source_comment_idx;

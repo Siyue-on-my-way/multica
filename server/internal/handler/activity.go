@@ -39,13 +39,14 @@ type TimelineEntry struct {
 	CommentType *string `json:"comment_type,omitempty"`
 	// Set only on comments produced by a quick action run. Unforgeable: there
 	// is no request field for it on the generic comment endpoint.
-	QuickActionID  *string              `json:"quick_action_id,omitempty"`
-	Reactions      []ReactionResponse   `json:"reactions,omitempty"`
-	Attachments    []AttachmentResponse `json:"attachments,omitempty"`
-	ResolvedAt     *string              `json:"resolved_at,omitempty"`
-	ResolvedByType *string              `json:"resolved_by_type,omitempty"`
-	ResolvedByID   *string              `json:"resolved_by_id,omitempty"`
-	SourceTaskID   *string              `json:"source_task_id,omitempty"`
+	QuickActionID  *string                     `json:"quick_action_id,omitempty"`
+	Reactions      []ReactionResponse          `json:"reactions,omitempty"`
+	Attachments    []AttachmentResponse        `json:"attachments,omitempty"`
+	ResolvedAt     *string                     `json:"resolved_at,omitempty"`
+	ResolvedByType *string                     `json:"resolved_by_type,omitempty"`
+	ResolvedByID   *string                     `json:"resolved_by_id,omitempty"`
+	SourceTaskID   *string                     `json:"source_task_id,omitempty"`
+	Proposal       *DiscussionProposalResponse `json:"proposal,omitempty"`
 }
 
 // timelineHardCap bounds the per-issue timeline payload. Sized as a defensive
@@ -280,6 +281,10 @@ func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []Ti
 	}
 	reactions := h.groupReactions(r, ids)
 	attachments := h.groupAttachments(r, ids)
+	proposals, proposalErr := proposalForCommentMap(h, r, ids, comments[0].WorkspaceID)
+	if proposalErr != nil {
+		proposals = map[string]DiscussionProposalResponse{}
+	}
 
 	out := make([]TimelineEntry, len(comments))
 	for i, c := range comments {
@@ -305,6 +310,10 @@ func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []Ti
 			ResolvedByType: textToPtr(c.ResolvedByType),
 			ResolvedByID:   uuidToPtr(c.ResolvedByID),
 			SourceTaskID:   uuidToPtr(c.SourceTaskID),
+		}
+		if proposal, exists := proposals[cid]; exists {
+			proposalCopy := proposal
+			out[i].Proposal = &proposalCopy
 		}
 	}
 	return out

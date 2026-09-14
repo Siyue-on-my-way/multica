@@ -7324,9 +7324,17 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 		return
 	}
 	comment := created.Comment()
+	if proposalErr := MaybeCreateDiscussionProposal(ctx, s.Queries, comment); proposalErr != nil {
+		slog.Warn("save structured discussion proposal failed", "comment_id", util.UUIDToString(comment.ID), "error", proposalErr)
+	}
 	s.CancelDeferredEscalationsForIssueAgent(ctx, issueID, agentID)
 	commentFields := commentEventFields(comment)
 	commentFields["revision"] = comment.Revision
+	if _, structured := ExtractDiscussionProposalSnapshot(comment.Content); structured {
+		if proposal := discussionProposalEventPayload(ctx, s.Queries, comment); proposal != nil {
+			commentFields["proposal"] = proposal
+		}
+	}
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
 		WorkspaceID: util.UUIDToString(issue.WorkspaceID),

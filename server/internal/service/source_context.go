@@ -155,6 +155,12 @@ type SourceContextSnapshot struct {
 	SourceIssue      SourceContextIssueSnapshot     `json:"source_issue"`
 	CommentThread    []SourceContextCommentSnapshot `json:"comment_thread"`
 	AnchorCommentID  string                         `json:"anchor_comment_id"`
+	// Proposal lineage is additive metadata written only to child snapshots
+	// created from a reviewed proposal. Ordinary source-context captures remain
+	// unchanged and continue to compare by issue/thread content.
+	ProposalID       string `json:"proposal_id,omitempty"`
+	GenerationID     string `json:"generation_id,omitempty"`
+	ProposalStrategy string `json:"proposal_strategy,omitempty"`
 }
 
 type SourceContextBuild struct {

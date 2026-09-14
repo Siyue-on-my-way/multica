@@ -115,6 +115,9 @@ export interface MoveIssueRequest
 export interface SuggestSubIssuesRequest {
 	comment_id?: string;
 	text?: string;
+	/** Immutable proposal lineage. When comment_id/text is absent, the server
+	 *  uses the proposal snapshot as the decomposition source. */
+	proposal_id?: string;
 	human_constraints?: string;
 	carry_ancestor_context?: boolean;
 }
@@ -190,6 +193,8 @@ export interface SuggestSubissuePlansResponse {
 	/** Merged execution context the created children will inherit at runtime
 	 *  (SIY-177); rendered as the read-only inherited-context card. */
 	inherited_execution_context?: ResolvedExecutionContext;
+	/** Immutable proposal snapshot used to trace the preview into generations. */
+	proposal_id?: string;
 }
 
 export interface ExpandSubissuePlanRequest extends SuggestSubIssuesRequest {
@@ -218,6 +223,124 @@ export interface SubIssueSuggestion {
 
 export interface SuggestSubIssuesResponse {
   subissues: SubIssueSuggestion[];
+}
+
+/** The normalized shape stored in a discussion proposal snapshot. The
+ * snapshot remains open-ended so older/manual proposals can carry fields the
+ * current card does not know about without breaking rendering. */
+export interface ProposalSnapshot {
+  title?: string;
+  summary?: string;
+  scope?: string;
+  risks?: string[];
+  acceptanceCriteria?: string[];
+  items?: Array<{
+    id?: string;
+    title?: string;
+    goal?: string;
+    description?: string;
+    stage?: number;
+    business?: string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+}
+
+export interface ProposalChild {
+  id: string;
+  identifier: string;
+  title: string;
+  status: string;
+  stage?: number;
+  item_id?: string;
+}
+
+export interface ProposalGeneration {
+  id: string;
+  proposal_id: string;
+  strategy: string;
+  create_mode: "backlog" | "todo" | string;
+  idempotency_key?: string;
+  snapshot: Record<string, unknown>;
+  issues: ProposalChild[];
+  created_at: string;
+}
+
+export interface DiscussionProposal {
+  id: string;
+  workspace_id: string;
+  source_issue_id: string;
+  question_comment_id?: string;
+  answer_comment_id?: string;
+  snapshot: ProposalSnapshot;
+  generations: ProposalGeneration[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateDiscussionProposalRequest {
+  question_comment_id?: string;
+  answer_comment_id?: string;
+  snapshot?: ProposalSnapshot;
+  title?: string;
+  summary?: string;
+  content?: string;
+}
+
+export interface CreateProposalGenerationItemRequest {
+  id?: string;
+  title: string;
+  goal?: string;
+  description?: string;
+  stage?: number;
+  parent_issue_id?: string;
+  suggested_parent_issue_id?: string;
+  assignee_type?: string;
+  assignee_id?: string;
+  execution_context?: unknown;
+}
+
+export interface CreateProposalGenerationRequest {
+  strategy?: string;
+  create_mode?: "backlog" | "todo";
+  idempotency_key?: string;
+  items: CreateProposalGenerationItemRequest[];
+}
+
+export interface SavedPhrase {
+  id: string;
+  workspace_id: string;
+  creator_id: string;
+  name: string;
+  content: string;
+  category: string;
+  scope: "public" | "workspace" | string;
+  pinned: boolean;
+  use_count: number;
+  last_used_at?: string;
+  status: "active" | "archived" | string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedPhraseListResponse {
+  phrases: SavedPhrase[];
+}
+
+export interface CreateSavedPhraseRequest {
+  name: string;
+  content: string;
+  category?: string;
+  scope?: "public" | "workspace";
+  pinned?: boolean;
+}
+
+export interface UpdateSavedPhraseRequest {
+  name?: string;
+  content?: string;
+  category?: string;
+  scope?: "public" | "workspace";
+  pinned?: boolean;
 }
 
 /** Inputs to `POST /api/issues/preview-trigger`. A nil prospective field means

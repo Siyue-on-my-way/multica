@@ -17,12 +17,15 @@ import (
 )
 
 // SuggestSubIssuesRequest is the body for POST /api/issues/{id}/suggest-subissues.
-// Exactly one of CommentID / Text must be set: CommentID for the normal
-// "生成子issue" entry point on an existing agent reply, Text for any future
-// caller that already has the raw content in hand.
+// Exactly one of CommentID / Text must be set for the source. ProposalID is
+// additive lineage when either source is present; when both are absent it
+// selects the immutable proposal snapshot as the source. This lets a proposal
+// created without a comment anchor still open the same review/decomposition
+// flow without inventing a comment id.
 type SuggestSubIssuesRequest struct {
-	CommentID *string `json:"comment_id,omitempty"`
-	Text      *string `json:"text,omitempty"`
+	CommentID  *string `json:"comment_id,omitempty"`
+	Text       *string `json:"text,omitempty"`
+	ProposalID *string `json:"proposal_id,omitempty"`
 }
 
 // SubIssueSuggestionResponse is one candidate sub-issue returned to the
@@ -87,9 +90,9 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 		service.SubissueExecutionContextPromptBudget,
 	)
 	sourceIssue := service.SubissueSuggestSourceIssue{
-		Identifier:      prefix + "-" + strconv.Itoa(int(issue.Number)),
-		Title:           issue.Title,
-		Description:     issue.Description.String,
+		Identifier:       prefix + "-" + strconv.Itoa(int(issue.Number)),
+		Title:            issue.Title,
+		Description:      issue.Description.String,
 		ExecutionContext: executionContext,
 	}
 
@@ -158,18 +161,43 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveSubissueSuggestContent picks the source text for the pass: the
-// triggering comment, scoped to this issue so a stale comment_id from
-// another issue can never leak its content in here, or an explicit Text.
+// triggering comment, scoped to this issue so a stale comment_id from another
+// issue can never leak its content; an explicit Text; or an immutable proposal
+// snapshot when the proposal has no comment anchor.
 func (h *Handler) resolveSubissueSuggestContent(w http.ResponseWriter, r *http.Request, issue db.Issue, req SuggestSubIssuesRequest) (string, bool) {
 	hasComment := req.CommentID != nil && strings.TrimSpace(*req.CommentID) != ""
 	hasText := req.Text != nil && strings.TrimSpace(*req.Text) != ""
-	if hasComment == hasText {
-		writeError(w, http.StatusBadRequest, "exactly one of comment_id or text is required")
+	proposalID := ""
+	if req.ProposalID != nil {
+		proposalID = strings.TrimSpace(*req.ProposalID)
+	}
+	var proposal db.DiscussionProposal
+	if proposalID != "" {
+		var ok bool
+		proposal, ok = h.loadProposalForIssue(w, r, issue, proposalID)
+		if !ok {
+			return "", false
+		}
+	}
+	if hasComment && hasText {
+		writeError(w, http.StatusBadRequest, "only one of comment_id or text may be provided")
 		return "", false
 	}
 
 	if hasText {
 		return strings.TrimSpace(*req.Text), true
+	}
+	if !hasComment {
+		if proposalID == "" {
+			writeError(w, http.StatusBadRequest, "one of comment_id, text, or proposal_id is required")
+			return "", false
+		}
+		content := strings.TrimSpace(string(proposal.Snapshot))
+		if content == "" || content == "null" {
+			writeError(w, http.StatusBadRequest, "proposal has no content to decompose")
+			return "", false
+		}
+		return content, true
 	}
 
 	commentUUID, ok := parseUUIDOrBadRequest(w, *req.CommentID, "comment_id")

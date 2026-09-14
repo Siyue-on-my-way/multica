@@ -162,6 +162,19 @@ export type {
   TimelineEntry,
   AssigneeFrequencyEntry,
 } from "./activity";
+export type {
+  DiscussionProposal,
+  ProposalSnapshot,
+  ProposalGeneration,
+  ProposalChild,
+  CreateDiscussionProposalRequest,
+  CreateProposalGenerationRequest,
+  CreateProposalGenerationItemRequest,
+  SavedPhrase,
+  SavedPhraseListResponse,
+  CreateSavedPhraseRequest,
+  UpdateSavedPhraseRequest,
+} from "./api";
 export type { IssueSubscriber } from "./subscriber";
 export type * from "./events";
 export type * from "./api";

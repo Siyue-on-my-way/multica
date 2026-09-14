@@ -298,6 +298,12 @@ var concurrentIndexCleanups = map[string]string{
 	"443_issue_project_status_index":                            "idx_issue_project_status",
 	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
 	"446_issue_properties_bigm_index":                           "idx_issue_properties_bigm",
+	"456_discussion_proposal_chain_ids":                         "saved_phrase_id_idx",
+	"457_discussion_proposal_chain_source_idx":                  "discussion_proposal_source_comment_idx",
+	"458_discussion_proposal_chain_generation_idx":              "proposal_generation_id_idx",
+	"459_discussion_proposal_chain_issue_idx":                   "proposal_generation_issue_id_idx",
+	"460_discussion_proposal_chain_issue_unique_idx":            "proposal_generation_issue_unique_idx",
+	"461_discussion_proposal_chain_idempotency_idx":             "proposal_generation_idempotency_idx",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

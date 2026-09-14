@@ -53,6 +53,14 @@ import type {
   SuggestSubIssuesResponse,
   SuggestSubissuePlansResponse,
   ExpandSubissuePlanRequest,
+  DiscussionProposal,
+  CreateDiscussionProposalRequest,
+  ProposalGeneration,
+  CreateProposalGenerationRequest,
+  SavedPhrase,
+  SavedPhraseListResponse,
+  CreateSavedPhraseRequest,
+  UpdateSavedPhraseRequest,
   Reaction,
   IssueReaction,
   Workspace,
@@ -422,6 +430,11 @@ import {
   EMPTY_LIST_QUICK_ACTIONS_RESPONSE,
   CommentSchema,
   EMPTY_COMMENT,
+  DiscussionProposalSchema,
+  DiscussionProposalsSchema,
+  ProposalGenerationResponseSchema,
+  SavedPhraseSchema,
+  SavedPhraseListResponseSchema,
   EMPTY_ISSUE_PROPERTY,
   EMPTY_LIST_PROPERTIES_RESPONSE,
   EMPTY_ISSUE_PROPERTIES_RESPONSE,
@@ -1173,6 +1186,170 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async listDiscussionProposals(issueId: string): Promise<DiscussionProposal[]> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/proposals`);
+    return parseWithFallback(raw, DiscussionProposalsSchema, [], {
+      endpoint: "GET /api/issues/:id/proposals",
+    });
+  }
+
+  async getDiscussionProposal(proposalId: string): Promise<DiscussionProposal> {
+    const raw = await this.fetch<unknown>(`/api/proposals/${proposalId}`);
+    return parseWithFallback(raw, DiscussionProposalSchema, {
+      id: "",
+      workspace_id: "",
+      source_issue_id: "",
+      snapshot: { items: [] },
+      generations: [],
+      created_at: "",
+      updated_at: "",
+    } as DiscussionProposal, {
+      endpoint: "GET /api/proposals/:id",
+    });
+  }
+
+  async createDiscussionProposal(
+    issueId: string,
+    data: CreateDiscussionProposalRequest = {},
+  ): Promise<DiscussionProposal> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/proposals`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DiscussionProposalSchema, {
+      id: "",
+      workspace_id: "",
+      source_issue_id: issueId,
+      snapshot: { items: [] },
+      generations: [],
+      created_at: "",
+      updated_at: "",
+    } as DiscussionProposal, {
+      endpoint: "POST /api/issues/:id/proposals",
+    });
+  }
+
+  async createCommentProposal(
+    commentId: string,
+    data: CreateDiscussionProposalRequest = {},
+  ): Promise<DiscussionProposal> {
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/proposal`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, DiscussionProposalSchema, {
+      id: "",
+      workspace_id: "",
+      source_issue_id: "",
+      snapshot: { items: [] },
+      generations: [],
+      created_at: "",
+      updated_at: "",
+    } as DiscussionProposal, {
+      endpoint: "POST /api/comments/:id/proposal",
+    });
+  }
+
+  async createProposalGeneration(
+    proposalId: string,
+    data: CreateProposalGenerationRequest,
+  ): Promise<ProposalGeneration> {
+    const raw = await this.fetch<unknown>(`/api/proposals/${proposalId}/generations`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ProposalGenerationResponseSchema, {
+      id: "",
+      proposal_id: proposalId,
+      strategy: data.strategy ?? "manual",
+      create_mode: data.create_mode ?? "backlog",
+      snapshot: {},
+      issues: [],
+      created_at: "",
+    } as ProposalGeneration, {
+      endpoint: "POST /api/proposals/:id/generations",
+    });
+  }
+
+  async listSavedPhrases(params?: { q?: string; category?: string }): Promise<SavedPhrase[]> {
+    const query = new URLSearchParams();
+    if (params?.q?.trim()) query.set("q", params.q.trim());
+    if (params?.category?.trim()) query.set("category", params.category.trim());
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/saved-phrases/${suffix}`);
+    const response = parseWithFallback<SavedPhraseListResponse>(
+      raw,
+      SavedPhraseListResponseSchema,
+      { phrases: [] },
+      { endpoint: "GET /api/saved-phrases" },
+    );
+    return response.phrases;
+  }
+
+  async createSavedPhrase(data: CreateSavedPhraseRequest): Promise<SavedPhrase> {
+    const raw = await this.fetch<unknown>("/api/saved-phrases/", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SavedPhraseSchema, {
+      id: "",
+      workspace_id: "",
+      creator_id: "",
+      name: "",
+      content: "",
+      category: "general",
+      scope: "public",
+      pinned: false,
+      use_count: 0,
+      status: "active",
+      created_at: "",
+      updated_at: "",
+    } as SavedPhrase, { endpoint: "POST /api/saved-phrases" });
+  }
+
+  async updateSavedPhrase(id: string, data: UpdateSavedPhraseRequest): Promise<SavedPhrase> {
+    const raw = await this.fetch<unknown>(`/api/saved-phrases/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SavedPhraseSchema, {
+      id,
+      workspace_id: "",
+      creator_id: "",
+      name: data.name ?? "",
+      content: data.content ?? "",
+      category: data.category ?? "general",
+      scope: data.scope ?? "public",
+      pinned: data.pinned ?? false,
+      use_count: 0,
+      status: "active",
+      created_at: "",
+      updated_at: "",
+    } as SavedPhrase, { endpoint: "PATCH /api/saved-phrases/:id" });
+  }
+
+  async archiveSavedPhrase(id: string): Promise<void> {
+    await this.fetch(`/api/saved-phrases/${id}/`, { method: "DELETE" });
+  }
+
+  async useSavedPhrase(id: string): Promise<SavedPhrase> {
+    const raw = await this.fetch<unknown>(`/api/saved-phrases/${id}/use`, { method: "POST" });
+    return parseWithFallback(raw, SavedPhraseSchema, {
+      id,
+      workspace_id: "",
+      creator_id: "",
+      name: "",
+      content: "",
+      category: "general",
+      scope: "public",
+      pinned: false,
+      use_count: 0,
+      status: "active",
+      created_at: "",
+      updated_at: "",
+    } as SavedPhrase, { endpoint: "POST /api/saved-phrases/:id/use" });
   }
 
   async getCommentSubIssuePreview(anchorCommentId: string): Promise<SourceContextPreview> {

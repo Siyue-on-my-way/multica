@@ -641,6 +641,17 @@ type DingtalkGroupRoute struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DiscussionProposal struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	SourceIssueID     pgtype.UUID        `json:"source_issue_id"`
+	QuestionCommentID pgtype.UUID        `json:"question_comment_id"`
+	AnswerCommentID   pgtype.UUID        `json:"answer_comment_id"`
+	Snapshot          []byte             `json:"snapshot"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -1219,6 +1230,29 @@ type ProjectResource struct {
 	CreatedBy    pgtype.UUID        `json:"created_by"`
 }
 
+type ProposalGeneration struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ProposalID     pgtype.UUID        `json:"proposal_id"`
+	Strategy       string             `json:"strategy"`
+	CreateMode     string             `json:"create_mode"`
+	IdempotencyKey pgtype.Text        `json:"idempotency_key"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	Snapshot       []byte             `json:"snapshot"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProposalGenerationIssue struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	GenerationID pgtype.UUID        `json:"generation_id"`
+	ProposalID   pgtype.UUID        `json:"proposal_id"`
+	IssueID      pgtype.UUID        `json:"issue_id"`
+	ItemID       string             `json:"item_id"`
+	Stage        pgtype.Int4        `json:"stage"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type ProviderConfig struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
@@ -1302,6 +1336,22 @@ type RuntimeProfile struct {
 	Enabled        bool               `json:"enabled"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SavedPhrase struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	CreatorID   pgtype.UUID        `json:"creator_id"`
+	Name        string             `json:"name"`
+	Content     string             `json:"content"`
+	Category    string             `json:"category"`
+	Scope       string             `json:"scope"`
+	Pinned      bool               `json:"pinned"`
+	UseCount    int64              `json:"use_count"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SeatCapacityOutbox struct {

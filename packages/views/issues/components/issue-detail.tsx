@@ -1439,6 +1439,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
 
+  const convertCommentToProposal = useCallback(async (commentId: string) => {
+    try {
+      await api.createCommentProposal(commentId);
+      await queryClient.invalidateQueries({ queryKey: issueKeys.timeline(id) });
+      toast.success("已生成方案卡片");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "生成方案失败");
+    }
+  }, [id, queryClient]);
+
   // Resolve / unresolve must always clear the per-session expand entry so
   // re-resolving an already-expanded thread folds it back to the bar (the
   // expand Set is keyed only on commentId, not on resolution state). Without
@@ -2822,6 +2832,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             onDelete={deleteComment}
             onToggleReaction={handleToggleReaction}
             onCreateSubIssue={openCommentSubIssue}
+            onCreateProposal={(commentId) => { void convertCommentToProposal(commentId); }}
             onResolveToggle={handleResolveToggle}
             onCollapseResolved={isResolved ? () => toggleResolvedExpand(item.id, false) : undefined}
             expandedResolvedIds={expandedResolved}

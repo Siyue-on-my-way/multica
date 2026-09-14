@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, Copy, ListChevronsDownUp, ListTree, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, Copy, ListChevronsDownUp, ListTree, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -46,6 +46,7 @@ import { useT } from "../../i18n";
 import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
+import { ProposalCard } from "./proposal-card";
 
 const highlightedCommentBackgroundClass =
   "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
@@ -129,6 +130,8 @@ interface CommentCardProps {
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
   onCreateSubIssue?: (commentId: string) => void;
+  /** Convert an ordinary comment into a durable proposal snapshot. */
+  onCreateProposal?: (commentId: string) => void;
   /** Resolve/unresolve any comment in this thread (commentId = the target row). */
   onResolveToggle?: (commentId: string, resolved: boolean) => void;
   /**
@@ -660,6 +663,7 @@ function CommentRow({
   onDelete,
   onToggleReaction,
   onCreateSubIssue,
+  onCreateProposal,
   onResolveToggle,
 }: {
   issueId: string;
@@ -674,6 +678,7 @@ function CommentRow({
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
   onCreateSubIssue?: (commentId: string) => void;
+  onCreateProposal?: (commentId: string) => void;
   onResolveToggle?: (commentId: string, resolved: boolean) => void;
 }) {
   const { t } = useT("issues");
@@ -786,9 +791,19 @@ function CommentRow({
                   {t(($) => $.comment.copy_action)}
                 </DropdownMenuItem>
                 {entry.comment_type === "comment" && (
-                  <DropdownMenuItem onClick={() => openModal("suggest-subissues", { issueId, commentId: entry.id })}>
+                  <DropdownMenuItem onClick={() => openModal("suggest-subissues", {
+                    issueId,
+                    commentId: entry.proposal?.answer_comment_id ?? entry.proposal?.question_comment_id ?? entry.id,
+                    ...(entry.proposal ? { proposalId: entry.proposal.id } : {}),
+                  })}>
                     <ListTree className="h-3.5 w-3.5" />
                     {t(($) => $.comment.generate_subissues_action)}
+                  </DropdownMenuItem>
+                )}
+                {onCreateProposal && entry.comment_type === "comment" && !entry.proposal && (
+                  <DropdownMenuItem onClick={() => onCreateProposal(entry.id)}>
+                    <Sparkles className="h-3.5 w-3.5" />
+                    转为方案
                   </DropdownMenuItem>
                 )}
                 {onCreateSubIssue && entry.comment_type === "comment" && (
@@ -928,6 +943,9 @@ function CommentRow({
                 <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5" />
               </CommentFold>
+              {entry.proposal
+                && (!entry.proposal.answer_comment_id || entry.id === entry.proposal.answer_comment_id)
+                && <ProposalCard issueId={issueId} proposal={entry.proposal} />}
               {retryableAgentFailureComment(entry) && (
                 <TaskCommentRetryButton
                   issueId={issueId}
@@ -973,6 +991,7 @@ function CommentCardImpl({
   onDelete,
   onToggleReaction,
   onCreateSubIssue,
+  onCreateProposal,
   onResolveToggle,
   onCollapseResolved,
   expandedResolvedIds,
@@ -1163,9 +1182,19 @@ function CommentCardImpl({
                         {t(($) => $.comment.copy_action)}
                       </DropdownMenuItem>
                       {entry.comment_type === "comment" && (
-                        <DropdownMenuItem onClick={() => openModal("suggest-subissues", { issueId, commentId: entry.id })}>
+                        <DropdownMenuItem onClick={() => openModal("suggest-subissues", {
+                          issueId,
+                          commentId: entry.proposal?.answer_comment_id ?? entry.proposal?.question_comment_id ?? entry.id,
+                          ...(entry.proposal ? { proposalId: entry.proposal.id } : {}),
+                        })}>
                           <ListTree className="h-3.5 w-3.5" />
                           {t(($) => $.comment.generate_subissues_action)}
+                        </DropdownMenuItem>
+                      )}
+                      {onCreateProposal && entry.comment_type === "comment" && !entry.proposal && (
+                        <DropdownMenuItem onClick={() => onCreateProposal(entry.id)}>
+                          <Sparkles className="h-3.5 w-3.5" />
+                          转为方案
                         </DropdownMenuItem>
                       )}
                       {onCreateSubIssue && entry.comment_type === "comment" && (
@@ -1321,6 +1350,9 @@ function CommentCardImpl({
                   <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                   <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5" />
                 </CommentFold>
+                {entry.proposal
+                  && (!entry.proposal.answer_comment_id || entry.id === entry.proposal.answer_comment_id)
+                  && <ProposalCard issueId={issueId} proposal={entry.proposal} />}
                 {retryableAgentFailureComment(entry) && (
                   <TaskCommentRetryButton
                     issueId={issueId}
@@ -1378,6 +1410,7 @@ function CommentCardImpl({
                     onDelete={onDelete}
                     onToggleReaction={onToggleReaction}
                     onCreateSubIssue={onCreateSubIssue}
+                    onCreateProposal={onCreateProposal}
                     onResolveToggle={onResolveToggle}
                   />
                 </div>
@@ -1418,6 +1451,7 @@ function CommentCardImpl({
                     onDelete={onDelete}
                     onToggleReaction={onToggleReaction}
                     onCreateSubIssue={onCreateSubIssue}
+                    onCreateProposal={onCreateProposal}
                     onResolveToggle={onResolveToggle}
                   />
                 </div>

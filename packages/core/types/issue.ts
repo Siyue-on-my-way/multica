@@ -116,6 +116,10 @@ export interface SourceContextSnapshot {
   source_issue: SourceContextIssueSnapshot;
   comment_thread: SourceContextCommentSnapshot[];
   anchor_comment_id: string;
+  /** Present when the context was captured while creating a proposal child. */
+  proposal_id?: string;
+  generation_id?: string;
+  proposal_strategy?: string;
 }
 
 export interface SourceContextLimitUsage {

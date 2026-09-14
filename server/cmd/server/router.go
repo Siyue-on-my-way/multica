@@ -1903,6 +1903,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/suggest-subissues", h.SuggestSubIssues)
 					r.Post("/suggest-subissue-plans", h.SuggestSubissuePlans)
 					r.Post("/expand-subissue-plan", h.ExpandSubissuePlan)
+					r.Get("/proposals", h.ListDiscussionProposals)
+					r.Post("/proposals", h.CreateDiscussionProposal)
 					r.Post("/comments", h.CreateComment)
 					r.Get("/comments", h.ListComments)
 					r.Get("/timeline", h.ListTimeline)
@@ -1932,6 +1934,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/properties/{propertyId}", h.DeleteIssueProperty)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
 				})
+
+			})
+
+			// Proposal snapshots are workspace-scoped. A proposal can be opened
+			// from either its parent issue card or a child source-context badge.
+			r.Route("/api/proposals", func(r chi.Router) {
+				r.Get("/{id}", h.GetDiscussionProposal)
+				r.Post("/{id}/generations", h.CreateProposalGeneration)
 			})
 
 			// Task messages (user-facing, not daemon auth)
@@ -1947,6 +1957,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Patch("/", h.UpdateQuickAction)
 					r.Delete("/", h.DeleteQuickAction)
+				})
+			})
+
+			// Workspace-scoped public phrases. DELETE is an archive operation;
+			// historical comments keep their original content.
+			r.Route("/api/saved-phrases", func(r chi.Router) {
+				r.Get("/", h.ListSavedPhrases)
+				r.Post("/", h.CreateSavedPhrase)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Patch("/", h.UpdateSavedPhrase)
+					r.Put("/", h.UpdateSavedPhrase)
+					r.Delete("/", h.ArchiveSavedPhrase)
+					r.Post("/archive", h.ArchiveSavedPhrase)
+					r.Post("/use", h.UseSavedPhrase)
 				})
 			})
 
@@ -2099,6 +2123,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Delete("/resolve", h.UnresolveComment)
 				r.Post("/reactions", h.AddReaction)
 				r.Delete("/reactions", h.RemoveReaction)
+				r.Post("/proposal", h.CreateCommentProposal)
 			})
 
 			// Agents

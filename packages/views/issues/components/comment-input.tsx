@@ -14,6 +14,8 @@ import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
+import { SavedPhrasePicker } from "./saved-phrase-picker";
+import type { SavedPhrase } from "@multica/core/types";
 
 interface CommentInputProps {
   issueId: string;
@@ -46,6 +48,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   );
   const [content, setContent] = useState(initialDraft ?? "");
   const [isEmpty, setIsEmpty] = useState(() => !initialDraft?.trim());
+  const [pendingPhrase, setPendingPhrase] = useState<string | null>(null);
   const [suppressedAgentIds, setSuppressedAgentIds] = useState<Set<string>>(() => new Set());
   const triggerPreview = useCommentTriggerPreview({ issueId, content });
   // Uploads for this composer session (MUL-5181). Owned by the module-level
@@ -72,6 +75,22 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
+
+  // Phrase insertion is draft-only. If the lightweight composer shell is
+  // still visible, queue the fragment until the editor has mounted.
+  useEffect(() => {
+    if (!lazy.ready || !pendingPhrase) return;
+    if (editorRef.current?.insertMarkdownAtEnd(pendingPhrase)) {
+      setPendingPhrase(null);
+    }
+  }, [lazy.ready, pendingPhrase]);
+
+  const insertSavedPhrase = useCallback((phrase: SavedPhrase) => {
+    const fragment = `${phrase.content.trim()}\n\n`;
+    if (lazy.ready && editorRef.current?.insertMarkdownAtEnd(fragment)) return;
+    setPendingPhrase(fragment);
+    lazy.activate();
+  }, [lazy]);
   // Sticky preference (Settings → Preferences): issue-detail pins this
   // composer to the bottom of the scroll viewport when enabled. Shared with
   // the host so the height cap below can never outlive the pinning.
@@ -278,6 +297,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
         />
       </div>
       <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+        <SavedPhrasePicker draft={content} onInsert={insertSavedPhrase} />
         <FileUploadButton
           size="sm"
           multiple

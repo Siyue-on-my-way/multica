@@ -20,6 +20,7 @@ import {
   Blocks,
   CreditCard,
   Server,
+  MessageSquareText,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
@@ -50,6 +51,7 @@ import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
 import { McpTab } from "./mcp-tab";
+import { SavedPhrasesTab } from "./saved-phrases-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
@@ -77,6 +79,7 @@ const WORKSPACE_TAB_KEYS = [
   "issue_statuses",
   "properties",
   "quick_actions",
+  "saved_phrases",
   "mcp",
   "plugins",
 ] as const;
@@ -92,6 +95,7 @@ const WORKSPACE_TAB_VALUES = {
   issue_statuses: "issue-statuses",
   properties: "properties",
   quick_actions: "quick-actions",
+  saved_phrases: "saved-phrases",
   mcp: "mcp",
   plugins: "plugins",
 } as const;
@@ -107,6 +111,7 @@ const WORKSPACE_TAB_ICONS = {
   issue_statuses: CircleDot,
   properties: SlidersHorizontal,
   quick_actions: Zap,
+  saved_phrases: MessageSquareText,
   mcp: Server,
   plugins: Blocks,
 } as const;
@@ -264,7 +269,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
 
       {/* Right content */}
       <div className="min-w-0 flex-1 md:overflow-y-auto">
-        <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions"
+        <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions" || activeTab === "saved-phrases"
               ? "max-w-5xl"
               : "max-w-3xl"}`}>
           <TabsContent value="profile"><AccountTab /></TabsContent>
@@ -287,6 +292,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="issue-statuses"><IssueStatusesTab /></TabsContent>
           <TabsContent value="properties"><PropertiesTab /></TabsContent>
           <TabsContent value="quick-actions"><QuickActionsTab /></TabsContent>
+          <TabsContent value="saved-phrases"><SavedPhrasesTab /></TabsContent>
           <TabsContent value="mcp"><McpTab /></TabsContent>
           {pluginsEnabled ? <TabsContent value="plugins"><PluginsTab /></TabsContent> : null}
           {extraAccountTabs?.map((tab) => (

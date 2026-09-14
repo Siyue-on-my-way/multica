@@ -32,21 +32,44 @@ export function useQuickActionMenu(issueId: string) {
     ...quickActionListOptions(wsId),
     enabled: wsId !== "",
   });
+  const { data: savedPhrases = [] } = useQuery({
+    queryKey: ["saved-phrases", wsId],
+    queryFn: () => api.listSavedPhrases(),
+    enabled: wsId !== "",
+  });
 
   // The extension reads through a getter on every keystroke; a ref keeps that
   // read cheap and current without re-creating the editor.
   const actionsRef = useRef<{ id: string; name: string; description?: string }[]>([]);
+  const savedPhrasesRef = useRef(savedPhrases);
+  savedPhrasesRef.current = savedPhrases;
   actionsRef.current = useMemo(
     () =>
-      data
-        .filter((a) => a.status === "active")
-        .map((a) => ({ id: a.id, name: a.name, description: a.description || undefined })),
-    [data],
+      [
+        ...data
+          .filter((a) => a.status === "active")
+          .map((a) => ({ id: a.id, name: a.name, description: a.description || undefined })),
+        ...savedPhrases.map((phrase) => ({
+          id: `saved-phrase:${phrase.id}`,
+          name: `常用语：${phrase.name}`,
+          description: phrase.category,
+        })),
+      ],
+    [data, savedPhrases],
   );
 
   const getQuickActions = useCallback(() => actionsRef.current, []);
   const renderQuickAction = useCallback(
-    (quickActionId: string) => api.renderQuickAction(issueId, quickActionId),
+    async (quickActionId: string) => {
+      if (quickActionId.startsWith("saved-phrase:")) {
+        const phraseId = quickActionId.slice("saved-phrase:".length);
+        const phrase = savedPhrasesRef.current.find((item) => item.id === phraseId);
+        if (!phrase) return "";
+        void api.useSavedPhrase(phrase.id).catch(() => undefined);
+        return phrase.content;
+      }
+      return api.renderQuickAction(issueId, quickActionId);
+    },
     [issueId],
   );
 

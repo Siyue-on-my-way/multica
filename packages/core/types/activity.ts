@@ -1,5 +1,6 @@
 import type { CommentAuthorType, Reaction } from "./comment";
 import type { Attachment } from "./attachment";
+import type { DiscussionProposal } from "./api";
 
 export interface AssigneeFrequencyEntry {
   assignee_type: string;
@@ -33,6 +34,8 @@ export interface TimelineEntry {
   resolved_by_type?: CommentAuthorType | null;
   resolved_by_id?: string | null;
   source_task_id?: string | null;
+  /** Structured discussion proposal sidecar, when the comment is a proposal. */
+  proposal?: DiscussionProposal;
   /** Set by frontend coalescing when consecutive identical activities are merged. */
   coalesced_count?: number;
 }

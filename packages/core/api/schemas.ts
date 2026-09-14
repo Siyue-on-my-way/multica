@@ -811,6 +811,78 @@ const ChatQuickActionSchema = z.object({
   primary: z.boolean().optional(),
 }).loose();
 
+const ProposalSnapshotSchema = z.object({
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  scope: z.string().optional(),
+  risks: z.array(z.string()).default([]),
+  acceptanceCriteria: z.array(z.string()).default([]),
+  items: z.array(z.object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    goal: z.string().optional(),
+    description: z.string().optional(),
+    stage: z.number().optional(),
+    business: z.string().optional(),
+  }).loose()).default([]),
+}).loose();
+
+const ProposalChildSchema = z.object({
+  id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  status: z.string(),
+  stage: z.number().optional(),
+  item_id: z.string().optional(),
+}).loose();
+
+const ProposalGenerationSchema = z.object({
+  id: z.string(),
+  proposal_id: z.string(),
+  strategy: z.string(),
+  create_mode: z.string(),
+  idempotency_key: z.string().optional(),
+  snapshot: z.record(z.string(), z.unknown()).default({}),
+  issues: z.array(ProposalChildSchema).default([]),
+  created_at: z.string(),
+}).loose();
+
+export const DiscussionProposalSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  source_issue_id: z.string(),
+  question_comment_id: z.string().optional(),
+  answer_comment_id: z.string().optional(),
+  snapshot: ProposalSnapshotSchema,
+  generations: z.array(ProposalGenerationSchema).default([]),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const DiscussionProposalsSchema = z.array(DiscussionProposalSchema);
+
+export const ProposalGenerationResponseSchema = ProposalGenerationSchema;
+
+export const SavedPhraseSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  creator_id: z.string(),
+  name: z.string(),
+  content: z.string(),
+  category: z.string(),
+  scope: z.string(),
+  pinned: z.boolean().default(false),
+  use_count: z.number().default(0),
+  last_used_at: z.string().optional(),
+  status: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const SavedPhraseListResponseSchema = z.object({
+  phrases: z.array(SavedPhraseSchema).default([]),
+}).loose();
+
 export const ChatMessageSchema = z.object({
   id: z.string(),
   chat_session_id: z.string(),
@@ -913,6 +985,7 @@ const TimelineEntrySchema = z.object({
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(AttachmentSchema).optional(),
   source_task_id: z.string().nullable().optional(),
+  proposal: DiscussionProposalSchema.optional(),
   coalesced_count: z.number().optional(),
 }).loose();
 
@@ -1013,6 +1086,7 @@ export const CommentSchema = z.object({
   updated_at: z.string(),
   revision: z.number().int().positive().optional(),
   source_task_id: z.string().nullable().optional(),
+  proposal: DiscussionProposalSchema.optional(),
   // Set only on comments a quick action produced (MUL-5465). Server-only.
   quick_action_id: z.string().nullable().optional(),
 }).loose();
@@ -1164,6 +1238,9 @@ export const SourceContextSnapshotSchema = z.object({
   source_issue: SourceContextIssueSnapshotSchema,
   comment_thread: z.array(SourceContextCommentSnapshotSchema),
   anchor_comment_id: z.string(),
+  proposal_id: z.string().optional(),
+  generation_id: z.string().optional(),
+  proposal_strategy: z.string().optional(),
 }).loose();
 
 export const SourceContextPreviewSchema = SourceContextSnapshotSchema.extend({
