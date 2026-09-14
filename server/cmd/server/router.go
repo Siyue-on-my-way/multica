@@ -1944,6 +1944,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/{id}/generations", h.CreateProposalGeneration)
 			})
 
+			// Issue-split fallback jobs are workspace-scoped so a job id alone
+			// cannot be used to read another workspace's source digest or result.
+			r.Route("/api/subissue-plan-jobs", func(r chi.Router) {
+				r.Get("/{id}", h.GetSubissuePlanJob)
+				r.Post("/{id}/cancel", h.CancelSubissuePlanJob)
+				r.Post("/{id}/retry", h.RetrySubissuePlanJob)
+			})
+
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.Get("/api/tasks/{taskId}/context", h.GetTaskContext) // SIY-125: context observation

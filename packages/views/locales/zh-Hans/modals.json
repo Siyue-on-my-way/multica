@@ -129,7 +129,16 @@
     "diagnostics_total_tokens": "总 token",
     "diagnostics_system_prompt": "System prompt",
     "diagnostics_user_prompt": "User prompt",
-    "diagnostics_raw_output": "原始 JSON"
+    "diagnostics_raw_output": "原始 JSON",
+    "fallback_pending": "主模型不可用，正在使用关联智能体",
+    "fallback_succeeded": "关联智能体已生成拆分方案",
+    "fallback_failed": "关联智能体规划失败",
+    "fallback_source": "来源",
+    "fallback_reason": "降级原因",
+    "fallback_agent": "关联智能体",
+    "fallback_task": "规划任务",
+    "fallback_cancel": "取消规划",
+    "fallback_retry": "重试规划"
   },
   "execution_context": {
     "content_block_label": "来自 {{source}}",

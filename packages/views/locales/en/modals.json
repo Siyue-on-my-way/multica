@@ -132,7 +132,16 @@
     "diagnostics_total_tokens": "Total tokens",
     "diagnostics_system_prompt": "System prompt",
     "diagnostics_user_prompt": "User prompt",
-    "diagnostics_raw_output": "Raw JSON"
+    "diagnostics_raw_output": "Raw JSON",
+    "fallback_pending": "The primary model is unavailable; using an associated agent",
+    "fallback_succeeded": "Associated agent produced a split plan",
+    "fallback_failed": "Associated agent planning failed",
+    "fallback_source": "Source",
+    "fallback_reason": "Fallback reason",
+    "fallback_agent": "Associated agent",
+    "fallback_task": "Planning task",
+    "fallback_cancel": "Cancel planning",
+    "fallback_retry": "Retry planning"
   },
   "execution_context": {
     "content_block_label": "from {{source}}",

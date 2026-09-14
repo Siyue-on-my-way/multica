@@ -96,6 +96,15 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
 				}
+				// Plan-only children receive a task token for the read side of
+				// the Multica API. Lifecycle callbacks are made by the daemon
+				// with its own credential; allowing POST/PUT/PATCH/DELETE here
+				// would turn a read-only planning run into an issue mutation
+				// capability if the provider or prompt were compromised.
+				if tt.Readonly && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+					http.Error(w, `{"error":"plan-only task token is read-only"}`, http.StatusForbidden)
+					return
+				}
 				userID := uuidToString(tt.UserID)
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
 					return

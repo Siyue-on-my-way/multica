@@ -1636,6 +1636,13 @@ func parseRuntimeConnectedAppsForClaim(raw []byte, taskID pgtype.UUID) []runtime
 // proceed with a normal claim. Shared by the per-runtime and batch claim
 // handlers so the batch path can't silently drop surviving comments (MUL-4257).
 func (h *Handler) repairStaleCommentPlanIfNeeded(ctx context.Context, task *db.AgentTaskQueue, runtimeWorkspaceID string) (handled bool, failure *claimBuildFailure) {
+	// A plan-only marker owns its entire claim contract, including the absence
+	// of comment routing. Even a malformed marker must reach the dedicated
+	// plan-only builder and fail closed; replaying surviving comments here
+	// would turn damaged read-only work into an ordinary issue task.
+	if service.HasSubissuePlanOnlyMarker(*task) {
+		return false, nil
+	}
 	if task.TriggerCommentID.Valid || len(task.CoalescedCommentIds) == 0 {
 		return false, nil
 	}
@@ -1853,6 +1860,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: parseUUID(resp.WorkspaceID),
 			UserID:      rt.OwnerID,
 			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+			Readonly:    service.HasSubissuePlanOnlyMarker(task),
 		}, deliveredCommentIDs, commentBackedTask, daemonTokens...)
 		if ferr != nil {
 			slog.Error("batch claim: finalize task claim failed; requeueing claim",
@@ -2144,6 +2152,13 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 // means the task must not be dispatched; the builder has already cancelled it
 // where the failure semantics require it.
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
+	// A plan-only marker is a separate claim contract. Route it before the
+	// ordinary builder can load plugins, skills, comments, project resources,
+	// or checkout information; malformed markers are rejected rather than
+	// falling through to an ordinary issue task.
+	if service.HasSubissuePlanOnlyMarker(*task) {
+		return h.buildClaimedPlanOnlyTaskResponse(r, task, runtime, runtimeID, runtimeWorkspaceID)
+	}
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
 	var issueNumber int32
@@ -3669,6 +3684,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: parseUUID(resp.WorkspaceID),
 		UserID:      runtime.OwnerID,
 		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+		Readonly:    service.HasSubissuePlanOnlyMarker(*task),
 	}, deliveredCommentIDs, commentBackedTask, daemonTokens...)
 	if ferr != nil {
 		outcome = "error_claim_finalize"

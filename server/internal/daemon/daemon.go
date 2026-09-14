@@ -7179,6 +7179,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
 
+	// Plan-only fallback tasks are a separate execution contract. They receive
+	// an immutable read-only snapshot, never a checkout or runtime context
+	// files, and must not enter the ordinary coding-agent preparation path below
+	// (which can load MCP/plugins/skills, reuse a worktree, or register a
+	// checkout capability). Keep the branch immediately after the cheap task
+	// identity checks so a malformed marker fails closed before any side effect.
+	if task.PlanOnly {
+		return d.runPlanOnlyTask(ctx, task, provider, slot, taskLog)
+	}
+
 	prepareTimeout := d.effectiveTaskPrepareTimeout()
 	prepareCtx, cancelPrepare := context.WithTimeoutCause(ctx, prepareTimeout, errTaskPrepareTimeout)
 	prepareComplete := false

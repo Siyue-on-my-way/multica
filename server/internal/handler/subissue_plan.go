@@ -90,6 +90,14 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		h.logSubissuePlanFailure("plan generation", uuidToString(issue.ID), err)
+		if errorClass := service.ClassifySubissuePlanLLMError(err); errorClass.Degradable() {
+			fallback, fallbackErr := h.handleSubissuePlanFallback(r, issue, ctxData, req, errorClass)
+			if fallbackErr == nil {
+				writeJSON(w, fallback.StatusCode, fallback.Body)
+				return
+			}
+			slog.Warn("subissue plan fallback failed", "issue_id", uuidToString(issue.ID), "error_class", errorClass, "error", fallbackErr)
+		}
 		if errors.Is(err, service.ErrLLMNotConfigured) {
 			writeJSON(w, http.StatusServiceUnavailable, suggestSubissuePlansErrorResponse{
 				Error:       "llm not configured",
@@ -168,7 +176,9 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	client := h.subissuePlanLLM(llm.BusinessStageDetail)
 	if client == nil || !client.Enabled() {
-		writeError(w, http.StatusServiceUnavailable, "llm not configured")
+		writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(
+			service.BuildRuleBasedSubissueDetails(req.Plan), ctxData.parentByIdentifier,
+		))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), service.SubissueSuggestTimeout)
@@ -186,6 +196,12 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		h.logSubissuePlanFailure("detail generation", uuidToString(issue.ID), err)
+		if service.ClassifySubissuePlanLLMError(err).Degradable() {
+			writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(
+				service.BuildRuleBasedSubissueDetails(req.Plan), ctxData.parentByIdentifier,
+			))
+			return
+		}
 		if errors.Is(err, service.ErrLLMNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "llm not configured")
 			return

@@ -384,6 +384,10 @@ type AgentTaskResponse struct {
 	IssueStatusesOmitted    int                        `json:"issue_statuses_omitted,omitempty"`
 	ThreadName              string                     `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Status                  string                     `json:"status"`
+	// PlanOnly is a server-validated read-only planning task marker. The
+	// associated context is only useful to the daemon's dedicated planner path.
+	PlanOnly        bool            `json:"plan_only,omitempty"`
+	PlanOnlyContext json.RawMessage `json:"plan_only_context,omitempty"`
 	Priority                int32                      `json:"priority"`
 	DispatchedAt            *string                    `json:"dispatched_at"`
 	StartedAt               *string                    `json:"started_at"`
@@ -818,6 +822,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
+	planOnly := service.HasSubissuePlanOnlyMarker(t)
 	return AgentTaskResponse{
 		ID:                     uuidToString(t.ID),
 		AgentID:                uuidToString(t.AgentID),
@@ -825,6 +830,13 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		IssueID:                uuidToString(t.IssueID),
 		WorkspaceID:            workspaceID,
 		Status:                 t.Status,
+		PlanOnly:               planOnly,
+		PlanOnlyContext: func() json.RawMessage {
+			if !planOnly {
+				return nil
+			}
+			return json.RawMessage(t.Context)
+		}(),
 		Priority:               t.Priority,
 		DispatchedAt:           timestampToPtr(t.DispatchedAt),
 		StartedAt:              timestampToPtr(t.StartedAt),

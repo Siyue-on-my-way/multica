@@ -2652,6 +2652,9 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 		return err
 	}
 	for _, t := range cancelled {
+		if HasSubissuePlanOnlyMarker(t) {
+			s.cancelSubissuePlanJobForTask(ctx, t)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
@@ -2703,6 +2706,9 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 		return nil, err
 	}
 	for _, t := range cancelled {
+		if HasSubissuePlanOnlyMarker(t) {
+			s.cancelSubissuePlanJobForTask(ctx, t)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
@@ -2731,6 +2737,9 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 		return nil, err
 	}
 	for _, t := range cancelled {
+		if HasSubissuePlanOnlyMarker(t) {
+			s.cancelSubissuePlanJobForTask(ctx, t)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
@@ -2974,6 +2983,9 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 	}
 
 	slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
+	if HasSubissuePlanOnlyMarker(task) {
+		s.cancelSubissuePlanJobForTask(ctx, task)
+	}
 	s.captureTaskCancelled(ctx, task)
 	if !opts.QueuedOnly {
 		cancelledChatMessage = s.finalizeCancelledChatMessage(ctx, task, opts)
@@ -3765,6 +3777,12 @@ func (s *TaskService) FinalizeTaskClaim(
 	if len(daemonTokens) > 1 {
 		return nil, fmt.Errorf("finalize task claim: expected at most one daemon token, got %d", len(daemonTokens))
 	}
+	if HasSubissuePlanOnlyMarker(task) {
+		if _, err := ParseSubissuePlanOnlyContext(task.Context); err != nil {
+			return nil, fmt.Errorf("finalize plan-only task claim: %w", err)
+		}
+		token.Readonly = true
+	}
 	receipt := task.DeliveredCommentIds
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if _, err := qtx.CreateTaskToken(ctx, token); err != nil {
@@ -4129,6 +4147,9 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	if err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
+	// Plan-only jobs have their own lifecycle. Starting one must not touch
+	// issue status or comments; only the durable job row moves to running.
+	s.startSubissuePlanJobForTask(ctx, task)
 	s.forgetTaskReclaim(task)
 	s.cancelDeferredEscalationsForTask(ctx, task.ID)
 
@@ -4341,11 +4362,14 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 		// Atomic with the status flip: a crash between the two would leave a
 		// finished obligation looking pending forever.
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
-			return err
+		planOnly := HasSubissuePlanOnlyMarker(t)
+		if !planOnly {
+			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
+				return err
+			}
 		}
 
-		if t.ChatSessionID.Valid {
+		if t.ChatSessionID.Valid && !planOnly {
 			// Pin the chat_session's runtime_id alongside the session_id so the
 			// next claim can apply the runtime-guard. Both fields move together:
 			// when there's no session_id to record, leave runtime_id untouched
@@ -4425,9 +4449,15 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		return nil, fmt.Errorf("complete task: %w", err)
 	}
 
-	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
-	s.captureTaskCompleted(ctx, task)
-	if task.IssueID.Valid {
+	planOnly := HasSubissuePlanOnlyMarker(task)
+	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "plan_only", planOnly)
+	if !planOnly {
+		s.captureTaskCompleted(ctx, task)
+	}
+	if planOnly {
+		s.completeSubissuePlanJobForTask(ctx, task, result)
+	}
+	if task.IssueID.Valid && !planOnly {
 		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
 			if _, markErr := s.Queries.MarkIssueAgentResult(ctx, db.MarkIssueAgentResultParams{ID: task.IssueID, WorkspaceID: issue.WorkspaceID}); markErr != nil {
 				slog.Warn("mark agent result unread failed", "issue_id", util.UUIDToString(task.IssueID), "error", markErr)
@@ -4443,7 +4473,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// tasks, TriggerCommentID threads the fallback under the original comment;
 	// for assignment-triggered tasks it is NULL and the fallback is top-level.
 	// Chat tasks have no IssueID and are handled separately below.
-	if task.IssueID.Valid {
+	if task.IssueID.Valid && !planOnly {
 		suppressNoActionComment, err := HasSquadLeaderNoActionEvaluationForTask(ctx, s.Queries, task)
 		if err != nil {
 			slog.Warn("checking squad leader no_action evaluation failed",
@@ -4490,8 +4520,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// new issue by querying for the most recent issue this agent created in
 	// the requester's workspace since the task started — more robust than
 	// parsing the agent's stdout for an identifier.
-	if qc, ok := s.parseQuickCreateContext(task); ok {
-		s.notifyQuickCreateCompleted(ctx, task, qc, result)
+	if !planOnly {
+		if qc, ok := s.parseQuickCreateContext(task); ok {
+			s.notifyQuickCreateCompleted(ctx, task, qc, result)
+		}
 	}
 
 	// For chat tasks, broadcast chat:done AFTER commit. The single assistant
@@ -4500,7 +4532,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// cursor (chat_session.last_read_at) vs the assistant messages after it — a
 	// no_response row has role='assistant' and a fresh created_at, so it counts
 	// as unread just like a text reply, no per-reply stamping needed.
-	if task.ChatSessionID.Valid {
+	if task.ChatSessionID.Valid && !planOnly {
 		// The assistant outcome row (message / no_response) and any attachment
 		// binding were written inside the completion transaction above by
 		// writeChatCompletionOutcome. Broadcast chat:done AFTER commit.
@@ -4771,13 +4803,21 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// retry. The overlay build can do network I/O (Composio), so we resolve it
 	// here — before the transaction — and only for retryable failures, so the
 	// common agent_error path skips this work entirely.
+	planOnlyMarker := false
+	if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
+		planOnlyMarker = HasSubissuePlanOnlyMarker(existing)
+	} else {
+		// A marker cannot be safely classified while its row is unavailable;
+		// suppress the automatic retry and let the terminal write settle it.
+		planOnlyMarker = true
+	}
 	var (
 		wantRetry        bool
 		retryOverlay     runtimeMCPOverlayData
 		retryFireAt      pgtype.Timestamptz
 		retryMaxAttempts pgtype.Int4
 	)
-	if retryableReasons[failureReason] {
+	if !planOnlyMarker && retryableReasons[failureReason] {
 		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
 			slog.Warn("fail task auto-retry: load parent failed",
 				"task_id", util.UUIDToString(taskID), "error", perr)
@@ -4830,13 +4870,16 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 			return err
 		}
 		task = t
+		planOnly := HasSubissuePlanOnlyMarker(t)
 
 		// Atomic with the status flip, same as the completion path. A failed
 		// coordinator that already received the recovery comment has consumed
 		// the obligation: the pre-existing delivered_comment_ids coverage check
 		// never looked at the covering task's status either.
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
-			return err
+		if !planOnly {
+			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
+				return err
+			}
 		}
 
 		// Keep resume-unsafe sessions on the task row for observability, but
@@ -4851,7 +4894,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		// is left alone. ResumeUnsafeFailure (not the reason alone) so an
 		// un-upgraded daemon's agent_error.unknown row is caught by the error
 		// text too.
-		if t.ChatSessionID.Valid && ResumeUnsafeFailure(failureReason, errMsg) {
+		if !planOnly && t.ChatSessionID.Valid && ResumeUnsafeFailure(failureReason, errMsg) {
 			deadSession := sessionID
 			if deadSession == "" {
 				deadSession = t.SessionID.String
@@ -4870,7 +4913,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		// terminal status: the fresh-session retry that replaced it may well
 		// have succeeded, and the pointer would otherwise still name the
 		// transcript it retried away from.
-		if t.ChatSessionID.Valid && retiredSessionID != "" {
+		if !planOnly && t.ChatSessionID.Valid && retiredSessionID != "" {
 			if err := qtx.ClearChatSessionSessionIfMatches(ctx, db.ClearChatSessionSessionIfMatchesParams{
 				ID:        t.ChatSessionID,
 				SessionID: pgtype.Text{String: retiredSessionID, Valid: true},
@@ -4883,7 +4926,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		// ResumeUnsafeFailure, not resumeUnsafeFailureReason: the reason-only
 		// check passes an un-upgraded daemon's agent_error.unknown row, which
 		// would re-pin the very session the clear above just removed.
-		if t.ChatSessionID.Valid && !ResumeUnsafeFailure(failureReason, errMsg) {
+		if !planOnly && t.ChatSessionID.Valid && !ResumeUnsafeFailure(failureReason, errMsg) {
 			// Pin the chat_session's runtime_id alongside the session_id so the
 			// next claim can apply the runtime-guard. Both fields move together:
 			// when there's no session_id to record, leave runtime_id untouched
@@ -4981,7 +5024,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		// held, then reanchor the next direct head. Otherwise the successor could
 		// be claimed between the status flip and this row, placing its user input
 		// before the failure it follows.
-		if t.ChatSessionID.Valid && retried == nil {
+		if !planOnly && t.ChatSessionID.Valid && retried == nil {
 			// This turn is dead, so anything it owned has to move on. An adopted
 			// onboarding kickoff would otherwise stay bound to a task that will
 			// never run again: the next turn would reach Mika with no onboarding
@@ -5038,8 +5081,16 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		return nil, fmt.Errorf("fail task: %w", err)
 	}
 
-	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
-	s.captureTaskFailed(ctx, task)
+	planOnly := HasSubissuePlanOnlyMarker(task)
+	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason, "plan_only", planOnly)
+	if !planOnly {
+		s.captureTaskFailed(ctx, task)
+	}
+	if planOnly {
+		// Persist only a coarse, non-sensitive diagnostic. Runtime/provider
+		// output can contain credentials and is not suitable for the job API.
+		s.failSubissuePlanJobForTask(ctx, task, failureReason)
+	}
 
 	// The auto-retry child (if any) was created inside the transaction above so
 	// no newer chat task could jump ahead of it. Surface it now: broadcast
@@ -5069,7 +5120,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// platform-authored comment on the source task's issue, routed explicitly to
 	// that task's agent; recoverDelegatedTaskFailure coalesces it with an
 	// existing coordinator run and deduplicates by the failed task id.
-	if retried == nil {
+	if retried == nil && !planOnly {
 		_, recoveryErr := s.recoverDelegatedTaskFailure(ctx, task)
 		if recoveryErr != nil {
 			slog.Warn("delegated task failure recovery failed",
@@ -5086,7 +5137,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// daemon hiccup. Delegated failures keep this existing failed-issue comment
 	// in addition to the coordinator recovery signal, preserving visibility on
 	// both sides of a cross-issue handoff.
-	if errMsg != "" && task.IssueID.Valid && retried == nil {
+	if !planOnly && errMsg != "" && task.IssueID.Valid && retried == nil {
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(errMsg), "system", task.TriggerCommentID, task.ID)
 	}
 
@@ -5094,7 +5145,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// requester so they can either retry or fall back to the advanced form
 	// without losing their original prompt. Skipped when an auto-retry is
 	// pending — the new attempt will write its own outcome.
-	if retried == nil {
+	if retried == nil && !planOnly {
 		if qc, ok := s.parseQuickCreateContext(task); ok {
 			attached, attachedErr := s.sourceContextAttachedByTask(ctx, task, qc)
 			switch {

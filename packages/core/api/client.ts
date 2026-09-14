@@ -52,6 +52,10 @@ import type {
   SuggestSubIssuesRequest,
   SuggestSubIssuesResponse,
   SuggestSubissuePlansResponse,
+  SuggestSubissuePlansResult,
+  SubissuePlanJob,
+  SubissuePlanJobAcceptedResponse,
+  SubissuePlanJobActionResult,
   ExpandSubissuePlanRequest,
   DiscussionProposal,
   CreateDiscussionProposalRequest,
@@ -432,6 +436,9 @@ import {
   EMPTY_COMMENT,
   DiscussionProposalSchema,
   DiscussionProposalsSchema,
+  SuggestSubissuePlansResponseSchema,
+  SubissuePlanJobSchema,
+  SubissuePlanJobAcceptedResponseSchema,
   ProposalGenerationResponseSchema,
   SavedPhraseSchema,
   SavedPhraseListResponseSchema,
@@ -649,6 +656,56 @@ function subscriberTarget(
   if (userId) body.user_id = userId;
   if (userType) body.user_type = userType;
   return body;
+}
+
+function emptySubissuePlanJob(id: string): SubissuePlanJob {
+  return {
+    id,
+    issue_id: "",
+    source_snapshot_digest: "",
+    context_revision: 0,
+    status: "failed",
+    source: "",
+    plans: [],
+    created_at: "",
+    updated_at: "",
+    expires_at: "",
+  };
+}
+
+function parseSubissuePlanJobAction(
+  raw: unknown,
+  endpoint: string,
+  jobId: string,
+): SubissuePlanJobActionResult {
+  if (SubissuePlanJobAcceptedResponseSchema.safeParse(raw).success) {
+    return parseWithFallback<SubissuePlanJobAcceptedResponse>(
+      raw,
+      SubissuePlanJobAcceptedResponseSchema,
+      {
+        job: emptySubissuePlanJob(jobId),
+        job_id: jobId,
+        status: "failed",
+        source: "",
+        fallback_reason: "",
+        diagnostics: [],
+        summary: {
+          status: "failed",
+          total_duration_ms: 0,
+          upstream_duration_ms: 0,
+          upstream_calls: 0,
+          retry_count: 0,
+        },
+      },
+      { endpoint },
+    );
+  }
+  return parseWithFallback<SubissuePlanJob>(
+    raw,
+    SubissuePlanJobSchema,
+    emptySubissuePlanJob(jobId),
+    { endpoint },
+  );
 }
 
 /**
@@ -1174,11 +1231,49 @@ export class ApiClient {
     });
   }
 
-  async suggestSubissuePlans(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubissuePlansResponse> {
-    return this.fetch(`/api/issues/${issueId}/suggest-subissue-plans`, {
+  async suggestSubissuePlans(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubissuePlansResult> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/suggest-subissue-plans`, {
       method: "POST",
       body: JSON.stringify(data),
     });
+    if (SubissuePlanJobAcceptedResponseSchema.safeParse(raw).success) {
+      return parseSubissuePlanJobAction(
+        raw,
+        "POST /api/issues/:id/suggest-subissue-plans (202)",
+        typeof (raw as { job_id?: unknown }).job_id === "string" ? (raw as { job_id: string }).job_id : "",
+      );
+    }
+    return parseWithFallback<SuggestSubissuePlansResponse>(
+      raw,
+      SuggestSubissuePlansResponseSchema,
+      { plans: [], diagnostics: [], summary: { status: "failed", total_duration_ms: 0, upstream_duration_ms: 0, upstream_calls: 0, retry_count: 0 } },
+      { endpoint: "POST /api/issues/:id/suggest-subissue-plans" },
+    );
+  }
+
+  async getSubissuePlanJob(jobId: string): Promise<SubissuePlanJob> {
+    const raw = await this.fetch<unknown>(`/api/subissue-plan-jobs/${jobId}`);
+    return parseWithFallback<SubissuePlanJob>(raw, SubissuePlanJobSchema, emptySubissuePlanJob(jobId), {
+      endpoint: "GET /api/subissue-plan-jobs/:id",
+    });
+  }
+
+  async cancelSubissuePlanJob(jobId: string): Promise<SubissuePlanJob> {
+    const raw = await this.fetch<unknown>(`/api/subissue-plan-jobs/${jobId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    return parseWithFallback<SubissuePlanJob>(raw, SubissuePlanJobSchema, emptySubissuePlanJob(jobId), {
+      endpoint: "POST /api/subissue-plan-jobs/:id/cancel",
+    });
+  }
+
+  async retrySubissuePlanJob(jobId: string): Promise<SubissuePlanJobActionResult> {
+    const raw = await this.fetch<unknown>(`/api/subissue-plan-jobs/${jobId}/retry`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    return parseSubissuePlanJobAction(raw, "POST /api/subissue-plan-jobs/:id/retry", jobId);
   }
 
   async expandSubissuePlan(issueId: string, data: ExpandSubissuePlanRequest): Promise<SuggestSubIssuesResponse> {

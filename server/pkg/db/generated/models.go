@@ -1429,6 +1429,30 @@ type SquadMember struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type SubissuePlanJob struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	SourceCommentID      pgtype.UUID        `json:"source_comment_id"`
+	SourceSnapshot       []byte             `json:"source_snapshot"`
+	SourceSnapshotDigest string             `json:"source_snapshot_digest"`
+	ContextRevision      int64              `json:"context_revision"`
+	HumanConstraints     string             `json:"human_constraints"`
+	PrimaryErrorClass    string             `json:"primary_error_class"`
+	FallbackReason       string             `json:"fallback_reason"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	TaskID               pgtype.UUID        `json:"task_id"`
+	Status               string             `json:"status"`
+	Result               []byte             `json:"result"`
+	ErrorSummary         pgtype.Text        `json:"error_summary"`
+	IdempotencyKey       string             `json:"idempotency_key"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+}
+
 type SysCronExecution struct {
 	ID           pgtype.UUID        `json:"id"`
 	JobName      string             `json:"job_name"`
@@ -1482,6 +1506,7 @@ type TaskToken struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Readonly    bool               `json:"readonly"`
 }
 
 type TaskUsage struct {

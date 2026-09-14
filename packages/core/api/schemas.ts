@@ -863,6 +863,105 @@ export const DiscussionProposalsSchema = z.array(DiscussionProposalSchema);
 
 export const ProposalGenerationResponseSchema = ProposalGenerationSchema;
 
+const SubissuePlanItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  goal: z.string(),
+  kind: z.string().optional(),
+  business: z.string().optional(),
+  source_task_ids: z.array(z.string()).default([]),
+}).loose();
+
+const SubissuePlanSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  strategy: z.string().optional(),
+  coverage: z.string().optional(),
+  items: z.array(SubissuePlanItemSchema).default([]),
+}).loose();
+
+const SubissuePlanDiagnosticSchema = z.object({
+  plan_id: z.string().default(""),
+  strategy: z.string().default(""),
+  name: z.string().default(""),
+  source: z.string().optional(),
+  fallback_reason: z.string().optional(),
+  agent_id: z.string().optional(),
+  task_id: z.string().optional(),
+  version: z.number().optional(),
+  model: z.string().default(""),
+  reasoning_effort: z.string().optional(),
+  temperature: z.number().default(0),
+  max_completion_tokens: z.number().default(0),
+  timeout_ms: z.number().optional(),
+  system_prompt: z.string().default(""),
+  user_prompt: z.string().default(""),
+  raw_output: z.string().default(""),
+  input_chars: z.number().default(0),
+  output_chars: z.number().default(0),
+  prompt_tokens: z.number().default(0),
+  completion_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  finish_reason: z.string().default(""),
+  attempt: z.number().default(0),
+  status: z.string().optional(),
+  error: z.string().optional(),
+  duration_ms: z.number().optional(),
+  upstream_duration_ms: z.number().optional(),
+  attempts: z.number().optional(),
+  retry_count: z.number().optional(),
+}).loose();
+
+const SubissuePlanGenerationSummarySchema = z.object({
+  status: z.string().default("running"),
+  total_duration_ms: z.number().default(0),
+  upstream_duration_ms: z.number().default(0),
+  upstream_calls: z.number().default(0),
+  retry_count: z.number().default(0),
+  error: z.string().optional(),
+}).loose();
+
+export const SuggestSubissuePlansResponseSchema = z.object({
+  plans: z.array(SubissuePlanSchema).default([]),
+  diagnostics: z.array(SubissuePlanDiagnosticSchema).default([]),
+  summary: SubissuePlanGenerationSummarySchema.optional(),
+  ancestor_brief_refs: z.array(z.object({ id: z.string(), updated_at: z.string() }).loose()).default([]),
+  inherited_execution_context: z.unknown().optional(),
+  proposal_id: z.string().optional(),
+}).loose();
+
+export const SubissuePlanJobSchema = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  source_comment_id: z.string().optional(),
+  source_snapshot_digest: z.string().default(""),
+  context_revision: z.number().default(0),
+  status: z.string(),
+  source: z.string().default(""),
+  fallback_reason: z.string().optional(),
+  primary_error_class: z.string().optional(),
+  agent_id: z.string().optional(),
+  task_id: z.string().optional(),
+  plans: z.array(SubissuePlanSchema).default([]),
+  error_summary: z.string().optional(),
+  proposal_id: z.string().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  started_at: z.string().optional(),
+  completed_at: z.string().optional(),
+  expires_at: z.string().default(""),
+}).loose();
+
+export const SubissuePlanJobAcceptedResponseSchema = z.object({
+  job: SubissuePlanJobSchema,
+  job_id: z.string(),
+  status: z.string(),
+  source: z.string(),
+  fallback_reason: z.string(),
+  diagnostics: z.array(SubissuePlanDiagnosticSchema).default([]),
+  summary: SubissuePlanGenerationSummarySchema,
+}).loose();
+
 export const SavedPhraseSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),

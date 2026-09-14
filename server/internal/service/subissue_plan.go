@@ -97,6 +97,12 @@ type SubissuePlanDiagnostic struct {
 	Strategy            string  `json:"strategy"`
 	Name                string  `json:"name"`
 	Source              string  `json:"source,omitempty"`
+	// Fallback fields are deliberately identifiers and stable reason codes
+	// only. Provider messages, credentials, and runtime URLs never cross this
+	// boundary.
+	FallbackReason      string  `json:"fallback_reason,omitempty"`
+	AgentID             string  `json:"agent_id,omitempty"`
+	TaskID              string  `json:"task_id,omitempty"`
 	Version             int     `json:"version,omitempty"`
 	Model               string  `json:"model"`
 	ReasoningEffort     string  `json:"reasoning_effort,omitempty"`

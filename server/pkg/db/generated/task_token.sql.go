@@ -12,9 +12,9 @@ import (
 )
 
 const createTaskToken = `-- name: CreateTaskToken :one
-INSERT INTO task_token (token_hash, task_id, agent_id, workspace_id, user_id, expires_at, id)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::uuid, gen_random_uuid()))
-RETURNING id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at, created_at
+INSERT INTO task_token (token_hash, task_id, agent_id, workspace_id, user_id, expires_at, readonly, id)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, FALSE), COALESCE($8::uuid, gen_random_uuid()))
+RETURNING id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at, created_at, readonly
 `
 
 type CreateTaskTokenParams struct {
@@ -24,6 +24,7 @@ type CreateTaskTokenParams struct {
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	UserID      pgtype.UUID        `json:"user_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	Readonly    interface{}        `json:"readonly"`
 	ID          pgtype.UUID        `json:"id"`
 }
 
@@ -35,6 +36,7 @@ func (q *Queries) CreateTaskToken(ctx context.Context, arg CreateTaskTokenParams
 		arg.WorkspaceID,
 		arg.UserID,
 		arg.ExpiresAt,
+		arg.Readonly,
 		arg.ID,
 	)
 	var i TaskToken
@@ -47,6 +49,7 @@ func (q *Queries) CreateTaskToken(ctx context.Context, arg CreateTaskTokenParams
 		&i.UserID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Readonly,
 	)
 	return i, err
 }
@@ -70,7 +73,7 @@ func (q *Queries) DeleteTaskTokensByTask(ctx context.Context, taskID pgtype.UUID
 }
 
 const getTaskTokenByHash = `-- name: GetTaskTokenByHash :one
-SELECT id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at, created_at FROM task_token
+SELECT id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at, created_at, readonly FROM task_token
 WHERE token_hash = $1 AND expires_at > now()
 `
 
@@ -86,6 +89,7 @@ func (q *Queries) GetTaskTokenByHash(ctx context.Context, tokenHash string) (Tas
 		&i.UserID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Readonly,
 	)
 	return i, err
 }

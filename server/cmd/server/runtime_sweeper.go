@@ -167,7 +167,35 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 		sweepStaleTasks(ctx, queries, taskSvc, bus, reconnectGrace)
 		sweepExpiredQueuedTasks(ctx, queries, taskSvc, reconnectGrace)
 		sweepDeferredChatFinalizations(ctx, queries, taskSvc)
+		sweepExpiredSubissuePlanJobs(ctx, queries, taskSvc)
 	})
+}
+
+// sweepExpiredSubissuePlanJobs closes abandoned fallback jobs and stops their
+// queued/running associated-agent task. The job row is expired first, so a
+// late task completion can only observe a terminal job and cannot publish a
+// stale plan as an active request.
+func sweepExpiredSubissuePlanJobs(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) (stats runtimeSweepStageStats) {
+	startedAt := time.Now()
+	defer func() {
+		observeRuntimeSweepStage(taskServiceMetrics(taskSvc), obsmetrics.RuntimeSweepStageSubissuePlanJobs, startedAt, stats)
+	}()
+	expired, err := queries.ExpireSubissuePlanJobs(ctx)
+	if err != nil {
+		slog.Warn("subissue plan job sweeper: expire failed", "error", err)
+		return
+	}
+	stats.candidates = len(expired)
+	for _, job := range expired {
+		if job.TaskID.Valid && taskSvc != nil {
+			if _, cancelErr := taskSvc.CancelTask(ctx, job.TaskID); cancelErr != nil && !errors.Is(cancelErr, pgx.ErrNoRows) {
+				slog.Warn("subissue plan job sweeper: cancel task failed", "job_id", util.UUIDToString(job.ID), "task_id", util.UUIDToString(job.TaskID), "error", cancelErr)
+				continue
+			}
+		}
+		stats.changed++
+	}
+	return
 }
 
 func runDelegatedFailureRecoverySweeper(ctx context.Context, taskSvc *service.TaskService) {

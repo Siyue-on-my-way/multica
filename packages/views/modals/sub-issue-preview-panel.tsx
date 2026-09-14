@@ -10,6 +10,10 @@ import type {
   SubIssuePlanDiagnostic,
   SubIssuePlanGenerationSummary,
   SubIssuePlanItem,
+  SubissuePlanJob,
+  SubissuePlanJobActionResult,
+  SubissuePlanJobAcceptedResponse,
+  SuggestSubissuePlansResult,
   SubIssueSuggestion,
   ResolvedExecutionContext,
 } from "@multica/core/types";
@@ -145,6 +149,16 @@ function planGenerationErrorDetails(error: unknown): {
   };
 }
 
+function isAcceptedPlanJobResponse(
+  value: SuggestSubissuePlansResult | SubissuePlanJobActionResult,
+): value is SubissuePlanJobAcceptedResponse {
+  return "job" in value && !!value.job;
+}
+
+function isTerminalPlanJob(job: SubissuePlanJob): boolean {
+  return job.status === "succeeded" || job.status === "failed" || job.status === "cancelled" || job.status === "expired";
+}
+
 export function SubIssuePreviewModal({
   onClose,
   data,
@@ -170,6 +184,8 @@ export function SubIssuePreviewModal({
   const [plans, setPlans] = useState<SubIssuePlan[]>([]);
   const [diagnostics, setDiagnostics] = useState<SubIssuePlanDiagnostic[]>([]);
   const [generationSummary, setGenerationSummary] = useState<SubIssuePlanGenerationSummary | null>(null);
+  const [planJob, setPlanJob] = useState<SubissuePlanJob | null>(null);
+  const [planJobAction, setPlanJobAction] = useState<"cancel" | "retry" | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
@@ -194,13 +210,42 @@ export function SubIssuePreviewModal({
   const [generationKey, setGenerationKey] = useState<string | null>(null);
   const [pickingParentFor, setPickingParentFor] = useState<string | null>(null);
 
+  const applyPlanPayload = useCallback(
+    (payload: {
+      plans: SubIssuePlan[];
+      diagnostics?: SubIssuePlanDiagnostic[];
+      summary?: SubIssuePlanGenerationSummary;
+      ancestor_brief_refs?: { id: string; updated_at: string }[];
+      inherited_execution_context?: ResolvedExecutionContext;
+      proposal_id?: string;
+    }) => {
+      setPlans(payload.plans);
+      setDiagnostics(payload.diagnostics ?? []);
+      setGenerationSummary(payload.summary ?? null);
+      setAncestorContextRefs(payload.ancestor_brief_refs ?? []);
+      setInheritedExecutionContext(payload.inherited_execution_context ?? null);
+      const nextProposalId = payload.proposal_id ?? initialProposalId;
+      proposalIdRef.current = nextProposalId;
+      setProposalId(nextProposalId);
+      setSelectedPlanId((payload.plans.find((plan) => plan.coverage === "full") ?? payload.plans[0])?.id ?? "");
+      setDiagnosticsOpen(false);
+      setMergeSelection([]);
+      setDetailError(false);
+      setPhase("outline");
+    },
+    [initialProposalId],
+  );
+
   const loadPlans = useCallback(
     async (constraints: string) => {
       if (!issueId || (!commentId && !initialProposalId)) return;
       setLoadingPlans(true);
       setPlanError(false);
+      setPlanJob(null);
+      setPlanJobAction(null);
       setDiagnostics([]);
       setGenerationSummary(null);
+      let accepted = false;
       try {
         const response = await api.suggestSubissuePlans(issueId, {
           ...(commentId ? { comment_id: commentId } : {}),
@@ -208,39 +253,75 @@ export function SubIssuePreviewModal({
           human_constraints: constraints.trim() || undefined,
           carry_ancestor_context: carryAncestorContext,
         });
-        setPlans(response.plans);
-        setDiagnostics(response.diagnostics ?? []);
-        setGenerationSummary(response.summary ?? null);
-        setAncestorContextRefs(response.ancestor_brief_refs ?? []);
-        setInheritedExecutionContext(response.inherited_execution_context ?? null);
-        const nextProposalId = response.proposal_id ?? initialProposalId;
-        proposalIdRef.current = nextProposalId;
-        setProposalId(nextProposalId);
-        // SIY-147: default to the backend-verified full-coverage plan so the
-        // panel never opens pre-selecting a partial decomposition. Reference
-        // plans stay one click away.
-        setSelectedPlanId(
-          (response.plans.find((plan) => plan.coverage === "full") ?? response.plans[0])?.id ?? "",
-        );
-        setDiagnosticsOpen(false);
-        setMergeSelection([]);
-        setDetailError(false);
-        setPhase("outline");
+        if (isAcceptedPlanJobResponse(response)) {
+          accepted = true;
+          setPlanJob(response.job);
+          setDiagnostics(response.diagnostics ?? []);
+          setGenerationSummary(response.summary ?? null);
+          setProposalId(response.job.proposal_id ?? initialProposalId);
+          proposalIdRef.current = response.job.proposal_id ?? initialProposalId;
+          setPlans([]);
+          setPhase("outline");
+        } else {
+          setPlanJob(null);
+          applyPlanPayload(response);
+        }
       } catch (error) {
         const failure = planGenerationErrorDetails(error);
         setGenerationSummary(failure.summary);
         setDiagnostics(failure.diagnostics);
         setPlanError(true);
       } finally {
-        setLoadingPlans(false);
+        if (!accepted) setLoadingPlans(false);
       }
     },
-    [carryAncestorContext, commentId, initialProposalId, issueId],
+    [applyPlanPayload, carryAncestorContext, commentId, initialProposalId, issueId],
   );
 
   useEffect(() => {
     void loadPlans("");
   }, [loadPlans]);
+
+  useEffect(() => {
+    if (!planJob || isTerminalPlanJob(planJob)) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await api.getSubissuePlanJob(planJob.id);
+        if (disposed) return;
+        setPlanJob(next);
+        if (isTerminalPlanJob(next)) {
+          setPlanJobAction(null);
+          if (next.status === "succeeded") {
+            applyPlanPayload({
+              plans: next.plans,
+              proposal_id: next.proposal_id,
+              diagnostics,
+              summary: { status: "success", total_duration_ms: 0, upstream_duration_ms: 0, upstream_calls: 0, retry_count: 0 },
+            });
+            setPlanError(next.plans.length === 0);
+          } else {
+            setPlans([]);
+            setPlanError(true);
+          }
+          setLoadingPlans(false);
+          return;
+        }
+        timer = setTimeout(poll, 1000);
+      } catch {
+        if (disposed) return;
+        setPlanError(true);
+        setLoadingPlans(false);
+        setPlanJobAction(null);
+      }
+    };
+    timer = setTimeout(poll, 700);
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [applyPlanPayload, diagnostics, planJob]);
 
   const selectedPlan = useMemo(
     () => plans.find((plan) => plan.id === selectedPlanId) ?? null,
@@ -255,6 +336,52 @@ export function SubIssuePreviewModal({
   const busy = loadingPlans || loadingDetails || creating;
   const checkedCount = drafts.filter((draft) => draft.checked).length;
   const single = drafts.length === 1;
+
+  const handleCancelPlanJob = async () => {
+    if (!planJob || planJobAction) return;
+    setPlanJobAction("cancel");
+    try {
+      const next = await api.cancelSubissuePlanJob(planJob.id);
+      setPlanJob(next);
+      setLoadingPlans(false);
+      setPlanError(true);
+    } finally {
+      setPlanJobAction(null);
+    }
+  };
+
+  const handleRetryPlanJob = async () => {
+    if (!planJob || planJobAction) return;
+    setPlanJobAction("retry");
+    setPlanError(false);
+    setLoadingPlans(true);
+    try {
+      const response = await api.retrySubissuePlanJob(planJob.id);
+      if (isAcceptedPlanJobResponse(response)) {
+        setPlanJob(response.job);
+        setDiagnostics(response.diagnostics ?? []);
+        setGenerationSummary(response.summary ?? null);
+        setPlans([]);
+        setLoadingPlans(true);
+      } else {
+        setPlanJob(response);
+        if (response.status === "succeeded") {
+          applyPlanPayload({ plans: response.plans, proposal_id: response.proposal_id, diagnostics });
+          setPlanError(response.plans.length === 0);
+          setLoadingPlans(false);
+        } else {
+          setPlans([]);
+          setPlanError(true);
+          setLoadingPlans(false);
+        }
+      }
+    } catch {
+      setPlanError(true);
+      setLoadingPlans(false);
+    } finally {
+      setPlanJobAction(null);
+    }
+  };
 
   const updateSelectedPlan = (update: (plan: SubIssuePlan) => SubIssuePlan) => {
     if (!selectedPlan) return;
@@ -466,7 +593,52 @@ export function SubIssuePreviewModal({
               {loadingPlans && (
                 <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  {t(($) => $.suggest_subissues.outline_loading)}
+                  {planJob && !isTerminalPlanJob(planJob)
+                    ? t(($) => $.suggest_subissues.fallback_pending)
+                    : t(($) => $.suggest_subissues.outline_loading)}
+                </div>
+              )}
+
+              {planJob && (
+                <div
+                  data-testid="subissue-plan-fallback-status"
+                  className={`rounded-lg border p-3 ${planJob.status === "failed" || planJob.status === "expired" ? "border-destructive/50" : "border-border/60"}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-body font-medium">
+                      {planJob.status === "queued" || planJob.status === "running"
+                        ? t(($) => $.suggest_subissues.fallback_pending)
+                        : planJob.status === "succeeded"
+                          ? t(($) => $.suggest_subissues.fallback_succeeded)
+                          : t(($) => $.suggest_subissues.fallback_failed)}
+                    </div>
+                    <Badge variant="secondary">{planJob.source || "—"}</Badge>
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                    <DiagnosticStat label={t(($) => $.suggest_subissues.fallback_source)} value={planJob.source} />
+                    <DiagnosticStat label={t(($) => $.suggest_subissues.fallback_reason)} value={planJob.fallback_reason} />
+                    <DiagnosticStat label={t(($) => $.suggest_subissues.fallback_agent)} value={planJob.agent_id} />
+                    <DiagnosticStat label={t(($) => $.suggest_subissues.fallback_task)} value={planJob.task_id} />
+                  </div>
+                  {planJob.error_summary && (
+                    <div className="mt-2 rounded-md bg-destructive/10 px-2.5 py-2 text-caption text-destructive">
+                      {planJob.error_summary}
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap justify-end gap-2">
+                    {(planJob.status === "queued" || planJob.status === "running") && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => void handleCancelPlanJob()} disabled={!!planJobAction}>
+                        {planJobAction === "cancel" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        {t(($) => $.suggest_subissues.fallback_cancel)}
+                      </Button>
+                    )}
+                    {(planJob.status === "failed" || planJob.status === "cancelled" || planJob.status === "expired") && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => void handleRetryPlanJob()} disabled={!!planJobAction}>
+                        {planJobAction === "retry" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        {t(($) => $.suggest_subissues.fallback_retry)}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               )}
 

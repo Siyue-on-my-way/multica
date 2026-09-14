@@ -6,6 +6,9 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enModals from "../locales/en/modals.json";
 
 const mockSuggestPlans = vi.hoisted(() => vi.fn());
+const mockGetPlanJob = vi.hoisted(() => vi.fn());
+const mockCancelPlanJob = vi.hoisted(() => vi.fn());
+const mockRetryPlanJob = vi.hoisted(() => vi.fn());
 const mockExpandPlan = vi.hoisted(() => vi.fn());
 const mockCreateIssue = vi.hoisted(() => vi.fn());
 const mockCreateProposalGeneration = vi.hoisted(() => vi.fn());
@@ -14,6 +17,9 @@ const mockToastSuccess = vi.hoisted(() => vi.fn());
 vi.mock("@multica/core/api", () => ({
   api: {
     suggestSubissuePlans: mockSuggestPlans,
+    getSubissuePlanJob: mockGetPlanJob,
+    cancelSubissuePlanJob: mockCancelPlanJob,
+    retrySubissuePlanJob: mockRetryPlanJob,
     expandSubissuePlan: mockExpandPlan,
     createProposalGeneration: mockCreateProposalGeneration,
   },
@@ -148,6 +154,48 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.getByText("2900")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
+  });
+
+  it("shows the associated-agent fallback while a 202 job is running and loads its plan", async () => {
+    const fallbackJob = {
+      id: "job-1",
+      issue_id: "issue-1",
+      source_snapshot_digest: "digest-1",
+      context_revision: 4,
+      status: "queued" as const,
+      source: "fallback_agent",
+      fallback_reason: "primary_llm_unavailable",
+      agent_id: "agent-1",
+      task_id: "task-1",
+      plans: [],
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      expires_at: "2026-09-14T00:15:00Z",
+    };
+    mockSuggestPlans.mockResolvedValueOnce({
+      job: fallbackJob,
+      job_id: fallbackJob.id,
+      status: "queued",
+      source: fallbackJob.source,
+      fallback_reason: fallbackJob.fallback_reason,
+      diagnostics: [{ plan_id: "plan-fallback", strategy: "fallback", name: "Fallback", source: "fallback_agent", fallback_reason: "primary_llm_unavailable", agent_id: "agent-1", task_id: "task-1", model: "", temperature: 0, max_completion_tokens: 0, system_prompt: "", user_prompt: "", raw_output: "", input_chars: 0, output_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, finish_reason: "", attempt: 0 }],
+      summary: { status: "running", total_duration_ms: 0, upstream_duration_ms: 0, upstream_calls: 0, retry_count: 0 },
+    });
+    mockGetPlanJob.mockResolvedValueOnce({
+      ...fallbackJob,
+      status: "succeeded",
+      plans: [{ id: "fallback-plan", name: "Associated plan", coverage: "full", items: [{ id: "fallback-item", title: "Read-only task", goal: "Describe the task" }] }],
+      proposal_id: "proposal-fallback",
+    });
+
+    renderModal();
+
+    expect(await screen.findByTestId("subissue-plan-fallback-status")).toHaveTextContent(
+      "The primary model is unavailable; using an associated agent",
+    );
+    await waitFor(() => expect(mockGetPlanJob).toHaveBeenCalledWith("job-1"), { timeout: 2000 });
+    expect(await screen.findByDisplayValue("Read-only task")).toBeInTheDocument();
+    expect(screen.getByText("Associated agent produced a split plan")).toBeInTheDocument();
   });
 
   it("shows the selected strategy model, usage and prompts", async () => {

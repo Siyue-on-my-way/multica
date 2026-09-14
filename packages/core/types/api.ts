@@ -152,6 +152,9 @@ export interface SubIssuePlanDiagnostic {
 	strategy: string;
 	name: string;
 	source?: string;
+	fallback_reason?: string;
+	agent_id?: string;
+	task_id?: string;
 	version?: number;
 	model: string;
 	reasoning_effort?: string;
@@ -196,6 +199,44 @@ export interface SuggestSubissuePlansResponse {
 	/** Immutable proposal snapshot used to trace the preview into generations. */
 	proposal_id?: string;
 }
+
+export type SubissuePlanJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+
+/** Public, non-sensitive status returned while an associated agent builds a plan. */
+export interface SubissuePlanJob {
+  id: string;
+  issue_id: string;
+  source_comment_id?: string;
+  source_snapshot_digest: string;
+  context_revision: number;
+  status: SubissuePlanJobStatus;
+  source: string;
+  fallback_reason?: string;
+  primary_error_class?: string;
+  agent_id?: string;
+  task_id?: string;
+  plans: SubIssuePlan[];
+  error_summary?: string;
+  proposal_id?: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
+  expires_at: string;
+}
+
+export interface SubissuePlanJobAcceptedResponse {
+  job: SubissuePlanJob;
+  job_id: string;
+  status: SubissuePlanJobStatus;
+  source: string;
+  fallback_reason: string;
+  diagnostics?: SubIssuePlanDiagnostic[];
+  summary: SubIssuePlanGenerationSummary;
+}
+
+export type SuggestSubissuePlansResult = SuggestSubissuePlansResponse | SubissuePlanJobAcceptedResponse;
+export type SubissuePlanJobActionResult = SubissuePlanJob | SubissuePlanJobAcceptedResponse;
 
 export interface ExpandSubissuePlanRequest extends SuggestSubIssuesRequest {
 	plan: SubIssuePlan;
