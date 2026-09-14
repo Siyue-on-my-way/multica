@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/llm"
 	"golang.org/x/sync/errgroup"
@@ -112,11 +113,30 @@ type SubissuePlanDiagnostic struct {
 	TotalTokens         int64   `json:"total_tokens"`
 	FinishReason        string  `json:"finish_reason"`
 	Attempt             int     `json:"attempt"`
+	Status              string  `json:"status"`
+	Error               string  `json:"error,omitempty"`
+	DurationMS          int64   `json:"duration_ms"`
+	UpstreamDurationMS  int64   `json:"upstream_duration_ms"`
+	Attempts            int     `json:"attempts"`
+	RetryCount          int     `json:"retry_count"`
+}
+
+// SubissuePlanGenerationSummary is returned for both successful and failed
+// outline generations. Keeping this separate from per-strategy diagnostics
+// lets the UI explain a failure even when no plan made it to the preview.
+type SubissuePlanGenerationSummary struct {
+	Status             string `json:"status"`
+	TotalDurationMS    int64  `json:"total_duration_ms"`
+	UpstreamDurationMS int64  `json:"upstream_duration_ms"`
+	UpstreamCalls      int    `json:"upstream_calls"`
+	RetryCount         int    `json:"retry_count"`
+	Error              string `json:"error,omitempty"`
 }
 
 type SubissuePlanGeneration struct {
-	Plans       []SubissuePlan           `json:"plans"`
-	Diagnostics []SubissuePlanDiagnostic `json:"diagnostics,omitempty"`
+	Plans       []SubissuePlan                `json:"plans"`
+	Diagnostics []SubissuePlanDiagnostic      `json:"diagnostics,omitempty"`
+	Summary     SubissuePlanGenerationSummary `json:"summary"`
 }
 
 type subissueIdentifiedTaskRaw struct {
@@ -362,17 +382,34 @@ func SuggestSubissuePlansWithDiagnostics(
 	candidateParents []SubissueCandidateParent,
 	humanConstraints string,
 	commentID string,
-) (SubissuePlanGeneration, error) {
+) (generation SubissuePlanGeneration, returnErr error) {
+	started := time.Now()
+	ctx, telemetry := newSubissuePlanTelemetryContext(ctx)
+	generation.Summary.Status = "running"
+	defer func() {
+		snapshot := telemetry.snapshot()
+		generation.Summary.TotalDurationMS = time.Since(started).Milliseconds()
+		generation.Summary.UpstreamDurationMS = snapshot.UpstreamDuration.Milliseconds()
+		generation.Summary.UpstreamCalls = snapshot.UpstreamCalls
+		generation.Summary.RetryCount = snapshot.RetryCount
+		if returnErr != nil {
+			generation.Summary.Status = "failed"
+			generation.Summary.Error = returnErr.Error()
+			return
+		}
+		generation.Summary.Status = "success"
+		generation.Summary.Error = ""
+	}()
 	strategies := stages.independentStrategies()
 	for _, strategy := range strategies {
 		if strategy.Client == nil || !strategy.Client.Enabled() {
-			return SubissuePlanGeneration{}, ErrLLMNotConfigured
+			return generation, ErrLLMNotConfigured
 		}
 	}
 	content := strings.TrimSpace(sourceContent)
 	identified, err := identifySubissueSourceTasksForPlanning(ctx, stages.Recognize, content, commentID)
 	if err != nil {
-		return SubissuePlanGeneration{}, err
+		return generation, err
 	}
 	if len(identified) == 0 {
 		// A reply can be a status update, acknowledgement, or completed-work
@@ -382,11 +419,11 @@ func SuggestSubissuePlansWithDiagnostics(
 		// turning it into a misleading 502.
 		slog.Info("subissue strategy recognition found no actionable tasks",
 			"comment_id", commentID, "input_chars", len([]rune(content)))
-		return SubissuePlanGeneration{Plans: []SubissuePlan{}}, nil
+		return SubissuePlanGeneration{Plans: []SubissuePlan{}, Summary: generation.Summary}, nil
 	}
 	identifiedJSON, err := json.Marshal(identified)
 	if err != nil {
-		return SubissuePlanGeneration{}, fmt.Errorf("encode identified subissue tasks: %w", err)
+		return generation, fmt.Errorf("encode identified subissue tasks: %w", err)
 	}
 
 	results := make([]SubissuePlan, len(strategies))
@@ -399,18 +436,22 @@ func SuggestSubissuePlansWithDiagnostics(
 				groupCtx, strategy, sourceIssue, content, siblings, candidateParents,
 				humanConstraints, string(identifiedJSON), identified, commentID,
 			)
+			diagnostics[index] = diagnostic
 			if err != nil {
 				return err
 			}
 			results[index] = plan
-			diagnostics[index] = diagnostic
 			return nil
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return SubissuePlanGeneration{}, err
+		// Preserve every strategy diagnostic even when one strategy exhausts its
+		// retries. The handler uses these records to explain partial progress and
+		// upstream failures in the preview panel.
+		generation.Diagnostics = diagnostics
+		return generation, err
 	}
-	return SubissuePlanGeneration{Plans: results, Diagnostics: diagnostics}, nil
+	return SubissuePlanGeneration{Plans: results, Diagnostics: diagnostics, Summary: generation.Summary}, nil
 }
 
 // identifySubissueSourceTasksForPlanning is deliberately different from the
@@ -466,9 +507,12 @@ func generateSubissueStrategyWithRetry(
 	identified []SubissueIdentifiedTask,
 	commentID string,
 ) (SubissuePlan, SubissuePlanDiagnostic, error) {
+	stageStarted := time.Now()
+	stageCtx, stageTelemetry := childSubissuePlanTelemetry(ctx)
+	diagnostic := newSubissuePlanDiagnostic(strategy)
 	var lastErr error
-	var diagnostic SubissuePlanDiagnostic
 	for attempt := 1; attempt <= subissuePlanMaxAttempts; attempt++ {
+		recordSubissuePlanRetry(stageCtx, attempt)
 		variables := buildSubissuePlanVariables(sourceIssue, sourceContent, siblings, candidateParents, humanConstraints, "")
 		variables["identified_tasks"] = identifiedJSON
 		variables["retry_feedback"] = subissueRetryFeedback(lastErr, attempt)
@@ -477,11 +521,15 @@ func generateSubissueStrategyWithRetry(
 			subissuePlanOutlineMaxCompletionTokens,
 		)
 		if metadataErr != nil {
+			diagnostic.Attempt = attempt
+			diagnostic.Status = "failed"
+			diagnostic.Error = metadataErr.Error()
+			applySubissuePlanDiagnosticTelemetry(&diagnostic, stageTelemetry, stageStarted)
 			lastErr = metadataErr
 			continue
 		}
 		raw, stats, err := generateSubissueTemplateJSON(
-			ctx, strategy.Client, variables,
+			stageCtx, strategy.Client, variables,
 			strategy.System, subissueStrategyUserTemplate, 0.4, subissuePlanOutlineMaxCompletionTokens,
 		)
 		diagnostic = subissuePlanDiagnosticFromMetadata(strategy, metadata, raw, stats, attempt)
@@ -505,11 +553,42 @@ func generateSubissueStrategyWithRetry(
 		}
 		logSubissueAttempt("subissue plan "+strategy.Key, commentID, attempt, stats, "item_count", len(plan.Items), err)
 		if err == nil {
+			diagnostic.Status = "success"
+			diagnostic.Error = ""
+			applySubissuePlanDiagnosticTelemetry(&diagnostic, stageTelemetry, stageStarted)
 			return plan, diagnostic, nil
 		}
+		diagnostic.Status = "failed"
+		diagnostic.Error = err.Error()
+		applySubissuePlanDiagnosticTelemetry(&diagnostic, stageTelemetry, stageStarted)
 		lastErr = err
 	}
+	applySubissuePlanDiagnosticTelemetry(&diagnostic, stageTelemetry, stageStarted)
 	return SubissuePlan{}, diagnostic, fmt.Errorf("generate %s plan: validation failed after %d attempts: %w", strategy.Name, subissuePlanMaxAttempts, lastErr)
+}
+
+func newSubissuePlanDiagnostic(strategy subissuePlanStrategy) SubissuePlanDiagnostic {
+	return SubissuePlanDiagnostic{
+		PlanID:   "plan-" + strategy.Key,
+		Strategy: strategy.Key,
+		Name:     strategy.Name,
+		Status:   "running",
+	}
+}
+
+func applySubissuePlanDiagnosticTelemetry(
+	diagnostic *SubissuePlanDiagnostic,
+	telemetry *subissuePlanTelemetry,
+	started time.Time,
+) {
+	if diagnostic == nil {
+		return
+	}
+	snapshot := telemetry.snapshot()
+	diagnostic.DurationMS = time.Since(started).Milliseconds()
+	diagnostic.UpstreamDurationMS = snapshot.UpstreamDuration.Milliseconds()
+	diagnostic.Attempts = snapshot.UpstreamCalls
+	diagnostic.RetryCount = snapshot.RetryCount
 }
 
 func describeSubissuePlanPrompt(
@@ -570,6 +649,7 @@ func subissuePlanDiagnosticFromMetadata(
 		TotalTokens:         stats.TotalTokens,
 		FinishReason:        stats.FinishReason,
 		Attempt:             attempt,
+		Status:              "running",
 	}
 }
 
@@ -703,6 +783,7 @@ func recognizeSubissueSegmentWithRetry(
 ) ([]SubissueIdentifiedTask, error) {
 	var lastErr error
 	for attempt := 1; attempt <= subissuePlanMaxAttempts; attempt++ {
+		recordSubissuePlanRetry(ctx, attempt)
 		variables := map[string]string{
 			"comment_segment": segment,
 			"segment_index":   fmt.Sprintf("%d", index),
@@ -775,6 +856,7 @@ func generateSubissuePlansWithRetry(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= subissuePlanMaxAttempts; attempt++ {
+		recordSubissuePlanRetry(ctx, attempt)
 		variables := buildSubissuePlanVariables(sourceIssue, sourceContent, siblings, candidateParents, humanConstraints, "")
 		variables["identified_tasks"] = identifiedText
 		variables["retry_feedback"] = subissueRetryFeedback(lastErr, attempt)
@@ -919,6 +1001,7 @@ func ExpandSubissuePlan(
 	}
 	var lastErr error
 	for attempt := 1; attempt <= subissuePlanMaxAttempts; attempt++ {
+		recordSubissuePlanRetry(ctx, attempt)
 		variables := buildSubissuePlanVariables(sourceIssue, sourceContent, siblings, candidateParents, humanConstraints, string(approved))
 		variables["identified_tasks"] = "（详情阶段不需要）"
 		variables["retry_feedback"] = subissueRetryFeedback(lastErr, attempt)
@@ -937,7 +1020,7 @@ func ExpandSubissuePlan(
 		}
 		logSubissueAttempt("subissue detail", commentID, attempt, stats, "item_count", len(details), err)
 		if err == nil {
-	return details, nil
+			return details, nil
 		}
 		lastErr = err
 	}
@@ -957,7 +1040,7 @@ func buildSubissuePlanVariables(
 		"issue_identifier":  sourceIssue.Identifier,
 		"issue_title":       sourceIssue.Title,
 		"issue_description": truncateSubissueSuggestContent(strings.TrimSpace(sourceIssue.Description)),
-		"execution_context":  sourceIssue.ExecutionContext,
+		"execution_context": sourceIssue.ExecutionContext,
 		"business_context":  businessContextForPrompt(inferSubissueBusiness(sourceIssue, sourceContent)),
 		"siblings":          formatSubissueSuggestCandidates(siblings),
 		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),

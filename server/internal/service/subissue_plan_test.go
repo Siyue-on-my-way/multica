@@ -177,9 +177,9 @@ func TestNormalizeSubissuePlanTitlesAddsPrefixOnce(t *testing.T) {
 func TestBuildSubissuePlanVariablesIncludesBusinessContext(t *testing.T) {
 	variables := buildSubissuePlanVariables(
 		SubissueSuggestSourceIssue{
-			Identifier:    "SIY-63",
-			Title:         "在评论区实现「一键生成子issue」功能",
-			Description:   "把评论中的任务拆成可执行的子issue。",
+			Identifier:       "SIY-63",
+			Title:            "在评论区实现「一键生成子issue」功能",
+			Description:      "把评论中的任务拆成可执行的子issue。",
 			ExecutionContext: "上级业务：生成子issue",
 		},
 		"我现在做的是“生成子issue”的业务，请拆分这个功能",
@@ -687,6 +687,96 @@ func TestSuggestSubissuePlansWithDiagnosticsUsesThreeIndependentStrategies(t *te
 		if diagnostic.MaxCompletionTokens != subissuePlanOutlineMaxCompletionTokens {
 			t.Fatalf("diagnostic %d max tokens = %d, want %d", index, diagnostic.MaxCompletionTokens, subissuePlanOutlineMaxCompletionTokens)
 		}
+	}
+}
+
+func TestSuggestSubissuePlansWithDiagnosticsReportsTimingAndRetries(t *testing.T) {
+	recognizer := &scriptedSubissueLLM{script: []string{
+		`{"tasks":[{"id":"t1","text":"任务A"}]}`,
+	}}
+	single := &scriptedSubissueLLM{script: []string{
+		`{"name":"单条全覆盖（上下文）","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":[]}]}`,
+		`{"name":"单条全覆盖（上下文）","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+	parallel := &scriptedSubissueLLM{script: []string{
+		`{"name":"并行优先","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+	full := &scriptedSubissueLLM{script: []string{
+		`{"name":"全量覆盖","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+
+	generation, err := SuggestSubissuePlansWithDiagnostics(
+		context.Background(),
+		SubissuePlanStages{
+			SingleFullContext: single,
+			Parallel:          parallel,
+			FullCoverage:      full,
+			Recognize:         recognizer,
+		},
+		SubissueSuggestSourceIssue{Identifier: "SIY-63", Title: "拆分订单任务"},
+		"请拆分任务A", nil, nil, "", "comment-1",
+	)
+	if err != nil {
+		t.Fatalf("suggest independent plans: %v", err)
+	}
+	if generation.Summary.Status != "success" {
+		t.Fatalf("summary status = %q, want success", generation.Summary.Status)
+	}
+	if generation.Summary.UpstreamCalls != 5 {
+		t.Fatalf("upstream calls = %d, want recognition + 4 strategy attempts", generation.Summary.UpstreamCalls)
+	}
+	if generation.Summary.RetryCount != 1 {
+		t.Fatalf("retry count = %d, want one strategy retry", generation.Summary.RetryCount)
+	}
+	if generation.Summary.TotalDurationMS < 0 || generation.Summary.UpstreamDurationMS < 0 {
+		t.Fatalf("durations must not be negative: %+v", generation.Summary)
+	}
+	singleDiagnostic := generation.Diagnostics[0]
+	if singleDiagnostic.Status != "success" || singleDiagnostic.Attempts != 2 || singleDiagnostic.RetryCount != 1 {
+		t.Fatalf("single diagnostic = %+v, want successful two-call stage with one retry", singleDiagnostic)
+	}
+	if singleDiagnostic.DurationMS < singleDiagnostic.UpstreamDurationMS {
+		t.Fatalf("stage duration = %dms is less than upstream duration = %dms", singleDiagnostic.DurationMS, singleDiagnostic.UpstreamDurationMS)
+	}
+}
+
+func TestSuggestSubissuePlansWithDiagnosticsKeepsFailedDiagnostics(t *testing.T) {
+	recognizer := &scriptedSubissueLLM{script: []string{
+		`{"tasks":[{"id":"t1","text":"任务A"}]}`,
+	}}
+	failedSingle := &scriptedSubissueLLM{script: []string{
+		`{"name":"单条全覆盖（上下文）","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":[]}]}`,
+	}}
+	parallel := &scriptedSubissueLLM{script: []string{
+		`{"name":"并行优先","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+	full := &scriptedSubissueLLM{script: []string{
+		`{"name":"全量覆盖","items":[{"title":"A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+
+	generation, err := SuggestSubissuePlansWithDiagnostics(
+		context.Background(),
+		SubissuePlanStages{
+			SingleFullContext: failedSingle,
+			Parallel:          parallel,
+			FullCoverage:      full,
+			Recognize:         recognizer,
+		},
+		SubissueSuggestSourceIssue{Identifier: "SIY-63", Title: "拆分订单任务"},
+		"请拆分任务A", nil, nil, "", "comment-1",
+	)
+	if err == nil {
+		t.Fatal("expected strategy generation to fail after exhausting retries")
+	}
+	if generation.Summary.Status != "failed" || generation.Summary.RetryCount < 2 {
+		t.Fatalf("summary = %+v, want failed generation with retries", generation.Summary)
+	}
+	if len(generation.Diagnostics) != 3 {
+		t.Fatalf("diagnostics = %+v, want one record per strategy even on failure", generation.Diagnostics)
+	}
+	failed := generation.Diagnostics[0]
+	if failed.Status != "failed" || failed.Attempts != subissuePlanMaxAttempts || failed.RetryCount != subissuePlanMaxAttempts-1 || failed.Error == "" {
+		t.Fatalf("failed diagnostic = %+v, want attempts, retries and error", failed)
 	}
 }
 

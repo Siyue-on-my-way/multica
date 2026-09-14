@@ -26,15 +26,22 @@ type SubissuePlanSourceRequest struct {
 }
 
 type SuggestSubissuePlansResponse struct {
-	Plans             []service.SubissuePlan           `json:"plans"`
-	Diagnostics       []service.SubissuePlanDiagnostic `json:"diagnostics,omitempty"`
-	AncestorBriefRefs []service.AncestorBriefRef       `json:"ancestor_brief_refs,omitempty"`
+	Plans             []service.SubissuePlan                `json:"plans"`
+	Diagnostics       []service.SubissuePlanDiagnostic      `json:"diagnostics,omitempty"`
+	Summary           service.SubissuePlanGenerationSummary `json:"summary"`
+	AncestorBriefRefs []service.AncestorBriefRef            `json:"ancestor_brief_refs,omitempty"`
 	// InheritedExecutionContext is the merged, de-duplicated execution context
 	// the created children will receive at runtime (SIY-177): project
 	// resources, ancestors that left inheritance on, and the source issue's
 	// own entries. The preview panel renders it as the read-only
 	// "已继承执行上下文" card — the descriptions below never embed it.
 	InheritedExecutionContext *service.ResolvedExecutionContext `json:"inherited_execution_context,omitempty"`
+}
+
+type suggestSubissuePlansErrorResponse struct {
+	Error       string                                `json:"error"`
+	Summary     service.SubissuePlanGenerationSummary `json:"summary"`
+	Diagnostics []service.SubissuePlanDiagnostic      `json:"diagnostics,omitempty"`
 }
 
 type ExpandSubissuePlanRequest struct {
@@ -78,14 +85,22 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logSubissuePlanFailure("plan generation", uuidToString(issue.ID), err)
 		if errors.Is(err, service.ErrLLMNotConfigured) {
-			writeError(w, http.StatusServiceUnavailable, "llm not configured")
+			writeJSON(w, http.StatusServiceUnavailable, suggestSubissuePlansErrorResponse{
+				Error:       "llm not configured",
+				Summary:     generation.Summary,
+				Diagnostics: generation.Diagnostics,
+			})
 			return
 		}
-		writeError(w, http.StatusBadGateway, "failed to generate subissue plans")
+		writeJSON(w, http.StatusBadGateway, suggestSubissuePlansErrorResponse{
+			Error:       "failed to generate subissue plans",
+			Summary:     generation.Summary,
+			Diagnostics: generation.Diagnostics,
+		})
 		return
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
-	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: generation.Plans, Diagnostics: generation.Diagnostics, AncestorBriefRefs: func() []service.AncestorBriefRef {
+	writeJSON(w, http.StatusOK, SuggestSubissuePlansResponse{Plans: generation.Plans, Diagnostics: generation.Diagnostics, Summary: generation.Summary, AncestorBriefRefs: func() []service.AncestorBriefRef {
 		if req.CarryAncestorContext != nil && !*req.CarryAncestorContext {
 			return nil
 		}

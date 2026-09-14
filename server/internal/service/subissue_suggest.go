@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -72,6 +73,90 @@ type SubissueSuggestPromptMetadataLLM interface {
 	DescribeTemplate(variables map[string]string, fallbackSystem, fallbackUserTemplate string, fallbackTemperature float64, fallbackMaxCompletionTokens int64) (llm.TemplateMetadata, error)
 }
 
+// subissuePlanTelemetry is request-scoped instrumentation for the upstream
+// calls made while generating a split plan. It is deliberately kept out of
+// the LLM interfaces: callers and test doubles should not have to know about
+// observability, while every configured and legacy client still gets measured
+// at the common generation seam below.
+type subissuePlanTelemetry struct {
+	mu               sync.Mutex
+	parent           *subissuePlanTelemetry
+	upstreamCalls    int
+	upstreamRetries  int
+	upstreamDuration time.Duration
+}
+
+type subissuePlanTelemetryKey struct{}
+
+type subissuePlanTelemetrySnapshot struct {
+	UpstreamCalls    int
+	RetryCount       int
+	UpstreamDuration time.Duration
+}
+
+func newSubissuePlanTelemetryContext(ctx context.Context) (context.Context, *subissuePlanTelemetry) {
+	telemetry := &subissuePlanTelemetry{}
+	return context.WithValue(ctx, subissuePlanTelemetryKey{}, telemetry), telemetry
+}
+
+func childSubissuePlanTelemetry(ctx context.Context) (context.Context, *subissuePlanTelemetry) {
+	child := &subissuePlanTelemetry{parent: subissuePlanTelemetryFromContext(ctx)}
+	return context.WithValue(ctx, subissuePlanTelemetryKey{}, child), child
+}
+
+func subissuePlanTelemetryFromContext(ctx context.Context) *subissuePlanTelemetry {
+	if ctx == nil {
+		return nil
+	}
+	telemetry, _ := ctx.Value(subissuePlanTelemetryKey{}).(*subissuePlanTelemetry)
+	return telemetry
+}
+
+func (t *subissuePlanTelemetry) recordCall(duration time.Duration) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.upstreamCalls++
+	t.upstreamDuration += duration
+	t.mu.Unlock()
+	if t.parent != nil {
+		t.parent.recordCall(duration)
+	}
+}
+
+func (t *subissuePlanTelemetry) recordRetry() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.upstreamRetries++
+	t.mu.Unlock()
+	if t.parent != nil {
+		t.parent.recordRetry()
+	}
+}
+
+func (t *subissuePlanTelemetry) snapshot() subissuePlanTelemetrySnapshot {
+	if t == nil {
+		return subissuePlanTelemetrySnapshot{}
+	}
+	t.mu.Lock()
+	snapshot := subissuePlanTelemetrySnapshot{
+		UpstreamCalls:    t.upstreamCalls,
+		RetryCount:       t.upstreamRetries,
+		UpstreamDuration: t.upstreamDuration,
+	}
+	t.mu.Unlock()
+	return snapshot
+}
+
+func recordSubissuePlanRetry(ctx context.Context, attempt int) {
+	if attempt > 1 {
+		subissuePlanTelemetryFromContext(ctx).recordRetry()
+	}
+}
+
 // generateSubissueTemplateJSON runs one structured completion through the
 // configured seam, surfacing usage stats when the client supports them.
 func generateSubissueTemplateJSON(
@@ -82,10 +167,14 @@ func generateSubissueTemplateJSON(
 	fallbackTemperature float64,
 	fallbackMaxCompletionTokens int64,
 ) (string, llm.GenerateStats, error) {
+	started := time.Now()
 	if detailed, ok := client.(SubissueSuggestUsageLLM); ok {
-		return detailed.GenerateJSONTemplateDetailed(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+		raw, stats, err := detailed.GenerateJSONTemplateDetailed(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+		subissuePlanTelemetryFromContext(ctx).recordCall(time.Since(started))
+		return raw, stats, err
 	}
 	raw, err := client.GenerateJSONTemplate(ctx, variables, fallbackSystem, fallbackUserTemplate, fallbackTemperature, fallbackMaxCompletionTokens)
+	subissuePlanTelemetryFromContext(ctx).recordCall(time.Since(started))
 	if err != nil {
 		return "", llm.GenerateStats{}, err
 	}
@@ -186,9 +275,9 @@ func (c LegacySubissueSuggestConfiguredLLM) DescribeTemplate(
 // carries the rendered inherited execution context (SIY-177 feedback) — the
 // generation prompt carries THAT, never the ancestor issue descriptions.
 type SubissueSuggestSourceIssue struct {
-	Identifier      string
-	Title           string
-	Description     string
+	Identifier       string
+	Title            string
+	Description      string
 	ExecutionContext string
 }
 
@@ -368,7 +457,7 @@ func buildSubissueSuggestVariables(
 		"issue_identifier":  sourceIssue.Identifier,
 		"issue_title":       sourceIssue.Title,
 		"issue_description": truncateSubissueSuggestContent(strings.TrimSpace(sourceIssue.Description)),
-		"execution_context":  sourceIssue.ExecutionContext,
+		"execution_context": sourceIssue.ExecutionContext,
 		"siblings":          formatSubissueSuggestCandidates(siblings),
 		"candidate_parents": formatSubissueSuggestCandidates(candidateParents),
 	}

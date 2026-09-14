@@ -8,11 +8,12 @@ import type {
   Issue,
   SubIssuePlan,
   SubIssuePlanDiagnostic,
+  SubIssuePlanGenerationSummary,
   SubIssuePlanItem,
   SubIssueSuggestion,
   ResolvedExecutionContext,
 } from "@multica/core/types";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useCreateIssue } from "@multica/core/issues/mutations";
@@ -115,6 +116,35 @@ function DiagnosticStat({ label, value }: { label: string; value: string | numbe
   );
 }
 
+function isPlanGenerationSummary(value: unknown): value is SubIssuePlanGenerationSummary {
+  if (!value || typeof value !== "object") return false;
+  const summary = value as Partial<SubIssuePlanGenerationSummary>;
+  return (
+    (summary.status === "running" || summary.status === "success" || summary.status === "failed") &&
+    typeof summary.total_duration_ms === "number" &&
+    typeof summary.upstream_duration_ms === "number" &&
+    typeof summary.upstream_calls === "number" &&
+    typeof summary.retry_count === "number"
+  );
+}
+
+function planGenerationErrorDetails(error: unknown): {
+  summary: SubIssuePlanGenerationSummary | null;
+  diagnostics: SubIssuePlanDiagnostic[];
+} {
+  if (!(error instanceof ApiError) || !error.body || typeof error.body !== "object") {
+    return { summary: null, diagnostics: [] };
+  }
+  const body = error.body as {
+    summary?: unknown;
+    diagnostics?: unknown;
+  };
+  return {
+    summary: isPlanGenerationSummary(body.summary) ? body.summary : null,
+    diagnostics: Array.isArray(body.diagnostics) ? (body.diagnostics as SubIssuePlanDiagnostic[]) : [],
+  };
+}
+
 export function SubIssuePreviewModal({
   onClose,
   data,
@@ -136,6 +166,7 @@ export function SubIssuePreviewModal({
   const [phase, setPhase] = useState<ModalPhase>("outline");
   const [plans, setPlans] = useState<SubIssuePlan[]>([]);
   const [diagnostics, setDiagnostics] = useState<SubIssuePlanDiagnostic[]>([]);
+  const [generationSummary, setGenerationSummary] = useState<SubIssuePlanGenerationSummary | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
@@ -164,6 +195,7 @@ export function SubIssuePreviewModal({
       setLoadingPlans(true);
       setPlanError(false);
       setDiagnostics([]);
+      setGenerationSummary(null);
       try {
         const response = await api.suggestSubissuePlans(issueId, {
           comment_id: commentId,
@@ -172,6 +204,7 @@ export function SubIssuePreviewModal({
         });
         setPlans(response.plans);
         setDiagnostics(response.diagnostics ?? []);
+        setGenerationSummary(response.summary ?? null);
         setAncestorContextRefs(response.ancestor_brief_refs ?? []);
         setInheritedExecutionContext(response.inherited_execution_context ?? null);
         // SIY-147: default to the backend-verified full-coverage plan so the
@@ -184,7 +217,10 @@ export function SubIssuePreviewModal({
         setMergeSelection([]);
         setDetailError(false);
         setPhase("outline");
-      } catch {
+      } catch (error) {
+        const failure = planGenerationErrorDetails(error);
+        setGenerationSummary(failure.summary);
+        setDiagnostics(failure.diagnostics);
         setPlanError(true);
       } finally {
         setLoadingPlans(false);
@@ -399,6 +435,70 @@ export function SubIssuePreviewModal({
                 </div>
               )}
 
+              {!loadingPlans && generationSummary && (
+                <div className={`rounded-lg border p-3 ${generationSummary.status === "failed" ? "border-destructive/50" : "border-border/60"}`}>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-body font-medium">
+                      {generationSummary.status === "failed"
+                        ? t(($) => $.suggest_subissues.generation_status_failed)
+                        : t(($) => $.suggest_subissues.generation_status_success)}
+                    </div>
+                    <div className="text-caption text-muted-foreground">
+                      {t(($) => $.suggest_subissues.generation_summary_hint)}
+                    </div>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-4">
+                    <DiagnosticStat
+                      label={t(($) => $.suggest_subissues.generation_total_duration)}
+                      value={generationSummary.total_duration_ms}
+                    />
+                    <DiagnosticStat
+                      label={t(($) => $.suggest_subissues.generation_upstream_duration)}
+                      value={generationSummary.upstream_duration_ms}
+                    />
+                    <DiagnosticStat
+                      label={t(($) => $.suggest_subissues.generation_calls)}
+                      value={generationSummary.upstream_calls}
+                    />
+                    <DiagnosticStat
+                      label={t(($) => $.suggest_subissues.generation_retries)}
+                      value={generationSummary.retry_count}
+                    />
+                  </div>
+                  {generationSummary.error && (
+                    <div className="mt-2 rounded-md bg-destructive/10 px-2.5 py-2 text-caption text-destructive">
+                      <span className="font-medium">{t(($) => $.suggest_subissues.generation_error)}：</span>
+                      {generationSummary.error}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!loadingPlans && planError && diagnostics.length > 0 && (
+                <div className="rounded-lg border border-destructive/50 p-3">
+                  <div className="mb-2 text-body font-medium">
+                    {t(($) => $.suggest_subissues.failed_stage_details)}
+                  </div>
+                  <div className="space-y-2">
+                    {diagnostics.map((diagnostic) => (
+                      <div key={`${diagnostic.plan_id || diagnostic.strategy}-${diagnostic.attempt}`} className="rounded-md bg-muted/40 p-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-body font-medium">{diagnostic.name || diagnostic.strategy}</span>
+                          <span className="text-caption text-muted-foreground">
+                            {t(($) => $.suggest_subissues.diagnostics_duration)}: {diagnostic.upstream_duration_ms ?? 0} ms
+                          </span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption text-muted-foreground">
+                          <span>{t(($) => $.suggest_subissues.diagnostics_attempt_count)}: {diagnostic.attempts ?? 0}</span>
+                          <span>{t(($) => $.suggest_subissues.diagnostics_retry_count)}: {diagnostic.retry_count ?? 0}</span>
+                          {diagnostic.error && <span className="text-destructive">{diagnostic.error}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {!loadingPlans && planError && (
                 <div className="py-6 text-center text-body text-muted-foreground">
                   {t(($) => $.suggest_subissues.outline_load_failed)}
@@ -485,6 +585,11 @@ export function SubIssuePreviewModal({
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_max_tokens)} value={selectedDiagnostic.max_completion_tokens} />
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_timeout)} value={selectedDiagnostic.timeout_ms} />
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_attempt)} value={selectedDiagnostic.attempt} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_duration)} value={selectedDiagnostic.duration_ms} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_upstream_duration)} value={selectedDiagnostic.upstream_duration_ms} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_attempt_count)} value={selectedDiagnostic.attempts} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_retry_count)} value={selectedDiagnostic.retry_count} />
+                          <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_status)} value={selectedDiagnostic.status} />
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_finish_reason)} value={selectedDiagnostic.finish_reason} />
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_input_chars)} value={selectedDiagnostic.input_chars} />
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_output_chars)} value={selectedDiagnostic.output_chars} />
@@ -492,6 +597,12 @@ export function SubIssuePreviewModal({
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_completion_tokens)} value={selectedDiagnostic.completion_tokens} />
                           <DiagnosticStat label={t(($) => $.suggest_subissues.diagnostics_total_tokens)} value={selectedDiagnostic.total_tokens} />
                         </div>
+                        {selectedDiagnostic.error && (
+                          <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-caption text-destructive">
+                            <span className="font-medium">{t(($) => $.suggest_subissues.diagnostics_error)}：</span>
+                            {selectedDiagnostic.error}
+                          </div>
+                        )}
                         <div className="space-y-1.5">
                           <div className="text-caption font-medium">{t(($) => $.suggest_subissues.diagnostics_system_prompt)}</div>
                           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-caption">

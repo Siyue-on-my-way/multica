@@ -89,6 +89,13 @@ describe("SubIssuePreviewModal", () => {
         finish_reason: "stop",
         attempt: 1,
       }],
+      summary: {
+        status: "success",
+        total_duration_ms: 3200,
+        upstream_duration_ms: 2900,
+        upstream_calls: 5,
+        retry_count: 1,
+      },
     });
     mockExpandPlan.mockResolvedValue({
       subissues: [
@@ -109,6 +116,16 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.getAllByDisplayValue("Combined").length).toBeGreaterThan(0);
     expect(screen.getByText("Full coverage")).toBeInTheDocument();
     expect(screen.queryByText("Reference granularity only")).not.toBeInTheDocument();
+  });
+
+  it("shows upstream timing and retry telemetry for the split generation", async () => {
+    renderModal();
+
+    expect(await screen.findByText("Split generation succeeded")).toBeInTheDocument();
+    expect(screen.getByText("3200")).toBeInTheDocument();
+    expect(screen.getByText("2900")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
   });
 
   it("shows the selected strategy model, usage and prompts", async () => {

@@ -165,11 +165,27 @@ export interface SubIssuePlanDiagnostic {
 	total_tokens: number;
 	finish_reason: string;
 	attempt: number;
+	status?: "running" | "success" | "failed";
+	error?: string;
+	duration_ms?: number;
+	upstream_duration_ms?: number;
+	attempts?: number;
+	retry_count?: number;
+}
+
+export interface SubIssuePlanGenerationSummary {
+	status: "running" | "success" | "failed";
+	total_duration_ms: number;
+	upstream_duration_ms: number;
+	upstream_calls: number;
+	retry_count: number;
+	error?: string;
 }
 
 export interface SuggestSubissuePlansResponse {
 	plans: SubIssuePlan[];
 	diagnostics?: SubIssuePlanDiagnostic[];
+	summary?: SubIssuePlanGenerationSummary;
 	ancestor_brief_refs?: { id: string; updated_at: string }[];
 	/** Merged execution context the created children will inherit at runtime
 	 *  (SIY-177); rendered as the read-only inherited-context card. */
