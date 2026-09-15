@@ -384,7 +384,7 @@ func (h *Handler) GetDiscussionProposal(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) CreateCommentProposal(w http.ResponseWriter, r *http.Request) {
-	commentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "comment_id")
+	commentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "commentId"), "comment_id")
 	if !ok {
 		return
 	}
