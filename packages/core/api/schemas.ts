@@ -822,7 +822,9 @@ const ProposalSnapshotSchema = z.object({
     title: z.string().optional(),
     goal: z.string().optional(),
     description: z.string().optional(),
-    stage: z.number().optional(),
+    // LLM conversions historically emitted "1" / "已完成" here; accept both
+    // shapes so an old row cannot fail validation (SIY-182 timeline wipe).
+    stage: z.union([z.number(), z.string()]).optional(),
     business: z.string().optional(),
   }).loose()).default([]),
 }).loose();
@@ -1084,7 +1086,9 @@ const TimelineEntrySchema = z.object({
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(AttachmentSchema).optional(),
   source_task_id: z.string().nullable().optional(),
-  proposal: DiscussionProposalSchema.optional(),
+  // .catch isolates a malformed proposal to "no card" instead of failing
+  // the whole list parse (one bad proposal once emptied every timeline).
+  proposal: DiscussionProposalSchema.optional().catch(undefined),
   coalesced_count: z.number().optional(),
 }).loose();
 
@@ -1185,7 +1189,9 @@ export const CommentSchema = z.object({
   updated_at: z.string(),
   revision: z.number().int().positive().optional(),
   source_task_id: z.string().nullable().optional(),
-  proposal: DiscussionProposalSchema.optional(),
+  // .catch isolates a malformed proposal to "no card" instead of failing
+  // the whole list parse (one bad proposal once emptied every timeline).
+  proposal: DiscussionProposalSchema.optional().catch(undefined),
   // Set only on comments a quick action produced (MUL-5465). Server-only.
   quick_action_id: z.string().nullable().optional(),
 }).loose();

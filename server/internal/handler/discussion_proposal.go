@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -190,8 +191,36 @@ func normalizeProposalSnapshotObject(object map[string]any) error {
 	}
 	if items, ok := object["items"]; !ok {
 		object["items"] = []any{}
-	} else if _, ok := items.([]any); !ok {
+	} else if list, isArray := items.([]any); !isArray {
 		return errors.New("snapshot items must be an array")
+	} else {
+		// Stage is consumed as a number everywhere (frontend schema and the
+		// generation request decode). LLM conversions emit it as a string
+		// ("1", or free text like "已完成"), which once wiped the whole
+		// timeline on schema validation and broke snapshot-derived item
+		// creation. Coerce what parses; drop what doesn't.
+		for _, entry := range list {
+			item, isObject := entry.(map[string]any)
+			if !isObject {
+				continue
+			}
+			switch stage := item["stage"].(type) {
+			case nil:
+				delete(item, "stage")
+			case float64:
+				// JSON numbers arrive as float64; keep them.
+			case string:
+				if value, err := strconv.ParseInt(strings.TrimSpace(stage), 10, 32); err == nil {
+					item["stage"] = float64(value)
+				} else if value, err := strconv.ParseFloat(strings.TrimSpace(stage), 64); err == nil {
+					item["stage"] = value
+				} else {
+					delete(item, "stage")
+				}
+			default:
+				delete(item, "stage")
+			}
+		}
 	}
 	return nil
 }
@@ -200,7 +229,7 @@ const proposalConversionSystemPrompt = `你负责把一条已经写好的讨论�
 只输出一个 JSON 对象，不要 Markdown、解释文字或代码围栏。对象必须包含：
 title（简短标题）、summary（方案摘要）、scope（范围）、risks（字符串数组）、
 acceptanceCriteria（验收标准字符串数组）以及 items（方案条目数组）。
-每个 items 条目包含 id、title、goal、description 和可选 stage；只根据原文归纳，
+每个 items 条目包含 id、title、goal、description 和可选 stage；stage 必须是不带引号的整数（表示阶段序号），没有阶段信息就省略该字段；只根据原文归纳，
 不要臆造原文没有的执行承诺。`
 
 func (h *Handler) maybeGenerateProposalSnapshot(ctx context.Context, content string, fallback []byte) []byte {

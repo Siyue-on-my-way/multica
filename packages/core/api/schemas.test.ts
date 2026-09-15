@@ -57,6 +57,7 @@ import {
   SquadSchema,
   SourceContextPreviewSchema,
   TimelineEntriesSchema,
+  CommentsListSchema,
   UserSchema,
   PluginInstallationSchema,
   PluginInstallationListResponseSchema,
@@ -584,6 +585,65 @@ describe("TimelineEntriesSchema", () => {
     expect(parsed[0]?.actor_avatar_url).toBe(
       "https://profiles.example.com/former.png",
     );
+  });
+});
+
+// SIY-182: one malformed embedded proposal must never wipe the whole
+// timeline — the entry-level .catch degrades it to "no card".
+describe("TimelineEntriesSchema embedded proposals", () => {
+  const baseEntry = {
+    type: "comment",
+    id: "comment-1",
+    actor_type: "agent",
+    actor_id: "agent-1",
+    created_at: "2026-01-01T00:00:00Z",
+    content: "reply",
+  };
+  const validProposal = {
+    id: "proposal-1",
+    workspace_id: "ws-1",
+    source_issue_id: "issue-1",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    snapshot: {
+      title: "方案",
+      items: [{ id: "step-1", title: "第一步", stage: "1" }],
+    },
+  };
+
+  it("keeps a proposal whose item stage is a numeric string (legacy LLM output)", () => {
+    const parsed = TimelineEntriesSchema.parse([
+      { ...baseEntry, proposal: validProposal },
+    ]);
+    expect(parsed[0]?.proposal?.snapshot.items[0]?.stage).toBe("1");
+  });
+
+  it("degrades a malformed proposal to undefined and keeps sibling entries", () => {
+    const parsed = TimelineEntriesSchema.parse([
+      { ...baseEntry, id: "comment-0", proposal: { id: 123 } },
+      { ...baseEntry, id: "comment-1" },
+    ]);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]?.proposal).toBeUndefined();
+    expect(parsed[1]?.id).toBe("comment-1");
+  });
+
+  it("CommentSchema isolates a malformed proposal the same way", () => {
+    const parsed = CommentsListSchema.parse([
+      {
+        type: "comment",
+        id: "comment-1",
+        issue_id: "issue-1",
+        author_type: "agent",
+        author_id: "agent-1",
+        content: "reply",
+        parent_id: null,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        proposal: { snapshot: 42 },
+      },
+    ]);
+    expect(parsed[0]?.proposal).toBeUndefined();
   });
 });
 

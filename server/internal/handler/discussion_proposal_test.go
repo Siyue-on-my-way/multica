@@ -105,3 +105,41 @@ func TestCreateCommentProposalViaRoute(t *testing.T) {
 	}
 	_ = util.MustParseUUID(proposal.ID) // response IDs must be well-formed UUIDs
 }
+
+// SIY-182: LLM conversions emit stage as a string ("1", or free text like
+// "已完成"). Unchecked, that string failed the frontend timeline schema and
+// emptied the whole discussion list, and broke snapshot-derived item
+// creation. The normalizer must coerce numeric strings and drop the rest.
+func TestNormalizeProposalSnapshotObjectStage(t *testing.T) {
+	object := map[string]any{
+		"title": "方案",
+		"items": []any{
+			map[string]any{"id": "1", "stage": "2"},
+			map[string]any{"id": "2", "stage": "已完成"},
+			map[string]any{"id": "3", "stage": float64(3)},
+			map[string]any{"id": "4", "stage": nil},
+			map[string]any{"id": "5", "stage": true},
+			"not-an-object",
+		},
+	}
+	if err := normalizeProposalSnapshotObject(object); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	items := object["items"].([]any)
+	first := items[0].(map[string]any)
+	if stage, ok := first["stage"].(float64); !ok || stage != 2 {
+		t.Fatalf("item 0 stage = %#v, want 2", first["stage"])
+	}
+	if _, exists := items[1].(map[string]any)["stage"]; exists {
+		t.Fatalf("item 1 stage = %#v, want dropped", items[1].(map[string]any)["stage"])
+	}
+	if stage, ok := items[2].(map[string]any)["stage"].(float64); !ok || stage != 3 {
+		t.Fatalf("item 2 stage = %#v, want 3", items[2].(map[string]any)["stage"])
+	}
+	if _, exists := items[3].(map[string]any)["stage"]; exists {
+		t.Fatal("item 3 nil stage must be dropped")
+	}
+	if _, exists := items[4].(map[string]any)["stage"]; exists {
+		t.Fatal("item 4 bool stage must be dropped")
+	}
+}
