@@ -12,6 +12,7 @@ const mockRetryPlanJob = vi.hoisted(() => vi.fn());
 const mockExpandPlan = vi.hoisted(() => vi.fn());
 const mockCreateIssue = vi.hoisted(() => vi.fn());
 const mockCreateProposalGeneration = vi.hoisted(() => vi.fn());
+const mockInvalidateQueries = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/api", () => ({
@@ -31,6 +32,9 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/issues/queries", () => ({
   issueDetailOptions: () => ({ queryKey: ["issue"] }),
+  issueKeys: {
+    timeline: (issueId: string) => ["issues", "timeline", issueId],
+  },
 }));
 
 vi.mock("@multica/core/issues/mutations", () => ({
@@ -42,6 +46,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   return {
     ...actual,
     useQuery: () => ({ data: { project_id: "project-1" } }),
+    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
   };
 });
 
@@ -133,6 +138,7 @@ describe("SubIssuePreviewModal", () => {
       issues: [{ id: "child-1", identifier: "SIY-2", title: "First task", status: "backlog" }],
       created_at: "2026-09-14T00:00:00Z",
     });
+    mockInvalidateQueries.mockResolvedValue(undefined);
   });
 
   it("preselects the full-coverage plan by default", async () => {
@@ -317,6 +323,9 @@ describe("SubIssuePreviewModal", () => {
         idempotency_key: expect.stringMatching(/:todo$/),
       }),
     );
+    await waitFor(() => expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["issues", "timeline", "issue-1"],
+    }));
     expect(mockCreateIssue).not.toHaveBeenCalled();
   });
 

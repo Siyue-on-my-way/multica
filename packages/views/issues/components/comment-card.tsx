@@ -46,7 +46,7 @@ import { useT } from "../../i18n";
 import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
-import { ProposalCard } from "./proposal-card";
+import { CreatedSubissueSummary } from "./proposal-card";
 
 const highlightedCommentBackgroundClass =
   "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
@@ -945,7 +945,7 @@ function CommentRow({
               </CommentFold>
               {entry.proposal
                 && (!entry.proposal.answer_comment_id || entry.id === entry.proposal.answer_comment_id)
-                && <ProposalCard issueId={issueId} proposal={entry.proposal} />}
+                && <CreatedSubissueSummary proposal={entry.proposal} className="pl-12 pr-4" />}
               {retryableAgentFailureComment(entry) && (
                 <TaskCommentRetryButton
                   issueId={issueId}
@@ -1352,7 +1352,7 @@ function CommentCardImpl({
                 </CommentFold>
                 {entry.proposal
                   && (!entry.proposal.answer_comment_id || entry.id === entry.proposal.answer_comment_id)
-                  && <ProposalCard issueId={issueId} proposal={entry.proposal} />}
+                  && <CreatedSubissueSummary proposal={entry.proposal} className="pl-10 max-md:pl-3 pr-4" />}
                 {retryableAgentFailureComment(entry) && (
                   <TaskCommentRetryButton
                     issueId={issueId}

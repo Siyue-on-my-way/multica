@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronRight, Loader2 } from "lucide-react";
 import type {
@@ -19,7 +19,7 @@ import type {
 } from "@multica/core/types";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { issueDetailOptions } from "@multica/core/issues/queries";
+import { issueDetailOptions, issueKeys } from "@multica/core/issues/queries";
 import { useCreateIssue } from "@multica/core/issues/mutations";
 import {
   Dialog,
@@ -172,6 +172,7 @@ export function SubIssuePreviewModal({
   const initialProposalId = (data?.proposalId as string) || (data?.proposal_id as string) || "";
   const wsId = useWorkspaceId();
   const createIssue = useCreateIssue();
+  const queryClient = useQueryClient();
 
   const { data: sourceIssue = null } = useQuery({
     ...issueDetailOptions(wsId, issueId),
@@ -514,6 +515,7 @@ export function SubIssuePreviewModal({
           })),
         });
         toast.success(`已创建 ${generation.issues.length} 个子 issue${createMode === "backlog" ? "（暂不执行）" : ""}`);
+        await queryClient.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
         onClose();
         return;
       }
