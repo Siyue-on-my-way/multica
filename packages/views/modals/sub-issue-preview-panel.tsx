@@ -16,6 +16,7 @@ import type {
   SuggestSubissuePlansResult,
   SubIssueSuggestion,
   ResolvedExecutionContext,
+  SubissueSourcePacket,
 } from "@multica/core/types";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -197,6 +198,7 @@ export function SubIssuePreviewModal({
   // the backend (chain + project resources), plus the issue-specific context
   // the user can attach on top of it.
   const [inheritedExecutionContext, setInheritedExecutionContext] = useState<ResolvedExecutionContext | null>(null);
+  const [sourcePacket, setSourcePacket] = useState<SubissueSourcePacket | null>(null);
   const [ownExecutionContext, setOwnExecutionContext] = useState<ExecutionContextEditorValue>(
     emptyExecutionContextEditorValue,
   );
@@ -219,12 +221,14 @@ export function SubIssuePreviewModal({
       ancestor_brief_refs?: { id: string; updated_at: string }[];
       inherited_execution_context?: ResolvedExecutionContext;
       proposal_id?: string;
+      source_packet?: SubissueSourcePacket;
     }) => {
       setPlans(payload.plans);
       setDiagnostics(payload.diagnostics ?? []);
       setGenerationSummary(payload.summary ?? null);
       setAncestorContextRefs(payload.ancestor_brief_refs ?? []);
       setInheritedExecutionContext(payload.inherited_execution_context ?? null);
+      setSourcePacket(payload.source_packet ?? null);
       const nextProposalId = payload.proposal_id ?? initialProposalId;
       proposalIdRef.current = nextProposalId;
       setProposalId(nextProposalId);
@@ -261,6 +265,7 @@ export function SubIssuePreviewModal({
           setGenerationSummary(response.summary ?? null);
           setProposalId(response.job.proposal_id ?? initialProposalId);
           proposalIdRef.current = response.job.proposal_id ?? initialProposalId;
+          setSourcePacket(response.job.source_packet ?? null);
           setPlans([]);
           setPhase("outline");
         } else {
@@ -298,6 +303,7 @@ export function SubIssuePreviewModal({
             applyPlanPayload({
               plans: next.plans,
               proposal_id: next.proposal_id,
+              source_packet: next.source_packet,
               diagnostics,
               summary: { status: "success", total_duration_ms: 0, upstream_duration_ms: 0, upstream_calls: 0, retry_count: 0 },
             });
@@ -360,6 +366,7 @@ export function SubIssuePreviewModal({
       const response = await api.retrySubissuePlanJob(planJob.id);
       if (isAcceptedPlanJobResponse(response)) {
         setPlanJob(response.job);
+        setSourcePacket(response.job.source_packet ?? null);
         setDiagnostics(response.diagnostics ?? []);
         setGenerationSummary(response.summary ?? null);
         setPlans([]);
@@ -367,7 +374,7 @@ export function SubIssuePreviewModal({
       } else {
         setPlanJob(response);
         if (response.status === "succeeded") {
-          applyPlanPayload({ plans: response.plans, proposal_id: response.proposal_id, diagnostics });
+          applyPlanPayload({ plans: response.plans, proposal_id: response.proposal_id, source_packet: response.source_packet, diagnostics });
           setPlanError(response.plans.length === 0);
           setLoadingPlans(false);
         } else {
@@ -591,6 +598,33 @@ export function SubIssuePreviewModal({
               {/* SIY-177: the execution context the children will inherit —
                   collapsed by default, read-only, with per-entry provenance. */}
               <InheritedExecutionContextCard resolved={inheritedExecutionContext} />
+
+              {sourcePacket?.agent_answer && (
+                <Collapsible className="rounded-lg border border-border/60" data-testid="subissue-source-evidence">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 p-3 text-left hover:bg-muted/30">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                      <span className="text-body font-medium">原始 agent 回复（保真证据）</span>
+                    </span>
+                    <span className="shrink-0 text-caption text-muted-foreground">
+                      {sourcePacket.source_issue.identifier || "来源讨论"}
+                    </span>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border-t border-border/60 p-3">
+                    <div className="mb-2 text-caption text-muted-foreground">
+                      这是生成子 issue 的事实来源。方案摘要仅用于辅助拆分，创建后的 description 会保留下面的原文。
+                    </div>
+                    <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-caption">
+                      {sourcePacket.agent_answer}
+                    </pre>
+                    {sourcePacket.coverage_note && (
+                      <div className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-2 text-caption text-amber-700 dark:text-amber-300">
+                        {sourcePacket.coverage_note}
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
 
               {loadingPlans && (
                 <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">

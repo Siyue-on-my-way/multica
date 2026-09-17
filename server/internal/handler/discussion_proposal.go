@@ -531,9 +531,10 @@ func (h *Handler) CreateProposalGeneration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	contextSnapshot := []byte(nil)
+	var sourcePacket *service.SubissueSourcePacket
 	anchorID := pgtype.UUID{}
 	anchorCandidate := proposal.QuestionCommentID
-	if !anchorCandidate.Valid {
+	if proposal.AnswerCommentID.Valid {
 		anchorCandidate = proposal.AnswerCommentID
 	}
 	if anchorCandidate.Valid {
@@ -541,6 +542,22 @@ func (h *Handler) CreateProposalGeneration(w http.ResponseWriter, r *http.Reques
 		if buildErr == nil {
 			contextSnapshot, _ = json.Marshal(build.Snapshot)
 			anchorID = anchorCandidate
+			sourcePacket = service.NewSubissueSourcePacket(build.Snapshot, "", util.UUIDToString(anchorCandidate), nil)
+		}
+		if sourcePacket == nil {
+			// The full immutable thread is best effort at creation time. Keep a
+			// request-scoped packet from the anchored comment so the batch still
+			// cannot replace the reviewed agent answer with a summary when the
+			// historical snapshot is unavailable or too large.
+			if comment, commentErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+				ID: anchorCandidate, WorkspaceID: workspaceID,
+			}); commentErr == nil && strings.TrimSpace(comment.Content) != "" {
+				prefix := h.getIssuePrefix(r.Context(), workspaceID)
+				sourcePacket = service.NewSubissueSourcePacketFromContent(service.SubissueSuggestSourceIssue{
+					Identifier: prefix + "-" + strconv.Itoa(int(sourceIssue.Number)),
+					Title:      sourceIssue.Title,
+				}, comment.Content, util.UUIDToString(anchorCandidate))
+			}
 		}
 	}
 	serviceItems := make([]service.ProposalBatchItem, 0, len(items))
@@ -620,7 +637,7 @@ func (h *Handler) CreateProposalGeneration(w http.ResponseWriter, r *http.Reques
 	result, err := h.IssueService.CreateProposalBatch(r.Context(), service.ProposalBatchParams{
 		WorkspaceID: workspaceID, CreatorID: creatorUUID, ProposalID: proposalID,
 		Strategy: req.Strategy, CreateMode: req.CreateMode, IdempotencyKey: req.IdempotencyKey,
-		ProposalSnapshot: snapshot, SourceContextSnapshot: contextSnapshot,
+		ProposalSnapshot: snapshot, SourceContextSnapshot: contextSnapshot, SourcePacket: sourcePacket,
 		SourceIssueID: proposal.SourceIssueID, AnchorCommentID: anchorID, Items: serviceItems,
 	})
 	if errors.Is(err, service.ErrProposalBatchAlreadyExists) {

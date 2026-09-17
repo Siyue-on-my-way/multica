@@ -44,9 +44,14 @@ type ProposalBatchParams struct {
 	IdempotencyKey        string
 	ProposalSnapshot      []byte
 	SourceContextSnapshot []byte
-	SourceIssueID         pgtype.UUID
-	AnchorCommentID       pgtype.UUID
-	Items                 []ProposalBatchItem
+	// SourcePacket is the request-time evidence fallback. It lets the batch
+	// renderer preserve the anchored agent answer even when a full source
+	// context snapshot could not be persisted (for example, a deleted anchor
+	// or an oversized historical thread).
+	SourcePacket    *SubissueSourcePacket
+	SourceIssueID   pgtype.UUID
+	AnchorCommentID pgtype.UUID
+	Items           []ProposalBatchItem
 }
 
 type ProposalBatchResult struct {
@@ -160,6 +165,10 @@ func (s *IssueService) CreateProposalBatch(ctx context.Context, p ProposalBatchP
 		return ProposalBatchResult{}, fmt.Errorf("create proposal generation: %w", err)
 	}
 	proposalContextSnapshot := proposalSourceContextSnapshot(p.SourceContextSnapshot, p.ProposalID, generation.ID, p.Strategy)
+	sourcePacket := NewSubissueSourcePacketFromJSON(proposalContextSnapshot)
+	if sourcePacket == nil {
+		sourcePacket = p.SourcePacket
+	}
 
 	result := ProposalBatchResult{Generation: generation, Issues: make([]db.Issue, 0, len(p.Items)), Links: make([]db.ProposalGenerationIssue, 0, len(p.Items))}
 	status := p.CreateMode
@@ -216,8 +225,9 @@ func (s *IssueService) CreateProposalBatch(ctx context.Context, p ProposalBatchP
 		if positionErr != nil {
 			return ProposalBatchResult{}, positionErr
 		}
+		description := RenderSubissueDescription(item.Description, "", sourcePacket, nil)
 		issue, createErr := qtx.CreateIssue(ctx, db.CreateIssueParams{
-			WorkspaceID: p.WorkspaceID, Title: title, Description: nullableText(strings.TrimSpace(item.Description)),
+			WorkspaceID: p.WorkspaceID, Title: title, Description: nullableText(description),
 			Status: status, Priority: "none", AssigneeType: item.AssigneeType, AssigneeID: item.AssigneeID,
 			CreatorType: "member", CreatorID: p.CreatorID, ParentIssueID: item.ParentIssueID,
 			Position: position, Number: number, ProjectID: projectID, Stage: item.Stage,

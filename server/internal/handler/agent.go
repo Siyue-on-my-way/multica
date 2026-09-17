@@ -381,13 +381,13 @@ type AgentTaskResponse struct {
 	// IssueStatusesOmitted is how many active custom statuses were dropped by
 	// the cap, so the brief can say the list is incomplete instead of
 	// presenting a truncated catalog as the whole one.
-	IssueStatusesOmitted    int                        `json:"issue_statuses_omitted,omitempty"`
-	ThreadName              string                     `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status                  string                     `json:"status"`
+	IssueStatusesOmitted int    `json:"issue_statuses_omitted,omitempty"`
+	ThreadName           string `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status               string `json:"status"`
 	// PlanOnly is a server-validated read-only planning task marker. The
 	// associated context is only useful to the daemon's dedicated planner path.
-	PlanOnly        bool            `json:"plan_only,omitempty"`
-	PlanOnlyContext json.RawMessage `json:"plan_only_context,omitempty"`
+	PlanOnly                bool                       `json:"plan_only,omitempty"`
+	PlanOnlyContext         json.RawMessage            `json:"plan_only_context,omitempty"`
 	Priority                int32                      `json:"priority"`
 	DispatchedAt            *string                    `json:"dispatched_at"`
 	StartedAt               *string                    `json:"started_at"`
@@ -426,6 +426,10 @@ type AgentTaskResponse struct {
 	// issue that wrote it. Identical re-assertions collapse to one block.
 	ExecutionContextContents []service.ResolvedContent        `json:"execution_context_contents,omitempty"`
 	ExecutionContextSources  []service.ExecutionContextSource `json:"execution_context_sources,omitempty"`
+	// IssueSourceContext is the immutable discussion packet attached to a
+	// generated child issue. It is separate from the structured execution
+	// context and is rendered as read-only evidence by the daemon.
+	IssueSourceContext json.RawMessage `json:"issue_source_context,omitempty"`
 	// PriorSessionResumeUnavailable is set when a more recent Codex session was
 	// withheld because its rollout was missing (MUL-5305); PriorSessionID (if
 	// any) is then an older fallback. The daemon surfaces the continuity gap in
@@ -824,13 +828,13 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	}
 	planOnly := service.HasSubissuePlanOnlyMarker(t)
 	return AgentTaskResponse{
-		ID:                     uuidToString(t.ID),
-		AgentID:                uuidToString(t.AgentID),
-		RuntimeID:              uuidToString(t.RuntimeID),
-		IssueID:                uuidToString(t.IssueID),
-		WorkspaceID:            workspaceID,
-		Status:                 t.Status,
-		PlanOnly:               planOnly,
+		ID:          uuidToString(t.ID),
+		AgentID:     uuidToString(t.AgentID),
+		RuntimeID:   uuidToString(t.RuntimeID),
+		IssueID:     uuidToString(t.IssueID),
+		WorkspaceID: workspaceID,
+		Status:      t.Status,
+		PlanOnly:    planOnly,
 		PlanOnlyContext: func() json.RawMessage {
 			if !planOnly {
 				return nil

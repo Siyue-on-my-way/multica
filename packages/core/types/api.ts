@@ -142,6 +142,48 @@ export interface SubIssuePlan {
 	 *  the panel defaults to it. Other plans are optional references. */
 	coverage?: "full" | "partial";
 	items: SubIssuePlanItem[];
+	/** The authoritative task/evidence list used by all strategies. */
+	source_tasks?: SubissueIdentifiedTask[];
+}
+
+export interface SubissueIdentifiedTask {
+	id: string;
+	text: string;
+	quote?: string;
+	source_comment_id?: string;
+}
+
+export interface SubissueSourceUnit {
+	id: string;
+	kind: string;
+	comment_id?: string;
+	author_type?: string;
+	author_name?: string;
+	text: string;
+	source_index?: number;
+}
+
+export interface SubissueSourcePacket {
+	version: number;
+	source_issue: {
+		id: string;
+		identifier: string;
+		number: number;
+		title: string;
+		description?: string | null;
+	};
+	source_comment_id?: string;
+	source_issue_id?: string;
+	agent_answer: string;
+	comment_thread?: Array<{
+		id: string;
+		parent_id?: string | null;
+		type: string;
+		content: string;
+		author: { type: string; id: string; name: string };
+	}>;
+	source_units?: SubissueSourceUnit[];
+	coverage_note?: string;
 }
 
 /** Safe, request-scoped details for one strategy call. Prompts and usage
@@ -198,6 +240,7 @@ export interface SuggestSubissuePlansResponse {
 	inherited_execution_context?: ResolvedExecutionContext;
 	/** Immutable proposal snapshot used to trace the preview into generations. */
 	proposal_id?: string;
+	source_packet?: SubissueSourcePacket;
 }
 
 export type SubissuePlanJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
@@ -216,6 +259,7 @@ export interface SubissuePlanJob {
   agent_id?: string;
   task_id?: string;
   plans: SubIssuePlan[];
+  source_packet?: SubissueSourcePacket;
   error_summary?: string;
   proposal_id?: string;
   created_at: string;
@@ -264,6 +308,7 @@ export interface SubIssueSuggestion {
 
 export interface SuggestSubIssuesResponse {
   subissues: SubIssueSuggestion[];
+  source_packet?: SubissueSourcePacket;
 }
 
 /** The normalized shape stored in a discussion proposal snapshot. The

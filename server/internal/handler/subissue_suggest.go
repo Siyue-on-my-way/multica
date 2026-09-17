@@ -46,7 +46,8 @@ type SubIssueSuggestionResponse struct {
 }
 
 type SuggestSubIssuesResponse struct {
-	Subissues []SubIssueSuggestionResponse `json:"subissues"`
+	Subissues    []SubIssueSuggestionResponse  `json:"subissues"`
+	SourcePacket *service.SubissueSourcePacket `json:"source_packet,omitempty"`
 }
 
 // SuggestSubIssues runs one AI decomposition pass over a comment's content
@@ -110,6 +111,7 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidateParents, parentByIdentifier := h.buildSubissueSuggestCandidateParents(r.Context(), issue, prefix)
+	sourcePacket := h.buildSubissueSourcePacket(r, issue, req, content, prefix)
 
 	ctx, cancel := context.WithTimeout(r.Context(), service.SubissueSuggestTimeout)
 	defer cancel()
@@ -130,13 +132,13 @@ func (h *Handler) SuggestSubIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := SuggestSubIssuesResponse{Subissues: make([]SubIssueSuggestionResponse, 0, len(suggestions))}
+	resp := SuggestSubIssuesResponse{Subissues: make([]SubIssueSuggestionResponse, 0, len(suggestions)), SourcePacket: sourcePacket}
 	for _, s := range suggestions {
 		out := SubIssueSuggestionResponse{
 			ID:              s.ID,
 			Title:           s.Title,
 			Goal:            s.Goal,
-			Description:     s.Description,
+			Description:     service.RenderSubissueDescription(s.Description, s.Goal, sourcePacket, nil),
 			Stage:           int32(s.Stage),
 			DependsOnTitles: s.DependsOnTitles,
 			DependsOnIDs:    s.DependsOnIDs,
@@ -191,6 +193,23 @@ func (h *Handler) resolveSubissueSuggestContent(w http.ResponseWriter, r *http.R
 		if proposalID == "" {
 			writeError(w, http.StatusBadRequest, "one of comment_id, text, or proposal_id is required")
 			return "", false
+		}
+		// A proposal snapshot is a derived view. When it has an answer anchor,
+		// always recover the immutable agent reply as the decomposition source;
+		// the summary snapshot is only a fallback for legacy/manual proposals.
+		if proposal.AnswerCommentID.Valid {
+			if answer, answerErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+				ID: proposal.AnswerCommentID, WorkspaceID: issue.WorkspaceID,
+			}); answerErr == nil && answer.IssueID == issue.ID && strings.TrimSpace(answer.Content) != "" {
+				return strings.TrimSpace(answer.Content), true
+			}
+		}
+		if proposal.QuestionCommentID.Valid {
+			if question, questionErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+				ID: proposal.QuestionCommentID, WorkspaceID: issue.WorkspaceID,
+			}); questionErr == nil && question.IssueID == issue.ID && strings.TrimSpace(question.Content) != "" {
+				return strings.TrimSpace(question.Content), true
+			}
 		}
 		content := strings.TrimSpace(string(proposal.Snapshot))
 		if content == "" || content == "null" {

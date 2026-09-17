@@ -41,7 +41,8 @@ type SuggestSubissuePlansResponse struct {
 	// ProposalID binds this preview to an immutable source snapshot. It is
 	// created lazily for legacy comments so the old suggestion entry point gains
 	// the same parent/child traceability as a structured AI proposal.
-	ProposalID string `json:"proposal_id,omitempty"`
+	ProposalID   string                        `json:"proposal_id,omitempty"`
+	SourcePacket *service.SubissueSourcePacket `json:"source_packet,omitempty"`
 }
 
 type suggestSubissuePlansErrorResponse struct {
@@ -123,11 +124,18 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 		proposalID = uuidToString(proposal.ID)
 	}
 	var questionID pgtype.UUID
+	var answerID pgtype.UUID
 	if proposalID == "" && req.CommentID != nil && strings.TrimSpace(*req.CommentID) != "" {
 		var commentOK bool
 		questionID, commentOK = h.parseOptionalProposalComment(w, r, issue, req.CommentID)
 		if !commentOK {
 			return
+		}
+		if comment, commentErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+			ID: questionID, WorkspaceID: issue.WorkspaceID,
+		}); commentErr == nil && comment.ParentID.Valid {
+			answerID = questionID
+			questionID = comment.ParentID
 		}
 	}
 	legacySnapshot, snapshotErr := json.Marshal(map[string]any{
@@ -136,7 +144,7 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 	})
 	if snapshotErr == nil {
 		if proposalID == "" {
-			if proposal, _, proposalErr := h.ensureDiscussionProposal(r, issue, questionID, pgtype.UUID{}, legacySnapshot); proposalErr == nil {
+			if proposal, _, proposalErr := h.ensureDiscussionProposal(r, issue, questionID, answerID, legacySnapshot); proposalErr == nil {
 				proposalID = uuidToString(proposal.ID)
 			} else {
 				slog.Warn("save legacy proposal snapshot failed", "issue_id", uuidToString(issue.ID), "error", proposalErr)
@@ -154,7 +162,7 @@ func (h *Handler) SuggestSubissuePlans(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		return &resolved
-	}(), ProposalID: proposalID})
+	}(), ProposalID: proposalID, SourcePacket: ctxData.sourcePacket})
 }
 
 // ExpandSubissuePlan generates detail only for the user-approved outline.
@@ -176,9 +184,10 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	client := h.subissuePlanLLM(llm.BusinessStageDetail)
 	if client == nil || !client.Enabled() {
-		writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(
-			service.BuildRuleBasedSubissueDetails(req.Plan), ctxData.parentByIdentifier,
-		))
+		details := service.RenderSubissueSuggestionDescriptions(
+			service.BuildRuleBasedSubissueDetails(req.Plan), req.Plan, ctxData.sourcePacket,
+		)
+		writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(details, ctxData.parentByIdentifier))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), service.SubissueSuggestTimeout)
@@ -197,9 +206,10 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logSubissuePlanFailure("detail generation", uuidToString(issue.ID), err)
 		if service.ClassifySubissuePlanLLMError(err).Degradable() {
-			writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(
-				service.BuildRuleBasedSubissueDetails(req.Plan), ctxData.parentByIdentifier,
-			))
+			details := service.RenderSubissueSuggestionDescriptions(
+				service.BuildRuleBasedSubissueDetails(req.Plan), req.Plan, ctxData.sourcePacket,
+			)
+			writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(details, ctxData.parentByIdentifier))
 			return
 		}
 		if errors.Is(err, service.ErrLLMNotConfigured) {
@@ -209,6 +219,7 @@ func (h *Handler) ExpandSubissuePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to generate subissue details")
 		return
 	}
+	suggestions = service.RenderSubissueSuggestionDescriptions(suggestions, req.Plan, ctxData.sourcePacket)
 	writeJSON(w, http.StatusOK, h.resolveSubissueSuggestionParents(suggestions, ctxData.parentByIdentifier))
 }
 
@@ -218,6 +229,7 @@ type subissuePlanContext struct {
 	siblings           []service.SubissueCandidateParent
 	candidateParents   []service.SubissueCandidateParent
 	parentByIdentifier map[string]subissueCandidateParentRef
+	sourcePacket       *service.SubissueSourcePacket
 }
 
 func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request, issue db.Issue, req SubissuePlanSourceRequest) (subissuePlanContext, bool) {
@@ -230,6 +242,9 @@ func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request
 		return subissuePlanContext{}, false
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
+	sourcePacket := h.buildSubissueSourcePacket(r, issue, SuggestSubIssuesRequest{
+		CommentID: req.CommentID, Text: req.Text, ProposalID: req.ProposalID,
+	}, content, prefix)
 	// SIY-177 feedback: the split/detail prompts carry the merged execution
 	// context (repos / directories / commands with provenance), never the
 	// ancestor issue descriptions. The carry switch gates whether that context
@@ -266,6 +281,7 @@ func (h *Handler) loadSubissuePlanContext(w http.ResponseWriter, r *http.Request
 		siblings:           siblingCandidates,
 		candidateParents:   candidateParents,
 		parentByIdentifier: parentByIdentifier,
+		sourcePacket:       sourcePacket,
 	}, true
 }
 

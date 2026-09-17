@@ -59,8 +59,10 @@ const (
 // round: plan items reference them via SourceTaskIDs so the backend can prove
 // the full-coverage plan lost nothing.
 type SubissueIdentifiedTask struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
+	ID            string `json:"id"`
+	Text          string `json:"text"`
+	Quote         string `json:"quote,omitempty"`
+	SourceComment string `json:"source_comment_id,omitempty"`
 }
 
 // SubissuePlanItem is the intentionally small outline shown before the
@@ -82,21 +84,22 @@ type SubissuePlanItem struct {
 // backend verified it references every identified task; the remaining plans
 // are optional granularity references.
 type SubissuePlan struct {
-	ID       string             `json:"id"`
-	Name     string             `json:"name"`
-	Strategy string             `json:"strategy,omitempty"`
-	Coverage string             `json:"coverage,omitempty"`
-	Items    []SubissuePlanItem `json:"items"`
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Strategy    string                   `json:"strategy,omitempty"`
+	Coverage    string                   `json:"coverage,omitempty"`
+	Items       []SubissuePlanItem       `json:"items"`
+	SourceTasks []SubissueIdentifiedTask `json:"source_tasks,omitempty"`
 }
 
 // SubissuePlanDiagnostic is the safe, request-scoped record shown in the
 // preview panel. It contains the rendered prompt and usage counters, but never
 // API keys or connection URLs.
 type SubissuePlanDiagnostic struct {
-	PlanID              string  `json:"plan_id"`
-	Strategy            string  `json:"strategy"`
-	Name                string  `json:"name"`
-	Source              string  `json:"source,omitempty"`
+	PlanID   string `json:"plan_id"`
+	Strategy string `json:"strategy"`
+	Name     string `json:"name"`
+	Source   string `json:"source,omitempty"`
 	// Fallback fields are deliberately identifiers and stable reason codes
 	// only. Provider messages, credentials, and runtime URLs never cross this
 	// boundary.
@@ -146,8 +149,9 @@ type SubissuePlanGeneration struct {
 }
 
 type subissueIdentifiedTaskRaw struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+	Quote string `json:"quote"`
 }
 
 type subissuePlanItemRaw struct {
@@ -289,7 +293,7 @@ type SubissuePlanStages struct {
 const subissueRecognizeSystemPrompt = `你是任务识别助手。给你一段较长的 Multica issue 讨论的一个分段，请识别这个分段中所有明确提到的可执行任务、编号条目和工作方向。只依据分段原文，不要凭空添加，也不要把同一个任务重复输出。每项输出一个稳定 id（从 t1 开始连续编号）和原文表述 text。分段中没有可执行任务时输出空数组。严格只输出 JSON，不要输出 Markdown 或解释文字。
 
 输出结构：
-{"tasks":[{"id":"t1","text":"..."}]}`
+{"tasks":[{"id":"t1","text":"...","quote":"原文中能直接定位该任务的完整句子或条目"}]}`
 
 const subissueRecognizeUserTemplate = `分段原文（第 {{segment_index}}/{{segment_total}} 段）：
 {{comment_segment}}
@@ -303,11 +307,6 @@ const subissueRecognizeUserTemplate = `分段原文（第 {{segment_index}}/{{se
 // comment at or under subissueSuggestCommentBudget stays whole — the 3000-ish
 // rune comments the feature mostly sees never segment.
 const subissueSegmentBudget = 5000
-
-// subissueSegmentMax caps how many segments one comment may expand into. The
-// recognition calls run concurrently, so this keeps worst-case latency and
-// token spend bounded; a comment beyond the cap loses its tail (logged).
-const subissueSegmentMax = 8
 
 // subissueSegmentConcurrency bounds parallel recognition calls.
 const subissueSegmentConcurrency = 4
@@ -559,6 +558,7 @@ func generateSubissueStrategyWithRetry(
 		}
 		logSubissueAttempt("subissue plan "+strategy.Key, commentID, attempt, stats, "item_count", len(plan.Items), err)
 		if err == nil {
+			plan.SourceTasks = cloneSubissueIdentifiedTasks(identified)
 			diagnostic.Status = "success"
 			diagnostic.Error = ""
 			applySubissuePlanDiagnosticTelemetry(&diagnostic, stageTelemetry, stageStarted)
@@ -740,11 +740,6 @@ func splitSubissueContentSegments(content string, commentID string) ([]string, b
 		currentLen += len(lineRunes)
 	}
 	flush()
-	if len(segments) > subissueSegmentMax {
-		slog.Warn("subissue suggest: comment exceeds segment cap; tail dropped from recognition",
-			"comment_id", commentID, "segment_count", len(segments), "cap", subissueSegmentMax)
-		segments = segments[:subissueSegmentMax]
-	}
 	return segments, true
 }
 
@@ -765,13 +760,26 @@ func mergeSubissueSegmentTasks(perSegment [][]SubissueIdentifiedTask) []Subissue
 				continue
 			}
 			seen[key] = struct{}{}
-			merged = append(merged, SubissueIdentifiedTask{Text: text})
+			quote := strings.TrimSpace(task.Quote)
+			if quote == "" {
+				quote = text
+			}
+			merged = append(merged, SubissueIdentifiedTask{Text: text, Quote: quote, SourceComment: task.SourceComment})
 		}
 	}
 	for index := range merged {
 		merged[index].ID = fmt.Sprintf("t%d", index+1)
 	}
 	return merged
+}
+
+func cloneSubissueIdentifiedTasks(tasks []SubissueIdentifiedTask) []SubissueIdentifiedTask {
+	if len(tasks) == 0 {
+		return nil
+	}
+	out := make([]SubissueIdentifiedTask, len(tasks))
+	copy(out, tasks)
+	return out
 }
 
 func normalizeSubissueTaskKey(text string) string {
@@ -816,8 +824,9 @@ func recognizeSubissueSegmentWithRetry(
 func parseSubissueRecognizeResponse(raw string) ([]SubissueIdentifiedTask, error) {
 	var parsed struct {
 		Tasks []struct {
-			ID   string `json:"id"`
-			Text string `json:"text"`
+			ID    string `json:"id"`
+			Text  string `json:"text"`
+			Quote string `json:"quote"`
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
@@ -829,8 +838,9 @@ func parseSubissueRecognizeResponse(raw string) ([]SubissueIdentifiedTask, error
 			continue
 		}
 		tasks = append(tasks, SubissueIdentifiedTask{
-			ID:   strings.ToLower(strings.TrimSpace(task.ID)),
-			Text: strings.TrimSpace(task.Text),
+			ID:    strings.ToLower(strings.TrimSpace(task.ID)),
+			Text:  strings.TrimSpace(task.Text),
+			Quote: strings.TrimSpace(task.Quote),
 		})
 	}
 	return tasks, nil
@@ -882,6 +892,9 @@ func generateSubissuePlansWithRetry(
 					authoritative = parsedIdentified
 				}
 				err = validateSubissuePlanCoverage(authoritative, plans)
+				for index := range plans {
+					plans[index].SourceTasks = cloneSubissueIdentifiedTasks(authoritative)
+				}
 			}
 		}
 		itemCount := 0

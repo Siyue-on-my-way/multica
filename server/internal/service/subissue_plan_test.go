@@ -412,6 +412,18 @@ func TestParseSubissuePlansResultMarksFullCoverage(t *testing.T) {
 	}
 }
 
+func TestParseSubissueRecognizeResponseKeepsOriginalQuote(t *testing.T) {
+	tasks, err := parseSubissueRecognizeResponse(`{"tasks":[
+		{"id":"T1","text":"修复上传失败","quote":"原文：上传失败时必须保留错误码。"}
+	]}`)
+	if err != nil {
+		t.Fatalf("parse recognition response: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "t1" || tasks[0].Quote != "原文：上传失败时必须保留错误码。" {
+		t.Fatalf("parsed task lost quote: %+v", tasks)
+	}
+}
+
 func TestSplitSubissueContentSegments(t *testing.T) {
 	short := strings.Repeat("一行内容。", 772) // 3088 runes — explicitly must NOT segment
 	if segments, ok := splitSubissueContentSegments(short, "c-1"); ok {
@@ -439,6 +451,24 @@ func TestSplitSubissueContentSegments(t *testing.T) {
 	}
 	if reassembled < len([]rune(long))-100 {
 		t.Fatalf("segments lost content: %d of %d runes", reassembled, len([]rune(long)))
+	}
+}
+
+func TestSplitSubissueContentSegmentsPreservesTailBeyondEightSegments(t *testing.T) {
+	var lines []string
+	for i := 0; i < 120; i++ {
+		lines = append(lines, fmt.Sprintf("任务%d：%s\n", i, strings.Repeat("细", 500)))
+	}
+	long := strings.Join(lines, "")
+	segments, ok := splitSubissueContentSegments(long, "c-long")
+	if !ok {
+		t.Fatal("over-budget comment must segment")
+	}
+	if len(segments) <= 8 {
+		t.Fatalf("expected more than eight segments, got %d", len(segments))
+	}
+	if !strings.Contains(strings.Join(segments, ""), "任务119：") {
+		t.Fatal("the tail after the former eight-segment cap was dropped")
 	}
 }
 

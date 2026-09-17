@@ -3287,6 +3287,18 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				resp.ExecutionContextContents = resolved.Contents
 				resp.ExecutionContextSources = resolved.Sources
 			}
+			// A reviewed sub-issue carries an immutable source-context snapshot.
+			// Keep it separate from the structured execution context: the daemon
+			// renders the snapshot as quoted evidence, while the execution context
+			// remains machine-usable and is never copied into the issue description.
+			if sourceContext, sourceErr := h.Queries.GetIssueSourceContextByIssue(r.Context(), db.GetIssueSourceContextByIssueParams{
+				WorkspaceID: parseUUID(resp.WorkspaceID), IssueID: task.IssueID,
+			}); sourceErr == nil && len(sourceContext.Snapshot) > 0 {
+				resp.IssueSourceContext = json.RawMessage(append([]byte(nil), sourceContext.Snapshot...))
+			} else if sourceErr != nil && !errors.Is(sourceErr, pgx.ErrNoRows) {
+				slog.Warn("task claim: failed to load issue source context; continuing without evidence block",
+					"task_id", uuidToString(task.ID), "issue_id", uuidToString(task.IssueID), "error", sourceErr)
+			}
 		}
 	} else {
 		slog.Warn("task claim: failed to load workspace for context injection",

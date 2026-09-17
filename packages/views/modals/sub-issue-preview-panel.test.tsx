@@ -162,6 +162,23 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.getByText("1")).toBeInTheDocument();
   });
 
+  it("shows the immutable original agent answer as preview evidence", async () => {
+    mockSuggestPlans.mockResolvedValueOnce({
+      plans: [{ id: "plan-1", name: "Context first", coverage: "full" as const, items: [{ id: "item-1", title: "Task", goal: "Goal" }] }],
+      source_packet: {
+        version: 1,
+        source_issue: { id: "source-1", identifier: "SIY-9", number: 9, title: "Source discussion" },
+        agent_answer: "原始 agent 回复：保留所有约束。",
+      },
+      summary: { status: "success", total_duration_ms: 0, upstream_duration_ms: 0, upstream_calls: 1, retry_count: 0 },
+    });
+
+    renderModal();
+    const evidence = await screen.findByRole("button", { name: /原始 agent 回复/ });
+    await userEvent.setup().click(evidence);
+    expect(await screen.findByText("原始 agent 回复：保留所有约束。", { exact: true })).toBeInTheDocument();
+  });
+
   it("shows the associated-agent fallback while a 202 job is running and loads its plan", async () => {
     const fallbackJob = {
       id: "job-1",

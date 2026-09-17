@@ -874,12 +874,53 @@ const SubissuePlanItemSchema = z.object({
   source_task_ids: z.array(z.string()).default([]),
 }).loose();
 
+const SubissueIdentifiedTaskSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  quote: z.string().optional(),
+  source_comment_id: z.string().optional(),
+}).loose();
+
+const SubissueSourceUnitSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  comment_id: z.string().optional(),
+  author_type: z.string().optional(),
+  author_name: z.string().optional(),
+  text: z.string(),
+  source_index: z.number().optional(),
+}).loose();
+
+const SubissueSourcePacketSchema = z.object({
+  version: z.number().default(1),
+  source_issue: z.object({
+    id: z.string().default(""),
+    identifier: z.string().default(""),
+    number: z.number().default(0),
+    title: z.string().default(""),
+    description: z.string().nullable().optional(),
+  }).loose(),
+  source_comment_id: z.string().optional(),
+  source_issue_id: z.string().optional(),
+  agent_answer: z.string().default(""),
+  comment_thread: z.array(z.object({
+    id: z.string(),
+    parent_id: z.string().nullable().optional(),
+    type: z.string(),
+    content: z.string(),
+    author: z.object({ type: z.string(), id: z.string(), name: z.string() }).loose(),
+  }).loose()).default([]),
+  source_units: z.array(SubissueSourceUnitSchema).default([]),
+  coverage_note: z.string().optional(),
+}).loose();
+
 const SubissuePlanSchema = z.object({
   id: z.string(),
   name: z.string(),
   strategy: z.string().optional(),
   coverage: z.string().optional(),
   items: z.array(SubissuePlanItemSchema).default([]),
+  source_tasks: z.array(SubissueIdentifiedTaskSchema).default([]),
 }).loose();
 
 const SubissuePlanDiagnosticSchema = z.object({
@@ -930,6 +971,7 @@ export const SuggestSubissuePlansResponseSchema = z.object({
   ancestor_brief_refs: z.array(z.object({ id: z.string(), updated_at: z.string() }).loose()).default([]),
   inherited_execution_context: z.unknown().optional(),
   proposal_id: z.string().optional(),
+  source_packet: SubissueSourcePacketSchema.optional(),
 }).loose();
 
 export const SubissuePlanJobSchema = z.object({
@@ -945,6 +987,7 @@ export const SubissuePlanJobSchema = z.object({
   agent_id: z.string().optional(),
   task_id: z.string().optional(),
   plans: z.array(SubissuePlanSchema).default([]),
+  source_packet: SubissueSourcePacketSchema.optional(),
   error_summary: z.string().optional(),
   proposal_id: z.string().optional(),
   created_at: z.string().default(""),

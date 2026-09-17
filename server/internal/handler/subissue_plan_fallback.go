@@ -24,25 +24,26 @@ const subissuePlanJobFallbackTTL = 15 * time.Minute
 // digest only; the source comment/issue remains available through the normal
 // permission-checked issue APIs.
 type SubissuePlanJobResponse struct {
-	ID                   string                 `json:"id"`
-	IssueID              string                 `json:"issue_id"`
-	SourceCommentID      string                 `json:"source_comment_id,omitempty"`
-	SourceSnapshotDigest string                 `json:"source_snapshot_digest"`
-	ContextRevision      int64                  `json:"context_revision"`
-	Status               string                 `json:"status"`
-	Source               string                 `json:"source"`
-	FallbackReason       string                 `json:"fallback_reason,omitempty"`
-	PrimaryErrorClass    string                 `json:"primary_error_class,omitempty"`
-	AgentID              string                 `json:"agent_id,omitempty"`
-	TaskID               string                 `json:"task_id,omitempty"`
-	Plans                []service.SubissuePlan `json:"plans,omitempty"`
-	ErrorSummary         string                 `json:"error_summary,omitempty"`
-	ProposalID           string                 `json:"proposal_id,omitempty"`
-	CreatedAt            string                 `json:"created_at"`
-	UpdatedAt            string                 `json:"updated_at"`
-	StartedAt            string                 `json:"started_at,omitempty"`
-	CompletedAt          string                 `json:"completed_at,omitempty"`
-	ExpiresAt            string                 `json:"expires_at"`
+	ID                   string                        `json:"id"`
+	IssueID              string                        `json:"issue_id"`
+	SourceCommentID      string                        `json:"source_comment_id,omitempty"`
+	SourceSnapshotDigest string                        `json:"source_snapshot_digest"`
+	ContextRevision      int64                         `json:"context_revision"`
+	Status               string                        `json:"status"`
+	Source               string                        `json:"source"`
+	FallbackReason       string                        `json:"fallback_reason,omitempty"`
+	PrimaryErrorClass    string                        `json:"primary_error_class,omitempty"`
+	AgentID              string                        `json:"agent_id,omitempty"`
+	TaskID               string                        `json:"task_id,omitempty"`
+	Plans                []service.SubissuePlan        `json:"plans,omitempty"`
+	SourcePacket         *service.SubissueSourcePacket `json:"source_packet,omitempty"`
+	ErrorSummary         string                        `json:"error_summary,omitempty"`
+	ProposalID           string                        `json:"proposal_id,omitempty"`
+	CreatedAt            string                        `json:"created_at"`
+	UpdatedAt            string                        `json:"updated_at"`
+	StartedAt            string                        `json:"started_at,omitempty"`
+	CompletedAt          string                        `json:"completed_at,omitempty"`
+	ExpiresAt            string                        `json:"expires_at"`
 }
 
 type subissuePlanJobAcceptedResponse struct {
@@ -119,7 +120,7 @@ func (h *Handler) handleSubissuePlanFallback(
 		plans := plansFromSubissuePlanJob(job)
 		return subissuePlanFallbackOutcome{
 			StatusCode: http.StatusOK,
-			Body: h.subissuePlanPreviewResponse(r, issue, req, plans, []service.SubissuePlanDiagnostic{
+			Body: h.subissuePlanPreviewResponse(r, issue, req, plans, ctxData.sourcePacket, []service.SubissuePlanDiagnostic{
 				jobDiagnostic(job, jobSource(job), ""),
 			}, "success", proposalIDFromJob(job, proposalID)),
 		}, nil
@@ -146,7 +147,7 @@ func (h *Handler) handleSubissuePlanFallback(
 			if current.Status == "succeeded" {
 				return subissuePlanFallbackOutcome{
 					StatusCode: http.StatusOK,
-					Body: h.subissuePlanPreviewResponse(r, issue, req, plansFromSubissuePlanJob(current), []service.SubissuePlanDiagnostic{
+					Body: h.subissuePlanPreviewResponse(r, issue, req, plansFromSubissuePlanJob(current), ctxData.sourcePacket, []service.SubissuePlanDiagnostic{
 						jobDiagnostic(current, jobSource(current), ""),
 					}, "success", proposalIDFromJob(current, proposalID)),
 				}, nil
@@ -209,7 +210,7 @@ func (h *Handler) handleSubissuePlanFallback(
 	diagnostic := jobDiagnostic(job, service.SubissuePlanSourceRule, service.SubissuePlanNoCandidate)
 	return subissuePlanFallbackOutcome{
 		StatusCode: http.StatusOK,
-		Body:       h.subissuePlanPreviewResponse(r, issue, req, plans, []service.SubissuePlanDiagnostic{diagnostic}, "success", proposalIDFromJob(job, proposalID)),
+		Body:       h.subissuePlanPreviewResponse(r, issue, req, plans, ctxData.sourcePacket, []service.SubissuePlanDiagnostic{diagnostic}, "success", proposalIDFromJob(job, proposalID)),
 	}, nil
 }
 
@@ -345,8 +346,15 @@ func (h *Handler) ensureFallbackProposal(r *http.Request, issue db.Issue, req Su
 		}
 	}
 	var questionID pgtype.UUID
+	var answerID pgtype.UUID
 	if req.CommentID != nil && strings.TrimSpace(*req.CommentID) != "" {
 		questionID = parseUUID(*req.CommentID)
+		if comment, commentErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+			ID: questionID, WorkspaceID: issue.WorkspaceID,
+		}); commentErr == nil && comment.ParentID.Valid {
+			answerID = questionID
+			questionID = comment.ParentID
+		}
 	}
 	snapshot, err := json.Marshal(map[string]any{
 		"title": issue.Title, "summary": content, "scope": "fallback/source", "items": []any{},
@@ -354,7 +362,7 @@ func (h *Handler) ensureFallbackProposal(r *http.Request, issue db.Issue, req Su
 	if err != nil {
 		return ""
 	}
-	proposal, _, err := h.ensureDiscussionProposal(r, issue, questionID, pgtype.UUID{}, snapshot)
+	proposal, _, err := h.ensureDiscussionProposal(r, issue, questionID, answerID, snapshot)
 	if err != nil {
 		return ""
 	}
@@ -378,6 +386,7 @@ func (h *Handler) subissuePlanPreviewResponse(
 	issue db.Issue,
 	req SubissuePlanSourceRequest,
 	plans []service.SubissuePlan,
+	sourcePacket *service.SubissueSourcePacket,
 	diagnostics []service.SubissuePlanDiagnostic,
 	status string,
 	proposalID string,
@@ -396,7 +405,7 @@ func (h *Handler) subissuePlanPreviewResponse(
 		Plans: plans, Diagnostics: diagnostics,
 		Summary:           service.SubissuePlanGenerationSummary{Status: status},
 		AncestorBriefRefs: refs, InheritedExecutionContext: inherited,
-		ProposalID: proposalID,
+		ProposalID: proposalID, SourcePacket: sourcePacket,
 	}
 }
 
@@ -414,8 +423,10 @@ func acceptedSubissuePlanJob(job db.SubissuePlanJob) subissuePlanJobAcceptedResp
 func subissuePlanJobToResponse(job db.SubissuePlanJob) SubissuePlanJobResponse {
 	proposalID := ""
 	var snapshot service.SubissuePlanFallbackSnapshot
+	var sourcePacket *service.SubissueSourcePacket
 	if json.Unmarshal(job.SourceSnapshot, &snapshot) == nil {
 		proposalID = snapshot.ProposalID
+		sourcePacket = service.NewSubissueSourcePacketFromContent(snapshot.SourceIssue, snapshot.Discussion, snapshot.SourceCommentID)
 	}
 	return SubissuePlanJobResponse{
 		ID: util.UUIDToString(job.ID), IssueID: util.UUIDToString(job.IssueID),
@@ -423,7 +434,7 @@ func subissuePlanJobToResponse(job db.SubissuePlanJob) SubissuePlanJobResponse {
 		SourceSnapshotDigest: job.SourceSnapshotDigest, ContextRevision: job.ContextRevision,
 		Status: job.Status, Source: jobSource(job), FallbackReason: job.FallbackReason,
 		PrimaryErrorClass: job.PrimaryErrorClass, AgentID: util.UUIDToString(job.AgentID),
-		TaskID: util.UUIDToString(job.TaskID), Plans: plansFromSubissuePlanJob(job),
+		TaskID: util.UUIDToString(job.TaskID), Plans: plansFromSubissuePlanJob(job), SourcePacket: sourcePacket,
 		ErrorSummary: job.ErrorSummary.String, ProposalID: proposalID,
 		CreatedAt: timestampToString(job.CreatedAt), UpdatedAt: timestampToString(job.UpdatedAt),
 		StartedAt: timestampToString(job.StartedAt), CompletedAt: timestampToString(job.CompletedAt),
