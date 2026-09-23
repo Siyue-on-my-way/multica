@@ -960,6 +960,34 @@ describe("ApiClient Inbox response schemas", () => {
 });
 
 describe("ApiClient", () => {
+  it("threads AbortSignal through sub-issue generation requests", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ plans: [], summary: { status: "success" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ subissues: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const controller = new AbortController();
+    await client.suggestSubissuePlans("issue-1", { comment_id: "comment-1" }, controller.signal);
+    await client.expandSubissuePlan("issue-1", {
+      comment_id: "comment-1",
+      plan: { id: "plan-1", name: "Plan", items: [{ id: "item-1", title: "Task", goal: "Goal" }] },
+    }, controller.signal);
+
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(fetchMock.mock.calls[1]?.[1]?.signal).toBe(controller.signal);
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

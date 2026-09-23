@@ -54,10 +54,10 @@ vi.mock("sonner", () => ({
   toast: { success: mockToastSuccess, error: vi.fn() },
 }));
 
-function renderModal() {
+function renderModal(onClose = vi.fn()) {
   return render(
     <I18nProvider locale="en" resources={{ en: { modals: enModals } }}>
-      <SubIssuePreviewModal data={{ issueId: "issue-1", commentId: "comment-1" }} onClose={vi.fn()} />
+      <SubIssuePreviewModal data={{ issueId: "issue-1", commentId: "comment-1" }} onClose={onClose} />
     </I18nProvider>,
   );
 }
@@ -152,6 +152,32 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.queryByText("Reference granularity only")).not.toBeInTheDocument();
   });
 
+  it("allows closing the modal while a foreground generation request is pending", async () => {
+    const onClose = vi.fn();
+    mockSuggestPlans.mockImplementationOnce(() => new Promise(() => {}));
+    renderModal(onClose);
+
+    expect(await screen.findByTestId("subissue-generation-status")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockSuggestPlans.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
+    expect(mockSuggestPlans.mock.calls[0]?.[2]?.aborted).toBe(true);
+  });
+
+  it("can stop a foreground generation without closing the preview", async () => {
+    const onClose = vi.fn();
+    mockSuggestPlans.mockImplementationOnce(() => new Promise(() => {}));
+    renderModal(onClose);
+
+    expect(await screen.findByTestId("subissue-generation-status")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop generation" }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockSuggestPlans.mock.calls[0]?.[2].aborted).toBe(true);
+    await waitFor(() => expect(screen.queryByTestId("subissue-generation-status")).not.toBeInTheDocument());
+  });
+
   it("shows upstream timing and retry telemetry for the split generation", async () => {
     renderModal();
 
@@ -221,6 +247,43 @@ describe("SubIssuePreviewModal", () => {
     expect(screen.getByText("Associated agent produced a split plan")).toBeInTheDocument();
   });
 
+  it("cancels an accepted fallback job without closing the modal", async () => {
+    const fallbackJob = {
+      id: "job-cancel-1",
+      issue_id: "issue-1",
+      source_snapshot_digest: "digest-1",
+      context_revision: 4,
+      status: "queued" as const,
+      source: "fallback_agent",
+      fallback_reason: "primary_llm_unavailable",
+      agent_id: "agent-1",
+      task_id: "task-1",
+      plans: [],
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      expires_at: "2026-09-14T00:15:00Z",
+    };
+    mockSuggestPlans.mockResolvedValueOnce({
+      job: fallbackJob,
+      job_id: fallbackJob.id,
+      status: "queued",
+      source: fallbackJob.source,
+      fallback_reason: fallbackJob.fallback_reason,
+      summary: { status: "running", total_duration_ms: 0, upstream_duration_ms: 0, upstream_calls: 0, retry_count: 0 },
+    });
+    mockGetPlanJob.mockResolvedValue(fallbackJob);
+    mockCancelPlanJob.mockResolvedValueOnce({ ...fallbackJob, status: "cancelled" });
+    const onClose = vi.fn();
+    renderModal(onClose);
+
+    expect(await screen.findByTestId("subissue-plan-fallback-status")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Cancel planning" }));
+
+    await waitFor(() => expect(mockCancelPlanJob).toHaveBeenCalledWith(fallbackJob.id));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(await screen.findAllByText("Split generation stopped")).not.toHaveLength(0);
+  });
+
   it("shows the selected strategy model, usage and prompts", async () => {
     renderModal();
     const user = userEvent.setup();
@@ -273,7 +336,7 @@ describe("SubIssuePreviewModal", () => {
           expect.objectContaining({ kind: "summary_test" }),
         ],
       }),
-    }));
+    }), expect.any(AbortSignal));
     expect(await screen.findByText("Review sub-issue details")).toBeInTheDocument();
   });
 

@@ -1231,10 +1231,15 @@ export class ApiClient {
     });
   }
 
-  async suggestSubissuePlans(issueId: string, data: SuggestSubIssuesRequest): Promise<SuggestSubissuePlansResult> {
+  async suggestSubissuePlans(
+    issueId: string,
+    data: SuggestSubIssuesRequest,
+    signal?: AbortSignal,
+  ): Promise<SuggestSubissuePlansResult> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/suggest-subissue-plans`, {
       method: "POST",
       body: JSON.stringify(data),
+      signal,
     });
     if (SubissuePlanJobAcceptedResponseSchema.safeParse(raw).success) {
       return parseSubissuePlanJobAction(
@@ -1276,10 +1281,15 @@ export class ApiClient {
     return parseSubissuePlanJobAction(raw, "POST /api/subissue-plan-jobs/:id/retry", jobId);
   }
 
-  async expandSubissuePlan(issueId: string, data: ExpandSubissuePlanRequest): Promise<SuggestSubIssuesResponse> {
+  async expandSubissuePlan(
+    issueId: string,
+    data: ExpandSubissuePlanRequest,
+    signal?: AbortSignal,
+  ): Promise<SuggestSubIssuesResponse> {
     return this.fetch(`/api/issues/${issueId}/expand-subissue-plan`, {
       method: "POST",
       body: JSON.stringify(data),
+      signal,
     });
   }
 

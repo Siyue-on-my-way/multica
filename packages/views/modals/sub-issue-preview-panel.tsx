@@ -160,6 +160,19 @@ function isTerminalPlanJob(job: SubissuePlanJob): boolean {
   return job.status === "succeeded" || job.status === "failed" || job.status === "cancelled" || job.status === "expired";
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") ||
+    (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")
+  );
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
 export function SubIssuePreviewModal({
   onClose,
   data,
@@ -212,6 +225,36 @@ export function SubIssuePreviewModal({
   const [createMode, setCreateMode] = useState<"backlog" | "todo">("backlog");
   const [generationKey, setGenerationKey] = useState<string | null>(null);
   const [pickingParentFor, setPickingParentFor] = useState<string | null>(null);
+  const [generationCancelled, setGenerationCancelled] = useState(false);
+  const planRequestRef = useRef<AbortController | null>(null);
+  const detailRequestRef = useRef<AbortController | null>(null);
+  const generationStartedAtRef = useRef<number | null>(null);
+  const [generationElapsedMs, setGenerationElapsedMs] = useState(0);
+
+  useEffect(() => {
+    return () => {
+      planRequestRef.current?.abort();
+      detailRequestRef.current?.abort();
+    };
+  }, []);
+
+  const planJobActive = !!planJob && !isTerminalPlanJob(planJob);
+
+  useEffect(() => {
+    const active = loadingPlans || loadingDetails || planJobActive;
+    if (!active) {
+      generationStartedAtRef.current = null;
+      setGenerationElapsedMs(0);
+      return;
+    }
+    generationStartedAtRef.current ??= Date.now();
+    const updateElapsed = () => {
+      setGenerationElapsedMs(Math.max(0, Date.now() - (generationStartedAtRef.current ?? Date.now())));
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [loadingDetails, loadingPlans, planJobActive]);
 
   const applyPlanPayload = useCallback(
     (payload: {
@@ -236,6 +279,7 @@ export function SubIssuePreviewModal({
       setDiagnosticsOpen(false);
       setMergeSelection([]);
       setDetailError(false);
+      setGenerationCancelled(false);
       setPhase("outline");
     },
     [initialProposalId],
@@ -250,6 +294,10 @@ export function SubIssuePreviewModal({
       setPlanJobAction(null);
       setDiagnostics([]);
       setGenerationSummary(null);
+      setGenerationCancelled(false);
+      planRequestRef.current?.abort();
+      const controller = new AbortController();
+      planRequestRef.current = controller;
       let accepted = false;
       try {
         const response = await api.suggestSubissuePlans(issueId, {
@@ -257,7 +305,8 @@ export function SubIssuePreviewModal({
           ...(proposalIdRef.current ? { proposal_id: proposalIdRef.current } : {}),
           human_constraints: constraints.trim() || undefined,
           carry_ancestor_context: carryAncestorContext,
-        });
+        }, controller.signal);
+        if (controller.signal.aborted) return;
         if (isAcceptedPlanJobResponse(response)) {
           accepted = true;
           setPlanJob(response.job);
@@ -273,12 +322,16 @@ export function SubIssuePreviewModal({
           applyPlanPayload(response);
         }
       } catch (error) {
+        if (controller.signal.aborted || isAbortError(error)) return;
         const failure = planGenerationErrorDetails(error);
         setGenerationSummary(failure.summary);
         setDiagnostics(failure.diagnostics);
         setPlanError(true);
       } finally {
-        if (!accepted) setLoadingPlans(false);
+        if (planRequestRef.current === controller) {
+          planRequestRef.current = null;
+          if (!accepted) setLoadingPlans(false);
+        }
       }
     },
     [applyPlanPayload, carryAncestorContext, commentId, initialProposalId, issueId],
@@ -350,11 +403,45 @@ export function SubIssuePreviewModal({
     try {
       const next = await api.cancelSubissuePlanJob(planJob.id);
       setPlanJob(next);
-      setLoadingPlans(false);
+      const terminal = isTerminalPlanJob(next);
+      setLoadingPlans(!terminal);
+      setGenerationCancelled(next.status === "cancelled");
+      setPlanError(next.status !== "cancelled");
+    } catch {
       setPlanError(true);
     } finally {
       setPlanJobAction(null);
     }
+  };
+
+  const handleStopGeneration = async () => {
+    if (planJob && !isTerminalPlanJob(planJob)) {
+      await handleCancelPlanJob();
+      return;
+    }
+    if (loadingDetails) {
+      detailRequestRef.current?.abort();
+      setLoadingDetails(false);
+      setDetailError(false);
+      setGenerationCancelled(true);
+      return;
+    }
+    if (loadingPlans) {
+      planRequestRef.current?.abort();
+      setLoadingPlans(false);
+      setPlanError(false);
+      setGenerationCancelled(true);
+      setPlans([]);
+    }
+  };
+
+  const handleClose = () => {
+    // Closing the modal stops only an in-flight foreground HTTP request. A
+    // fallback job already accepted by the server remains durable and can be
+    // reopened from the comment; closing must never silently cancel it.
+    planRequestRef.current?.abort();
+    detailRequestRef.current?.abort();
+    onClose();
   };
 
   const handleRetryPlanJob = async () => {
@@ -467,8 +554,12 @@ export function SubIssuePreviewModal({
 
   const handleExpandDetails = async () => {
     if (!selectedPlan || !outlineValid) return;
+    detailRequestRef.current?.abort();
+    const controller = new AbortController();
+    detailRequestRef.current = controller;
     setLoadingDetails(true);
     setDetailError(false);
+    setGenerationCancelled(false);
     try {
       const response = await api.expandSubissuePlan(issueId, {
         ...(commentId ? { comment_id: commentId } : {}),
@@ -476,14 +567,18 @@ export function SubIssuePreviewModal({
         human_constraints: humanConstraints.trim() || undefined,
         carry_ancestor_context: carryAncestorContext,
         plan: selectedPlan,
-      });
+      }, controller.signal);
+      if (controller.signal.aborted) return;
       setDrafts(response.subissues.map(draftFromSuggestion));
       setGenerationKey((current) => current ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
       setPhase("details");
-    } catch {
-      setDetailError(true);
+    } catch (error) {
+      if (!controller.signal.aborted && !isAbortError(error)) setDetailError(true);
     } finally {
-      setLoadingDetails(false);
+      if (detailRequestRef.current === controller) {
+        detailRequestRef.current = null;
+        setLoadingDetails(false);
+      }
     }
   };
 
@@ -559,7 +654,7 @@ export function SubIssuePreviewModal({
       <Dialog
         open
         onOpenChange={(open) => {
-          if (!open && !busy) onClose();
+          if (!open) handleClose();
         }}
       >
         <DialogContent className="flex flex-col sm:max-w-2xl">
@@ -627,11 +722,21 @@ export function SubIssuePreviewModal({
               )}
 
               {loadingPlans && (
-                <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {planJob && !isTerminalPlanJob(planJob)
-                    ? t(($) => $.suggest_subissues.fallback_pending)
-                    : t(($) => $.suggest_subissues.outline_loading)}
+                <div data-testid="subissue-generation-status" className="flex flex-col items-center justify-center gap-2 py-8 text-body text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {planJob && !isTerminalPlanJob(planJob)
+                      ? t(($) => $.suggest_subissues.fallback_pending)
+                      : t(($) => $.suggest_subissues.outline_loading)}
+                  </div>
+                  <div className="text-caption" aria-live="polite">
+                    {t(($) => $.suggest_subissues.elapsed, { duration: formatElapsed(Math.floor(generationElapsedMs / 1000)) })}
+                  </div>
+                  {!planJob && (
+                    <Button type="button" variant="outline" size="sm" onClick={() => void handleStopGeneration()}>
+                      {t(($) => $.suggest_subissues.stop_generation)}
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -646,6 +751,8 @@ export function SubIssuePreviewModal({
                         ? t(($) => $.suggest_subissues.fallback_pending)
                         : planJob.status === "succeeded"
                           ? t(($) => $.suggest_subissues.fallback_succeeded)
+                          : planJob.status === "cancelled"
+                            ? t(($) => $.suggest_subissues.generation_cancelled)
                           : t(($) => $.suggest_subissues.fallback_failed)}
                     </div>
                     <Badge variant="secondary">{planJob.source || "—"}</Badge>
@@ -678,7 +785,7 @@ export function SubIssuePreviewModal({
                 </div>
               )}
 
-              {!loadingPlans && generationSummary && (
+              {!loadingPlans && !generationCancelled && generationSummary && (
                 <div className={`rounded-lg border p-3 ${generationSummary.status === "failed" ? "border-destructive/50" : "border-border/60"}`}>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="text-body font-medium">
@@ -742,13 +849,19 @@ export function SubIssuePreviewModal({
                 </div>
               )}
 
-              {!loadingPlans && planError && (
+              {!loadingPlans && generationCancelled && (
+                <div className="py-6 text-center text-body text-muted-foreground">
+                  {t(($) => $.suggest_subissues.generation_cancelled)}
+                </div>
+              )}
+
+              {!loadingPlans && !generationCancelled && planError && (
                 <div className="py-6 text-center text-body text-muted-foreground">
                   {t(($) => $.suggest_subissues.outline_load_failed)}
                 </div>
               )}
 
-              {!loadingPlans && !planError && plans.length === 0 && (
+              {!loadingPlans && !generationCancelled && !planError && plans.length === 0 && (
                 <div className="py-6 text-center text-body text-muted-foreground">
                   {t(($) => $.suggest_subissues.empty)}
                 </div>
@@ -1008,12 +1121,25 @@ export function SubIssuePreviewModal({
               </Collapsible>
 
               {loadingDetails && (
-                <div className="flex items-center justify-center gap-2 py-8 text-body text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t(($) => $.suggest_subissues.details_loading)}
+                <div data-testid="subissue-generation-status" className="flex flex-col items-center justify-center gap-2 py-8 text-body text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t(($) => $.suggest_subissues.details_loading)}
+                  </div>
+                  <div className="text-caption" aria-live="polite">
+                    {t(($) => $.suggest_subissues.elapsed, { duration: formatElapsed(Math.floor(generationElapsedMs / 1000)) })}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void handleStopGeneration()}>
+                    {t(($) => $.suggest_subissues.stop_generation)}
+                  </Button>
                 </div>
               )}
-              {!loadingDetails && detailError && (
+              {!loadingDetails && generationCancelled && (
+                <div className="py-6 text-center text-body text-muted-foreground">
+                  {t(($) => $.suggest_subissues.generation_cancelled)}
+                </div>
+              )}
+              {!loadingDetails && !generationCancelled && detailError && (
                 <div className="py-6 text-center text-body text-muted-foreground">
                   {t(($) => $.suggest_subissues.details_load_failed)}
                 </div>
@@ -1087,7 +1213,7 @@ export function SubIssuePreviewModal({
           <DialogFooter className="shrink-0">
             {phase === "outline" ? (
               <>
-                <Button variant="outline" onClick={onClose} disabled={busy}>
+                <Button variant="outline" onClick={handleClose}>
                   {t(($) => $.suggest_subissues.cancel)}
                 </Button>
                 <Button variant="outline" onClick={() => void loadPlans(humanConstraints)} disabled={busy}>
@@ -1103,7 +1229,7 @@ export function SubIssuePreviewModal({
                 <Button variant="outline" onClick={() => setPhase("outline")} disabled={creating}>
                   {t(($) => $.suggest_subissues.back_to_outline)}
                 </Button>
-                <Button variant="outline" onClick={onClose} disabled={creating}>
+                <Button variant="outline" onClick={handleClose}>
                   {t(($) => $.suggest_subissues.cancel)}
                 </Button>
                 <Button onClick={handleCreate} disabled={detailError || drafts.length === 0 || checkedCount === 0 || creating}>
