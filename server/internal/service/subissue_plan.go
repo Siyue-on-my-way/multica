@@ -377,7 +377,10 @@ func (s SubissuePlanStages) independentStrategies() []subissuePlanStrategy {
 // SuggestSubissuePlansWithDiagnostics runs the approved three-strategy flow.
 // Recognition is shared so every strategy receives the same authoritative
 // source-task list; the strategy calls then run concurrently and are returned
-// in the product order, independent of completion order.
+// in the product order, independent of completion order. A strategy failure is
+// isolated: successful strategies remain usable, while the failed strategy is
+// represented by its diagnostic. The generation fails only when no strategy
+// produced a valid plan.
 func SuggestSubissuePlansWithDiagnostics(
 	ctx context.Context,
 	stages SubissuePlanStages,
@@ -406,10 +409,20 @@ func SuggestSubissuePlansWithDiagnostics(
 		generation.Summary.Error = ""
 	}()
 	strategies := stages.independentStrategies()
-	for _, strategy := range strategies {
+	diagnostics := make([]SubissuePlanDiagnostic, len(strategies))
+	configuredStrategies := 0
+	for index, strategy := range strategies {
+		diagnostics[index] = newSubissuePlanDiagnostic(strategy)
 		if strategy.Client == nil || !strategy.Client.Enabled() {
-			return generation, ErrLLMNotConfigured
+			diagnostics[index].Status = "failed"
+			diagnostics[index].Error = ErrLLMNotConfigured.Error()
+			continue
 		}
+		configuredStrategies++
+	}
+	if configuredStrategies == 0 {
+		generation.Diagnostics = diagnostics
+		return generation, ErrLLMNotConfigured
 	}
 	content := strings.TrimSpace(sourceContent)
 	identified, err := identifySubissueSourceTasksForPlanning(ctx, stages.Recognize, content, commentID)
@@ -432,13 +445,15 @@ func SuggestSubissuePlansWithDiagnostics(
 	}
 
 	results := make([]SubissuePlan, len(strategies))
-	diagnostics := make([]SubissuePlanDiagnostic, len(strategies))
-	group, groupCtx := errgroup.WithContext(ctx)
+	group := new(errgroup.Group)
 	for index, strategy := range strategies {
 		index, strategy := index, strategy
+		if strategy.Client == nil || !strategy.Client.Enabled() {
+			continue
+		}
 		group.Go(func() error {
 			plan, diagnostic, err := generateSubissueStrategyWithRetry(
-				groupCtx, strategy, sourceIssue, content, siblings, candidateParents,
+				ctx, strategy, sourceIssue, content, siblings, candidateParents,
 				humanConstraints, string(identifiedJSON), identified, commentID,
 			)
 			diagnostics[index] = diagnostic
@@ -449,14 +464,27 @@ func SuggestSubissuePlansWithDiagnostics(
 			return nil
 		})
 	}
-	if err := group.Wait(); err != nil {
-		// Preserve every strategy diagnostic even when one strategy exhausts its
-		// retries. The handler uses these records to explain partial progress and
-		// upstream failures in the preview panel.
-		generation.Diagnostics = diagnostics
-		return generation, err
+	groupErr := group.Wait()
+	plans := make([]SubissuePlan, 0, len(results))
+	for index, plan := range results {
+		if diagnostics[index].Status != "success" {
+			continue
+		}
+		plans = append(plans, plan)
 	}
-	return SubissuePlanGeneration{Plans: results, Diagnostics: diagnostics, Summary: generation.Summary}, nil
+	generation.Diagnostics = diagnostics
+	if len(plans) == 0 {
+		// Preserve every strategy diagnostic when all strategies exhaust their
+		// retries. The handler may then use its existing fallback/error path.
+		if groupErr == nil {
+			groupErr = ErrLLMNotConfigured
+		}
+		return generation, groupErr
+	}
+	// Do not let one failed strategy force the handler into fallback when other
+	// strategies already produced usable plans. Failed attempts stay visible in
+	// diagnostics for troubleshooting and the preview panel.
+	return SubissuePlanGeneration{Plans: plans, Diagnostics: diagnostics, Summary: generation.Summary}, nil
 }
 
 // identifySubissueSourceTasksForPlanning is deliberately different from the

@@ -795,14 +795,17 @@ func TestSuggestSubissuePlansWithDiagnosticsKeepsFailedDiagnostics(t *testing.T)
 		SubissueSuggestSourceIssue{Identifier: "SIY-63", Title: "拆分订单任务"},
 		"请拆分任务A", nil, nil, "", "comment-1",
 	)
-	if err == nil {
-		t.Fatal("expected strategy generation to fail after exhausting retries")
+	if err != nil {
+		t.Fatalf("one failed strategy must not fail a generation with usable plans: %v", err)
 	}
-	if generation.Summary.Status != "failed" || generation.Summary.RetryCount < 2 {
-		t.Fatalf("summary = %+v, want failed generation with retries", generation.Summary)
+	if generation.Summary.Status != "success" || generation.Summary.RetryCount < 2 {
+		t.Fatalf("summary = %+v, want successful partial generation with retries", generation.Summary)
 	}
 	if len(generation.Diagnostics) != 3 {
 		t.Fatalf("diagnostics = %+v, want one record per strategy even on failure", generation.Diagnostics)
+	}
+	if len(generation.Plans) != 2 {
+		t.Fatalf("plans = %+v, want the two successful strategies only", generation.Plans)
 	}
 	failed := generation.Diagnostics[0]
 	if failed.Status != "failed" || failed.Attempts != subissuePlanMaxAttempts || failed.RetryCount != subissuePlanMaxAttempts-1 || failed.Error == "" {
@@ -886,17 +889,62 @@ func TestSuggestSubissuePlansWithDiagnosticsReturnsEmptyForNoActionableTasks(t *
 	}
 }
 
-func TestSuggestSubissuePlansWithDiagnosticsRequiresAllStrategies(t *testing.T) {
-	_, err := SuggestSubissuePlansWithDiagnostics(
+func TestSuggestSubissuePlansWithDiagnosticsFailsWhenNoStrategySucceeds(t *testing.T) {
+	recognizer := &scriptedSubissueLLM{script: []string{
+		`{"tasks":[{"id":"t1","text":"任务A"}]}`,
+	}}
+	generation, err := SuggestSubissuePlansWithDiagnostics(
 		context.Background(),
 		SubissuePlanStages{
 			SingleFullContext: &scriptedSubissueLLM{},
 			Parallel:          &scriptedSubissueLLM{},
-			Recognize:         &scriptedSubissueLLM{},
+			Recognize:         recognizer,
+			FullCoverage:      &scriptedSubissueLLM{},
 		},
 		SubissueSuggestSourceIssue{Identifier: "SIY-63"}, "任务", nil, nil, "", "comment-1",
 	)
-	if !errors.Is(err, ErrLLMNotConfigured) {
-		t.Fatalf("missing strategy error = %v, want ErrLLMNotConfigured", err)
+	if err == nil {
+		t.Fatal("generation with no successful strategy must fail")
+	}
+	if generation.Summary.Status != "failed" || len(generation.Plans) != 0 {
+		t.Fatalf("generation = %+v, want failed empty generation", generation)
+	}
+	if len(generation.Diagnostics) != 3 {
+		t.Fatalf("diagnostics = %+v, want one record per strategy", generation.Diagnostics)
+	}
+}
+
+func TestSuggestSubissuePlansWithDiagnosticsAllowsUnavailableStrategy(t *testing.T) {
+	recognizer := &scriptedSubissueLLM{script: []string{
+		`{"tasks":[{"id":"t1","text":"任务A"}]}`,
+	}}
+	parallel := &scriptedSubissueLLM{script: []string{
+		`{"name":"并行优先","items":[{"title":"任务A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+	full := &scriptedSubissueLLM{script: []string{
+		`{"name":"全量覆盖","items":[{"title":"任务A","goal":"完成A","business":"订单","source_task_ids":["t1"]}]}`,
+	}}
+
+	generation, err := SuggestSubissuePlansWithDiagnostics(
+		context.Background(),
+		SubissuePlanStages{
+			Parallel:     parallel,
+			FullCoverage: full,
+			Recognize:    recognizer,
+		},
+		SubissueSuggestSourceIssue{Identifier: "SIY-63", Title: "拆分任务"},
+		"请拆分任务A", nil, nil, "", "comment-1",
+	)
+	if err != nil {
+		t.Fatalf("an unavailable strategy must not fail usable generation: %v", err)
+	}
+	if len(generation.Plans) != 2 || len(generation.Diagnostics) != 3 {
+		t.Fatalf("generation = %+v, want two plans and three diagnostics", generation)
+	}
+	if generation.Diagnostics[0].Status != "failed" || generation.Diagnostics[0].Error != ErrLLMNotConfigured.Error() {
+		t.Fatalf("unavailable strategy diagnostic = %+v", generation.Diagnostics[0])
+	}
+	if generation.Summary.Status != "success" {
+		t.Fatalf("summary = %+v, want success", generation.Summary)
 	}
 }
