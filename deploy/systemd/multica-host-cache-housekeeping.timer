@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Multica host cache housekeeping periodically
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=true
+Unit=multica-host-cache-housekeeping.service
+
+[Install]
+WantedBy=timers.target

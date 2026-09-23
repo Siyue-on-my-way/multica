@@ -1,0 +1,24 @@
+[Unit]
+Description=Multica high-water host cache housekeeping
+Documentation=file:///mnt/a-opensource-tools/multica/scripts/host-cache-housekeeping.sh
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=/mnt/a-opensource-tools/multica/scripts/host-cache-housekeeping.sh
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/mnt/a-opensource-tools/multica
+Environment=HOME=/root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOST_CACHE_TRIGGER_USED_PERCENT=85
+Environment=HOST_CACHE_EDITOR_MIN_AGE_DAYS=14
+ExecStart=/bin/bash /mnt/a-opensource-tools/multica/scripts/host-cache-housekeeping.sh --apply
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/root/.cache /root/.vscode-server-insiders /root/.trae-server /mnt/a-opensource-tools/multica/logs
