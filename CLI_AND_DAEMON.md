@@ -457,6 +457,10 @@ multica daemon start
 
 Each profile gets its own config directory (`~/.multica/profiles/<name>/`), daemon state, health port, and workspace root. Daemon state means that profile's own `daemon.log`, `daemon.err.log`, and `daemon.pid` live in that directory too — see [Start](#start) for the layout, and pass `--profile <name>` to `daemon status` / `daemon logs` to act on it.
 
+### Container diagnostics (opt-in)
+
+An agent task's shell inherits the daemon process's PATH snapshot, so a Podman/Docker install that only the interactive shell can see (per-user install, autostarted daemon, engine started after the daemon) shows up as `command not found` inside tasks. Rather than widening the task shell, the daemon can expose a restricted, read-only container diagnostics bridge: the admin pins the engine and an exact-name container allowlist on that machine (`multica containers configure`), and tasks then use `multica containers status|logs|inspect` — allowlisted containers only, fixed argv with no shell, tail/since/output caps, sensitive-value masking, and an audit line per call. The capability is off unless configured, lives entirely in the local config (never sent to the server, never inherited by another runtime or machine), and takes effect after a daemon restart. See [docs/container-diagnostics.md](docs/container-diagnostics.md).
+
 ## Workspaces
 
 ### Working with multiple workspaces

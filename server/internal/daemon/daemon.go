@@ -624,6 +624,12 @@ type Daemon struct {
 	// New() and overridable in tests so the auto-update poller can be exercised
 	// without touching the real network or the brew CLI.
 	runUpdateFn func(targetVersion string) (string, error)
+
+	// containerDiag is the restricted container diagnostics capability, built
+	// once from cfg.ContainerDiagnostics. nil means not configured on this
+	// machine: the endpoint reports that as an actionable configuration gap
+	// rather than pretending the operation exists.
+	containerDiag *containerDiagnostics
 }
 
 type profileLaunchSpec struct {
@@ -673,6 +679,17 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
+	// Compile the container diagnostics capability from the local config.
+	// A malformed config must not keep the whole daemon down — the capability
+	// is opt-in tooling — but it must also not half-work: nil means every
+	// request gets the "how to enable" answer, and the operator sees why.
+	if capability, err := newContainerDiagnostics(cfg.ContainerDiagnostics, exec.LookPath, logger); err != nil {
+		if cfg.ContainerDiagnostics != nil {
+			logger.Warn("container diagnostics capability disabled: invalid configuration", "error", err)
+		}
+	} else {
+		d.containerDiag = capability
+	}
 	// Seed the copy-on-write availability set from the startup probe. Callers
 	// must go through d.agents() from here on; cfg.Agents is the initial value
 	// only and does not track later refreshes.
@@ -7935,6 +7952,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var promptOptions []PromptOption
 	if localAssignment != nil && !localAssignment.UsesWorktree() && localDirectoryLockExempt(task) {
 		promptOptions = append(promptOptions, WithSharedLocalDirectory())
+	}
+	// Advertise the restricted container diagnostics capability only where an
+	// admin configured it. On every other runtime this option is absent and
+	// the prompt is unchanged — the capability, and even the knowledge of it,
+	// stay host-local.
+	if d.containerDiag != nil {
+		promptOptions = append(promptOptions, WithContainerDiagnosticsHint(d.containerDiag.promptHint()))
 	}
 	// Worktree mode hands this turn a tree that is mid-merge when the user's
 	// edits since the previous turn collided with the branch's own work. The

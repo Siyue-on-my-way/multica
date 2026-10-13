@@ -80,6 +80,7 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	}
 	b.WriteString(execenv.BuildTaskInitiatorBlock(task.InitiatorType, task.InitiatorName, task.InitiatorEmail))
 	b.WriteString(execenv.BuildConnectedAppsBlock(task.ConnectedApps))
+	b.WriteString(opts.containerDiagnosticsHint)
 	return b.String()
 }
 
@@ -87,8 +88,9 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 // daemon's own execution context can answer. Kept behind PromptOption so the
 // common BuildPrompt(task, provider) call sites stay unchanged.
 type promptOpts struct {
-	sharedLocalDirectory    bool
-	worktreeReplayConflicts []string
+	sharedLocalDirectory     bool
+	worktreeReplayConflicts  []string
+	containerDiagnosticsHint string
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
@@ -112,6 +114,15 @@ func WithSharedLocalDirectory() PromptOption {
 // resolves it (MUL-6881).
 func WithWorktreeReplayConflicts(files []string) PromptOption {
 	return func(o *promptOpts) { o.worktreeReplayConflicts = files }
+}
+
+// WithContainerDiagnosticsHint advertises this runtime's restricted container
+// diagnostics capability. The hint is pre-rendered by the capability so the
+// prompt stays a pure function of the option; callers pass "" (the default)
+// on runtimes without the capability, keeping those prompts byte-identical to
+// before.
+func WithContainerDiagnosticsHint(hint string) PromptOption {
+	return func(o *promptOpts) { o.containerDiagnosticsHint = hint }
 }
 
 // buildSharedLocalDirectoryBlock warns an unlocked turn that its working

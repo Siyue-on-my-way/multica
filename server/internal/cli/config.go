@@ -163,6 +163,48 @@ type CLIConfig struct {
 	// intentionally local-only (it is never sent to the server) because the
 	// path is a property of this machine, not of the shared profile.
 	ProfileCommandOverrides map[string]string `json:"profile_command_overrides,omitempty"`
+
+	// ContainerDiagnostics opts this machine's daemon into a restricted,
+	// read-only container diagnostics capability for agent tasks
+	// (`multica containers status|logs|inspect`, served by the local daemon).
+	// nil/absent keeps the capability off — the historical behavior — so no
+	// agent gains container access just because a daemon is running. Like
+	// ProfileCommandOverrides this is intentionally local-only (never sent to
+	// the server): which containers may be inspected is a property of THIS
+	// machine, and another runtime or a different machine must not inherit it
+	// unless its own admin configures it there too. Manage with
+	// `multica containers configure` / `multica containers disable`; changes
+	// take effect after a daemon restart.
+	ContainerDiagnostics *ContainerDiagnosticsConfig `json:"container_diagnostics,omitempty"`
+}
+
+// ContainerDiagnosticsConfig is the per-machine, admin-owned configuration of
+// the restricted container diagnostics capability. Everything here stays on
+// the daemon host: agents never see engine paths or args, only the exact
+// operation allowlist the daemon chooses to expose.
+type ContainerDiagnosticsConfig struct {
+	// Enabled gates the whole capability. Present-but-disabled keeps the
+	// container allowlist on disk for the next enable, while the daemon
+	// treats the capability as absent.
+	Enabled bool `json:"enabled"`
+	// Engine selects the container CLI family: "podman" (default) or
+	// "docker". Only the fixed read-only subcommands (ps, logs, inspect) are
+	// ever invoked — the engine choice never widens the operation set.
+	Engine string `json:"engine,omitempty"`
+	// EnginePath pins the engine binary (absolute path). Empty means "look
+	// up the engine on the daemon process's PATH". This is the fix for
+	// daemons whose launch context (autostart, service, Desktop app) carries
+	// a PATH without a per-user Podman install: the daemon resolves the
+	// engine, the task shell never has to.
+	EnginePath string `json:"engine_path,omitempty"`
+	// EngineArgs passes extra global engine arguments (e.g. --connection or
+	// --url for a specific podman machine). Admin-owned, passed as separate
+	// argv — never through a shell — and never controllable from a task.
+	EngineArgs []string `json:"engine_args,omitempty"`
+	// Containers is the exact-name allowlist of containers agents may target.
+	// Wildcards and patterns are rejected; every request naming a container
+	// outside this list is refused and audited.
+	Containers []string `json:"containers"`
 }
 
 // BackendOverrides holds per-backend configuration overrides. Each field is

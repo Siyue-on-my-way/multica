@@ -157,6 +157,13 @@ type Config struct {
 	// prefers a matching, executable override over resolving the profile's
 	// command_name on PATH. nil/empty means "always resolve via PATH".
 	ProfileCommandOverrides map[string]string
+
+	// ContainerDiagnostics opts THIS daemon into the restricted, read-only
+	// container diagnostics capability (see container_diagnostics.go). Loaded
+	// from the local CLI config like ProfileCommandOverrides; nil (absent or
+	// disabled) means the capability does not exist and every request to the
+	// endpoint is refused with an actionable "how to enable" message.
+	ContainerDiagnostics *cli.ContainerDiagnosticsConfig
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -232,6 +239,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// purely from env-var configuration. We log a warning and proceed with
 	// no overrides.
 	var profileCommandOverrides map[string]string
+	var containerDiagnosticsCfg *cli.ContainerDiagnosticsConfig
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
@@ -250,6 +258,14 @@ func LoadConfig(overrides Overrides) (Config, error) {
 				}
 				profileCommandOverrides[id] = path
 			}
+		}
+		// Restricted container diagnostics capability: copy the pointer target
+		// so later mutation of the loaded config can't alias daemon state.
+		// A present-but-disabled config is preserved as-is (Enabled=false), so
+		// `containers configure` output can still show the stored allowlist.
+		if cliCfg.ContainerDiagnostics != nil {
+			copied := *cliCfg.ContainerDiagnostics
+			containerDiagnosticsCfg = &copied
 		}
 	}
 
@@ -644,6 +660,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		QwenArgs:                        qwenArgs,
 		QwenpawArgs:                     qwenpawArgs,
 		ProfileCommandOverrides:         profileCommandOverrides,
+		ContainerDiagnostics:            containerDiagnosticsCfg,
 	}, nil
 }
 
