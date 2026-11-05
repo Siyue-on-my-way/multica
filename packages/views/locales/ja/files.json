@@ -1,0 +1,36 @@
+{
+  "page": {
+    "title": "ファイル",
+    "tagline": "ワークスペース共有ファイル：チャットやタスクから参照でき、エージェント開始前に実行マシンへ配布されます",
+    "upload": "ファイルをアップロード",
+    "total_usage": "{{count}} 件 · 合計 {{size}}",
+    "search_placeholder": "ファイル名を検索…",
+    "name": "名前",
+    "size": "サイズ",
+    "uploader": "アップロード者",
+    "created_at": "アップロード日時",
+    "empty_title": "ファイルはまだありません",
+    "empty_description": "要件ドキュメントやデザインなどをアップロードすれば、どのチャットやタスクからでも参照できます",
+    "download": "ダウンロード",
+    "delete": "削除",
+    "refresh": "更新",
+    "delete_confirm_title": "このファイルを削除しますか？",
+    "delete_confirm_description": "「{{filename}}」はサーバーと、それを参照するすべてのチャット/コメントから削除され、ストレージは即時に解放されます。元に戻せません。",
+    "delete_confirm_action": "ファイルを削除",
+    "cancel": "キャンセル",
+    "delete_failed": "削除に失敗しました",
+    "upload_failed": "アップロードに失敗しました",
+    "fileTooLarge": "ファイルが100 MBの上限を超えています",
+    "attached": "チャットに添付しました"
+  },
+  "picker": {
+    "title": "ファイルライブラリから選択",
+    "description": "再アップロードせずに既存のファイルを添付します — エージェント開始前に検証済みのローカルコピーが渡されます",
+    "upload_new": "新しいファイルをアップロード",
+    "attach_selected": "選択したファイルを添付",
+    "selected": "{{count}} 件選択中",
+    "empty": "ライブラリは空です。先にファイルをアップロードしてください",
+    "search_placeholder": "ファイル名を検索…",
+    "attach_failed": "添付に失敗しました"
+  }
+}

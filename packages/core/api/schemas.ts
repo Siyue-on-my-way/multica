@@ -1104,6 +1104,25 @@ export const EMPTY_ATTACHMENT: Attachment = {
   created_at: "",
 };
 
+export const WorkspaceFileSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  filename: z.string(),
+  content_type: z.string(),
+  size_bytes: z.number(),
+  sha256: z.string().optional().default(""),
+  uploader_type: z.string(),
+  uploader_id: z.string(),
+  created_at: z.string(),
+  download_url: z.string(),
+}).loose();
+
+export const WorkspaceFileListSchema = z.object({
+  files: z.array(WorkspaceFileSchema),
+  total: z.number(),
+  total_bytes: z.number(),
+}).loose();
+
 // All object schemas use `.loose()` so unknown server-side fields pass
 // through unchanged. zod 4's `.object()` defaults to STRIP, which would
 // silently drop new fields and surface as a "field neither showed up in

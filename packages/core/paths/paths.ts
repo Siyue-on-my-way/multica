@@ -66,6 +66,7 @@ function workspaceScoped(slug: string) {
       `${ws}/runtimes/${encode(machineId)}/runtime/${encode(runtimeId)}`,
     skills: () => `${ws}/skills`,
     skillDetail: (id: string) => `${ws}/skills/${encode(id)}`,
+    files: () => `${ws}/files`,
     contextCourseware: () => `${ws}/context-courseware`,
     settings: () => `${ws}/settings`,
     attachmentPreview: (id: string) => `${ws}/attachments/${encode(id)}/preview`,

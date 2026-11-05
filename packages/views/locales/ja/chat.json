@@ -26,6 +26,7 @@
     "attachment_bind_failed_toast": "メッセージは送信されましたが、ファイルを添付できませんでした。しばらくしてからもう一度お試しください。",
     "add_tooltip": "追加",
     "upload_file": "画像・ファイル",
+    "choose_from_library": "ファイルライブラリから選択",
     "project_context": "プロジェクトコンテキスト",
     "change_project_context": "プロジェクトコンテキストを変更",
     "remove_project_context": "プロジェクトコンテキストを削除",

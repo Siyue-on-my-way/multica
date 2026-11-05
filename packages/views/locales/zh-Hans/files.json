@@ -1,0 +1,36 @@
+{
+  "page": {
+    "title": "文件库",
+    "tagline": "工作区共享文件：聊天或任务中随时引用，agent 启动前自动投递到执行机",
+    "upload": "上传文件",
+    "total_usage": "{{count}} 个文件 · 共 {{size}}",
+    "search_placeholder": "搜索文件名…",
+    "name": "文件名",
+    "size": "大小",
+    "uploader": "上传者",
+    "created_at": "上传时间",
+    "empty_title": "还没有文件",
+    "empty_description": "先上传需求文档、设计稿或数据文件，之后可在任意聊天或任务中直接引用",
+    "download": "下载",
+    "delete": "删除",
+    "refresh": "刷新",
+    "delete_confirm_title": "删除这个文件？",
+    "delete_confirm_description": "「{{filename}}」将从服务器及所有引用它的聊天/评论中移除，存储空间立即释放。此操作不可撤销。",
+    "delete_confirm_action": "删除文件",
+    "cancel": "取消",
+    "delete_failed": "删除失败",
+    "upload_failed": "上传失败",
+    "fileTooLarge": "文件超过 100 MB 上限",
+    "attached": "已附加到聊天"
+  },
+  "picker": {
+    "title": "从文件库选择",
+    "description": "直接引用已上传的文件，无需重复上传 —— agent 启动前会收到校验过的本地副本",
+    "upload_new": "上传新文件",
+    "attach_selected": "附加所选文件",
+    "selected": "已选 {{count}} 项",
+    "empty": "文件库为空，请先上传文件",
+    "search_placeholder": "搜索文件名…",
+    "attach_failed": "附加文件失败"
+  }
+}

@@ -19,6 +19,8 @@ import {
 } from "../../editor/use-coordinated-uploads";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { ChatAddMenu } from "./chat-add-menu";
+import { LibraryPickerDialog } from "../../files/library-picker-dialog";
+import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { useChatStore, DRAFT_NEW_SESSION } from "@multica/core/chat";
 import { attachmentToDraftUpload, type DraftUpload } from "@multica/core/drafts";
@@ -279,6 +281,9 @@ export function ChatInput({
   // image would leave stuck (MUL-4808).
   const uploadGate = useUploadGate(editorRef);
 
+  // Workspace file library picker ("choose from library" in the + menu).
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+
   // Reactive mirror of `editorDraftKeyRef` for the live-editor registry: a
   // write-back may insert into this editor only while its DOCUMENT belongs to
   // the settling draft, and a ref advance alone re-runs no effect. Updated by
@@ -299,6 +304,30 @@ export function ChatInput({
     getBody: () => useChatStore.getState().inputDrafts[key] ?? "",
     appendToBody: (md) => useChatStore.getState().appendToInputDraft(key, md),
   }), []);
+  // Attach workspace-library files chosen in the picker: the dialog resolved
+  // each selection to an attachment row (it references the library bytes, no
+  // re-upload). Register each as an already-settled draft upload so the send
+  // path binds it, and draw + settle its card in the editor body — the exact
+  // records a normal upload leaves behind.
+  const handleSelectLibraryFiles = useCallback((attachments: Attachment[]) => {
+    const key = editorDraftKeyRef.current;
+    for (const attachment of attachments) {
+      useChatStore.getState().addInputDraftUpload(key, attachmentToDraftUpload(attachment));
+      const uploadId = attachment.id;
+      editorRef.current?.insertUploadPlaceholder({
+        uploadId,
+        filename: attachment.filename,
+        size: attachment.size_bytes,
+      });
+      const result: UploadResult = {
+        ...attachment,
+        link: attachment.download_url || `/api/attachments/${attachment.id}/download`,
+        markdownLink: attachment.markdown_url || attachment.download_url,
+      };
+      editorRef.current?.settleUploadPlaceholder(uploadId, result);
+    }
+  }, []);
+
   const uploadBinding = useMemo(
     () => makeUploadBinding(draftKey),
     [makeUploadBinding, draftKey],
@@ -722,6 +751,9 @@ export function ChatInput({
                 onSelectFile={uploadEnabled
                   ? (file) => editorRef.current?.uploadFile(file)
                   : undefined}
+                onSelectFromLibrary={uploadEnabled
+                  ? () => setLibraryPickerOpen(true)
+                  : undefined}
                 projects={projects}
                 projectId={projectId}
                 onSelectProject={projectSelectionEnabled ? onProjectChange : undefined}
@@ -766,6 +798,13 @@ export function ChatInput({
         </div>
         {uploadEnabled && isDragOver && <FileDropOverlay />}
       </div>
+      {uploadEnabled && (
+        <LibraryPickerDialog
+          open={libraryPickerOpen}
+          onOpenChange={setLibraryPickerOpen}
+          onAttach={handleSelectLibraryFiles}
+        />
+      )}
     </div>
   );
 }

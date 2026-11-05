@@ -265,9 +265,13 @@ import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import type { TaskContext } from "../types/task-context";
+import type { WorkspaceFile, WorkspaceFileList } from "../types/workspace-file";
+import { EMPTY_WORKSPACE_FILE, EMPTY_WORKSPACE_FILE_LIST } from "../types/workspace-file";
 import {
   AgentTaskListSchema,
   AttachmentResponseSchema,
+  WorkspaceFileListSchema,
+  WorkspaceFileSchema,
   CancelTaskResponseSchema,
   ChatDraftRestoresResponseSchema,
   ChatMessageListSchema,
@@ -3908,6 +3912,64 @@ export class ApiClient {
 
   async deleteAttachment(id: string): Promise<void> {
     await this.fetch(`/api/attachments/${id}`, { method: "DELETE" });
+  }
+
+  // ---- Workspace file library ----
+  // Library files are first-class workspace resources: uploads land in
+  // workspace_file (sha256-pinned) and composers bind them through an
+  // attachment row instead of re-uploading bytes.
+
+  async listWorkspaceFiles(opts?: { limit?: number; offset?: number }): Promise<WorkspaceFileList> {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    const raw = await this.fetch<unknown>(`/api/workspace-files${qs ? `?${qs}` : ""}`);
+    return parseWithFallback(raw, WorkspaceFileListSchema, EMPTY_WORKSPACE_FILE_LIST, {
+      endpoint: "GET /api/workspace-files",
+    });
+  }
+
+  async uploadWorkspaceFile(file: File, signal?: AbortSignal): Promise<WorkspaceFile> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const rid = createRequestId();
+    const start = Date.now();
+    this.logger.info("→ POST /api/workspace-files", { rid, filename: file.name, size: file.size });
+
+    const res = await fetch(`${this.baseUrl}/api/workspace-files`, {
+      method: "POST",
+      headers: this.authHeaders(),
+      body: formData,
+      credentials: "include",
+      signal,
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) this.handleUnauthorized();
+      const message = await this.parseErrorMessage(res, `Upload failed: ${res.status}`);
+      this.logger.error(`← ${res.status} /api/workspace-files`, { rid, duration: `${Date.now() - start}ms`, error: message });
+      throw new Error(message);
+    }
+
+    this.logger.info(`← ${res.status} /api/workspace-files`, { rid, duration: `${Date.now() - start}ms` });
+    const raw = (await res.json()) as unknown;
+    return parseWithFallback(raw, WorkspaceFileSchema, EMPTY_WORKSPACE_FILE, {
+      endpoint: "POST /api/workspace-files",
+    });
+  }
+
+  async deleteWorkspaceFile(id: string): Promise<void> {
+    await this.fetch(`/api/workspace-files/${id}`, { method: "DELETE" });
+  }
+
+  // Creates an attachment row that references the library file, so the
+  // composer can treat it exactly like a freshly uploaded attachment on send.
+  async attachWorkspaceFile(id: string): Promise<Attachment> {
+    const raw = await this.fetch<unknown>(`/api/workspace-files/${id}/attach`, { method: "POST" });
+    return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
+      endpoint: "POST /api/workspace-files/{id}/attach",
+    });
   }
 
   // Fetches the raw bytes of a text-previewable attachment.

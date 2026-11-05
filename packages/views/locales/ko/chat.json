@@ -26,6 +26,7 @@
     "attachment_bind_failed_toast": "메시지는 보냈지만 파일이 첨부되지 않았습니다. 잠시 후 다시 시도해 주세요.",
     "add_tooltip": "추가",
     "upload_file": "이미지 또는 파일",
+    "choose_from_library": "파일 라이브러리에서 선택",
     "project_context": "프로젝트 컨텍스트",
     "change_project_context": "프로젝트 컨텍스트 변경",
     "remove_project_context": "프로젝트 컨텍스트 제거",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { Check, FolderKanban, Image as ImageIcon, Plus, X } from "lucide-react";
+import { Check, FolderKanban, FolderOpen, Image as ImageIcon, Plus, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
@@ -21,6 +21,9 @@ interface ChatAddMenuProps {
   /** Called with each selected file — the caller routes it through the
    *  editor's upload extension, same path as paste / drag-drop. */
   onSelectFile?: (file: File) => void;
+  /** Opens the workspace file library picker — attach existing library files
+   *  without re-uploading bytes. */
+  onSelectFromLibrary?: () => void;
   projects?: Project[];
   projectId?: string | null;
   onSelectProject?: (projectId: string | null) => void;
@@ -39,6 +42,7 @@ interface ChatAddMenuProps {
  */
 export function ChatAddMenu({
   onSelectFile,
+  onSelectFromLibrary,
   projects = [],
   projectId,
   onSelectProject,
@@ -78,6 +82,12 @@ export function ChatAddMenu({
             <DropdownMenuItem onClick={() => inputRef.current?.click()}>
               <ImageIcon />
               {t(($) => $.input.upload_file)}
+            </DropdownMenuItem>
+          )}
+          {onSelectFile && onSelectFromLibrary && (
+            <DropdownMenuItem onClick={onSelectFromLibrary}>
+              <FolderOpen />
+              {t(($) => $.input.choose_from_library)}
             </DropdownMenuItem>
           )}
           {onSelectProject && (

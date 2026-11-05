@@ -26,6 +26,7 @@
     "attachment_bind_failed_toast": "消息已发送，但文件未能附加。请稍后重试。",
     "add_tooltip": "添加",
     "upload_file": "图片或文件",
+    "choose_from_library": "从文件库选择",
     "project_context": "项目上下文",
     "change_project_context": "更改项目上下文",
     "remove_project_context": "移除项目上下文",

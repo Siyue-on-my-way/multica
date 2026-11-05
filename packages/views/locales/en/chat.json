@@ -27,6 +27,7 @@
     "attachment_bind_failed_toast": "Message sent, but files were not attached. Please try again in a moment.",
     "add_tooltip": "Add",
     "upload_file": "Image or files",
+    "choose_from_library": "Choose from file library",
     "project_context": "Project context",
     "change_project_context": "Change project context",
     "remove_project_context": "Remove project context",
