@@ -752,6 +752,23 @@ func buildCommentPrompt(task Task, provider string) string {
 				task.IssueID)
 		}
 	}
+	// Issue attachments: the claim ships a structured manifest of the files
+	// attached to this run's comments (trigger + folded coalesced), mirroring
+	// the chat path. Inline the ids, never the URLs: comment markdown links are
+	// signed and expire, while `multica attachment download <id>` re-signs at
+	// fetch time — same reasoning as the chat block in buildChatPrompt.
+	if len(task.IssueCommentAttachments) > 0 {
+		b.WriteString("Attachments referenced by this run's comments:\n")
+		for _, a := range task.IssueCommentAttachments {
+			if a.ContentType != "" {
+				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
+			} else {
+				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
+			}
+		}
+		b.WriteString("These files are inputs to this task: run `multica attachment download <id>` for each one and read the local copies before proceeding. If the task does not actually need a file, skip it — do not delete it from the discussion.\n")
+		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	// Comment-reading pointer. Which hint renders is decided by whether this
 	// run actually RESUMES a provider session, and only then by the new-comment

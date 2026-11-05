@@ -2707,6 +2707,55 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 
+		// Issue-bound attachment manifest: comment bodies carry only markdown
+		// links, which an agent scanning prose can miss or find expired. Ship a
+		// structured list of the attachments on the comments this claim actually
+		// delivers (trigger + folded coalesced) so the prompt can give explicit
+		// `multica attachment download` guidance — the same mechanism chat tasks
+		// already get via ChatMessageAttachments. Best-effort: a listing failure
+		// degrades to today's markdown-only behavior and must never fail the claim.
+		attachmentCommentIDs := make([]pgtype.UUID, 0, len(deliveredComments)+1)
+		seenDelivered := make(map[string]struct{}, len(deliveredComments))
+		for _, c := range deliveredComments {
+			if id, err := uuid.Parse(c.ID); err == nil {
+				attachmentCommentIDs = append(attachmentCommentIDs, pgtype.UUID{Bytes: id, Valid: true})
+				seenDelivered[c.ID] = struct{}{}
+			}
+		}
+		// The trigger body can also arrive through the direct GetCommentInWorkspace
+		// read above when the coalesced load missed it; cover its attachments too.
+		if task.TriggerCommentID.Valid && resp.TriggerCommentContent != "" {
+			if _, ok := seenDelivered[uuidToString(task.TriggerCommentID)]; !ok {
+				attachmentCommentIDs = append(attachmentCommentIDs, task.TriggerCommentID)
+			}
+		}
+		if len(attachmentCommentIDs) > 0 {
+			atts, attErr := h.Queries.ListAttachmentsByCommentIDs(r.Context(), db.ListAttachmentsByCommentIDsParams{
+				Column1:     attachmentCommentIDs,
+				WorkspaceID: runtime.WorkspaceID,
+			})
+			if attErr != nil {
+				slog.Warn("issue claim: attachment listing failed; delivering comments without attachment manifest",
+					"task_id", uuidToString(task.ID),
+					"issue_id", uuidToString(task.IssueID),
+					"error", attErr)
+			} else {
+				seenAtt := make(map[string]struct{}, len(atts))
+				for _, a := range atts {
+					id := uuidToString(a.ID)
+					if _, dup := seenAtt[id]; dup {
+						continue
+					}
+					seenAtt[id] = struct{}{}
+					resp.IssueCommentAttachments = append(resp.IssueCommentAttachments, ChatAttachmentMeta{
+						ID:          id,
+						Filename:    a.Filename,
+						ContentType: a.ContentType,
+					})
+				}
+			}
+		}
+
 		if !supportsCoalescedComments {
 			// Legacy daemons ignore the structured coalesced fields. Fold every
 			// successfully loaded comment into the one trigger field they already

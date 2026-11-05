@@ -521,6 +521,40 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	}
 }
 
+// Issue-bound runs must carry the same structured attachment manifest chat
+// tasks get: comment bodies only embed signed markdown links an agent can
+// miss, so the claim lists the ids and the prompt turns them into explicit
+// download guidance.
+func TestBuildCommentPromptIssueCommentAttachments(t *testing.T) {
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "please review the attached requirement doc",
+		IssueCommentAttachments: []ChatAttachmentMeta{
+			{ID: "019ec09d-6222-722b-bdfa-427b105d80be", Filename: "需求文档.docx", ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+			{ID: "019ec09d-6222-722b-bdfa-427b105d80bf", Filename: "spec.pdf"},
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{
+		"Attachments referenced by this run's comments:",
+		"id=019ec09d-6222-722b-bdfa-427b105d80be",
+		"filename=\"需求文档.docx\"",
+		"id=019ec09d-6222-722b-bdfa-427b105d80bf",
+		"multica attachment download <id>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("issue prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+
+	// No attachments → no manifest section at all.
+	plain := BuildPrompt(Task{IssueID: "issue-123"}, "claude")
+	if strings.Contains(plain, "Attachments referenced by this run's comments:") {
+		t.Errorf("attachment manifest emitted for a run without attachments\n--- output ---\n%s", plain)
+	}
+}
+
 func TestBuildChatPromptChannelAwareness(t *testing.T) {
 	t.Run("slack-backed prompt teaches both read commands", func(t *testing.T) {
 		out := buildChatPrompt(Task{
