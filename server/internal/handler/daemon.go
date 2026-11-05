@@ -2748,9 +2748,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 					seenAtt[id] = struct{}{}
 					resp.IssueCommentAttachments = append(resp.IssueCommentAttachments, ChatAttachmentMeta{
-						ID:          id,
-						Filename:    a.Filename,
-						ContentType: a.ContentType,
+						ID:              id,
+						Filename:        a.Filename,
+						ContentType:     a.ContentType,
+						WorkspaceFileID: uuidToString(a.WorkspaceFileID),
+						Sha256:          a.Sha256,
+						SizeBytes:       a.SizeBytes,
 					})
 				}
 			}
@@ -3053,9 +3056,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}); attErr == nil && len(atts) > 0 {
 				for _, a := range atts {
 					resp.ChatMessageAttachments = append(resp.ChatMessageAttachments, ChatAttachmentMeta{
-						ID:          uuidToString(a.ID),
-						Filename:    a.Filename,
-						ContentType: a.ContentType,
+						ID:              uuidToString(a.ID),
+						Filename:        a.Filename,
+						ContentType:     a.ContentType,
+						WorkspaceFileID: uuidToString(a.WorkspaceFileID),
+						Sha256:          a.Sha256,
+						SizeBytes:       a.SizeBytes,
 					})
 				}
 			}

@@ -199,6 +199,8 @@ type Attachment struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
+	WorkspaceFileID pgtype.UUID        `json:"workspace_file_id"`
+	Sha256          string             `json:"sha256"`
 }
 
 type Autopilot struct {
@@ -1705,6 +1707,19 @@ type Workspace struct {
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	// When TRUE, an agent run that resolves to no precise accountable human (would be owner_fallback) is refused at enqueue instead of degrading to the agent owner (MUL-4302 §3.5). Default FALSE = owner_fallback. Never affects authorization (originator_user_id).
 	AttributionFailClosed bool `json:"attribution_fail_closed"`
+}
+
+type WorkspaceFile struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	Filename     string             `json:"filename"`
+	Url          string             `json:"url"`
+	ContentType  string             `json:"content_type"`
+	SizeBytes    int64              `json:"size_bytes"`
+	Sha256       string             `json:"sha256"`
+	UploaderType string             `json:"uploader_type"`
+	UploaderID   pgtype.UUID        `json:"uploader_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type WorkspaceInvitation struct {

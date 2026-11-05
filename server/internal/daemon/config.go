@@ -77,6 +77,7 @@ const (
 	DefaultGCHermesMemoryTTL              = 90 * 24 * time.Hour // 90 days — reclaim per-agent Hermes memory stores untouched this long (long: reclaiming these is visible amnesia, and they are a few markdown files)
 	DefaultGCHermesSessionTTL             = 14 * 24 * time.Hour // 14 days — reclaim per-conversation Hermes session stores untouched this long (matches Codex: these hold transcripts, and losing an idle one restarts the thread rather than the agent's notes)
 	DefaultGCRepoTTL                      = 30 * 24 * time.Hour // 30 days — evict a bare repo cache no task has checked out this long
+	DefaultGCTaskFileTTL                  = 7 * 24 * time.Hour  // 7 days — evict a materialized task input file no claim has touched this long (cache hits bump mtime, so active files survive)
 	// DefaultGCTaskTempLegacyTTL is 0 — disabled. Per-task temp dirs left by a
 	// daemon predating the temp dir execution lock carry no liveness signal at
 	// all, and age cannot supply one: a task may legitimately run for weeks
@@ -120,6 +121,7 @@ type Config struct {
 	GCArtifactTTL                  time.Duration         // once a task has been completed for at least this long, drop regenerable artifacts: pattern-matched build outputs when the parent record keeps the directory (an open issue), and the exact daemon-managed Codex cache for every task kind (default: 12h, set 0 to disable both)
 	GCArtifactPatterns             []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
 	GCRepoTTL                      time.Duration         // evict a cached bare repo under .repos once no task has created a worktree from it for this long, it has no worktrees left, and it is no longer attached to any watched workspace (default: 30d, set 0 to disable)
+	GCTaskFileTTL                  time.Duration         // evict a materialized task input file under .files once no claim has touched it for this long (default: 7d, set 0 to disable)
 	GCRepoMaintenanceEnabled       bool                  // run reflog expiry and git gc after stale agent refs are removed (default: true; disable independently as an operational kill switch)
 	GCCodexSessionTTL              time.Duration         // reclaim a per-issue Codex session store (~/.codex/multica-sessions/<agent>/<issue>) untouched for at least this long, so a done/abandoned issue's conversation history does not accumulate forever (default: 14d, set 0 to disable)
 	GCHermesMemoryTTL              time.Duration         // reclaim a per-agent Hermes memory store (<profile dir>/hermes-state/<agent>/<profile>) untouched for at least this long, so a deleted agent's memory does not sit on disk forever (default: 90d, set 0 to disable)
@@ -580,6 +582,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gcTaskFileTTL, err := durationFromEnv("MULTICA_GC_TASK_FILE_TTL", DefaultGCTaskFileTTL)
+	if err != nil {
+		return Config{}, err
+	}
 	gcRepoMaintenanceEnabled := boolFromEnv("MULTICA_GC_REPO_MAINTENANCE_ENABLED", true)
 	gcArtifactPatterns := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
 
@@ -633,6 +639,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		GCArtifactTTL:                   gcArtifactTTL,
 		GCArtifactPatterns:              gcArtifactPatterns,
 		GCRepoTTL:                       gcRepoTTL,
+		GCTaskFileTTL:                   gcTaskFileTTL,
 		GCRepoMaintenanceEnabled:        gcRepoMaintenanceEnabled,
 		GCCodexSessionTTL:               gcCodexSessionTTL,
 		GCHermesMemoryTTL:               gcHermesMemoryTTL,

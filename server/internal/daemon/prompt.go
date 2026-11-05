@@ -754,20 +754,11 @@ func buildCommentPrompt(task Task, provider string) string {
 	}
 	// Issue attachments: the claim ships a structured manifest of the files
 	// attached to this run's comments (trigger + folded coalesced), mirroring
-	// the chat path. Inline the ids, never the URLs: comment markdown links are
-	// signed and expire, while `multica attachment download <id>` re-signs at
-	// fetch time — same reasoning as the chat block in buildChatPrompt.
+	// the chat path. Library-backed files the daemon already materialized are
+	// reported with their absolute local path; the rest carry download ids.
 	if len(task.IssueCommentAttachments) > 0 {
 		b.WriteString("Attachments referenced by this run's comments:\n")
-		for _, a := range task.IssueCommentAttachments {
-			if a.ContentType != "" {
-				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
-			} else {
-				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
-			}
-		}
-		b.WriteString("These files are inputs to this task: run `multica attachment download <id>` for each one and read the local copies before proceeding. If the task does not actually need a file, skip it — do not delete it from the discussion.\n")
-		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+		writeTaskAttachmentBlock(&b, task.IssueCommentAttachments, deliveredFilesByAttachmentID(task.DeliveredFiles))
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	// Comment-reading pointer. Which hint renders is decided by whether this
@@ -916,6 +907,49 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 }
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
+// deliveredFilesByAttachmentID indexes the files the daemon materialized
+// before spawn, keyed by the attachment id on the claim.
+func deliveredFilesByAttachmentID(files []DeliveredFileMeta) map[string]DeliveredFileMeta {
+	if len(files) == 0 {
+		return nil
+	}
+	m := make(map[string]DeliveredFileMeta, len(files))
+	for _, f := range files {
+		if f.AttachmentID != "" {
+			m[f.AttachmentID] = f
+		}
+	}
+	return m
+}
+
+// writeTaskAttachmentBlock renders a claim's attachment manifest. Library
+// files the daemon already materialized carry their absolute local path and a
+// read-directly instruction; everything else falls back to
+// `multica attachment download <id>` — ids, never URLs, because markdown
+// links are signed and expire while the CLI re-signs at fetch time.
+func writeTaskAttachmentBlock(b *strings.Builder, attachments []ChatAttachmentMeta, delivered map[string]DeliveredFileMeta) {
+	if len(attachments) == 0 {
+		return
+	}
+	pending := 0
+	for _, a := range attachments {
+		if d, ok := delivered[a.ID]; ok {
+			fmt.Fprintf(b, "- filename=%q ALREADY ON DISK at %s (this run's input: read it directly, do not download)\n", a.Filename, d.Path)
+			continue
+		}
+		pending++
+		if a.ContentType != "" {
+			fmt.Fprintf(b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
+		} else {
+			fmt.Fprintf(b, "- id=%s filename=%q\n", a.ID, a.Filename)
+		}
+	}
+	if pending > 0 {
+		b.WriteString("For any attachment NOT marked ALREADY ON DISK, run `multica attachment download <id>` to fetch each file locally before referring to it.\n")
+		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+	}
+}
+
 func buildChatPrompt(task Task) string {
 	// Legacy compatibility for historical proactive-introduction sessions.
 	// New agent creation no longer creates a chat or runs this prompt.
@@ -1031,15 +1065,7 @@ func buildChatPrompt(task Task) string {
 	// time and is the only reliable path.
 	if len(task.ChatMessageAttachments) > 0 {
 		b.WriteString("\nAttachments on this message:\n")
-		for _, a := range task.ChatMessageAttachments {
-			if a.ContentType != "" {
-				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
-			} else {
-				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
-			}
-		}
-		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
-		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
+		writeTaskAttachmentBlock(&b, task.ChatMessageAttachments, deliveredFilesByAttachmentID(task.DeliveredFiles))
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.
 	// This is the DELIVERY layer of the channel policy, and it has three

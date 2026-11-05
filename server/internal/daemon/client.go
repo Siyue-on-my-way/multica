@@ -429,6 +429,39 @@ func (c *Client) ResolveSkillBundle(ctx context.Context, runtimeID, taskID strin
 	return resp.Bundles[0], stats, nil
 }
 
+// DownloadTaskFile streams one claim-delivered workspace library file to dst.
+// Like ResolveSkillBundle it runs on bundleClient (no fixed timeout — the
+// deadline is ctx's, scaled to the file size by the caller), and streams the
+// body instead of buffering it so a 100 MB document never sits in memory.
+// No retry schedule: the sha256 check downstream catches truncated bodies,
+// and re-downloading mid-stream on a retry schedule would need Range support
+// the endpoint deliberately does not carry.
+func (c *Client) DownloadTaskFile(ctx context.Context, runtimeID, taskID, attachmentID string, dst io.Writer) (TransferStats, error) {
+	var stats TransferStats
+	path := fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/files/%s/content", runtimeID, taskID, attachmentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return stats, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+
+	resp, err := c.bundleClient.Do(req)
+	if err != nil {
+		return stats, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return stats, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	stats.observeResponseStarted()
+	_, err = io.Copy(dst, stats.wrap(resp.Body))
+	return stats, err
+}
+
 func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }

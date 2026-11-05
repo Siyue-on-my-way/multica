@@ -76,6 +76,7 @@ type gcStats struct {
 	repoCachesReclaimed           int            // bare repo caches under .repos evicted past their TTL
 	taskTempDirsReclaimed         int            // per-task temp dirs under the temp base reclaimed after their owning execution ended
 	taskRootIndexEntriesReclaimed int            // abandoned stable-root records and unpublished entries reclaimed past the orphan TTL
+	taskFilesReclaimed            int            // materialized task input files under .files evicted past their TTL
 	bytesReclaimed                int64          // total bytes freed in this cycle
 	byPattern                     map[string]int // configured basename or managed path label -> reclaim count
 }
@@ -141,6 +142,11 @@ func (d *Daemon) runGC(ctx context.Context) {
 		stats.bytesReclaimed += storeBytes
 	}
 
+	// Reclaim materialized task input files no claim has touched for their
+	// TTL. Every cache hit bumps mtime, so this only claims genuinely idle
+	// copies; the per-file lock keeps a concurrent install out of the way.
+	d.pruneTaskFileCache(root, d.cfg.GCTaskFileTTL, stats)
+
 	// Same for per-agent Hermes memory stores: they outlive the task by design
 	// (that is what fixes #6638), so a deleted agent's memory needs its own
 	// bounded lifecycle. Retention is much longer than the Codex one — these are
@@ -173,7 +179,7 @@ func (d *Daemon) runGC(ctx context.Context) {
 		}
 	}
 
-	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 {
+	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 || stats.taskFilesReclaimed > 0 {
 		d.logger.Info("gc: cycle complete",
 			"cleaned", stats.cleaned,
 			"orphaned", stats.orphaned,

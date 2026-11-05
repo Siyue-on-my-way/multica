@@ -176,6 +176,10 @@ type Task struct {
 	CoalescedCommentIDs           []string               `json:"coalesced_comment_ids,omitempty"`            // MUL-4195: earlier comments folded into this run while it was still queued; the agent must address these in addition to the (newest) triggering comment. Empty for old servers / non-merged runs
 	CoalescedComments             []CoalescedCommentData `json:"coalesced_comments,omitempty"`               // MUL-4195: full detail of the folded comments (thread_id/author/created_at/content) so the prompt can address each without assuming a shared thread. Empty for old servers / non-merged runs
 	IssueCommentAttachments       []ChatAttachmentMeta   `json:"issue_comment_attachments,omitempty"`        // attachments on the comments delivered with this issue claim (trigger + coalesced); agent uses `multica attachment download <id>` per entry. Empty for old servers
+	// DeliveredFiles is runtime-local only (never on the wire): library-backed
+	// attachments ensureTaskFiles materialized onto local disk before spawn,
+	// with their absolute paths for the prompt to render.
+	DeliveredFiles                []DeliveredFileMeta    `json:"-"`
 	TriggerThreadID               string                 `json:"trigger_thread_id,omitempty"`                // root comment ID for the triggering thread; falls back to trigger_comment_id on old servers
 	TriggerCommentContent         string                 `json:"trigger_comment_content,omitempty"`          // content of the triggering comment
 	TriggerAuthorType             string                 `json:"trigger_author_type,omitempty"`              // "agent" or "member" — author kind for the triggering comment
@@ -266,6 +270,14 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+	// Workspace-library backing: set when the attachment references a
+	// workspace_file row instead of owning its bytes. The daemon materializes
+	// a sha256-verified copy via the task files endpoint before spawn and
+	// reports the local path in the prompt; regular uploads keep these empty
+	// and fall back to `multica attachment download`.
+	WorkspaceFileID string `json:"workspace_file_id,omitempty"`
+	Sha256          string `json:"sha256,omitempty"`
+	SizeBytes       int64  `json:"size_bytes,omitempty"`
 }
 
 // CoalescedCommentData mirrors the server-side struct (handler.CoalescedCommentData):

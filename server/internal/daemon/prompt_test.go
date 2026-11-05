@@ -555,6 +555,51 @@ func TestBuildCommentPromptIssueCommentAttachments(t *testing.T) {
 	}
 }
 
+// Library-backed files the daemon materialized before spawn must be reported
+// with their absolute local path and a read-directly instruction; the rest
+// keep the CLI download guidance.
+func TestBuildPromptDeliveredFilesCarryLocalPaths(t *testing.T) {
+	delivered := DeliveredFileMeta{AttachmentID: "att-lib", Filename: "需求文档.docx", Path: "/root/ws/.files/v1/ws/wf-x/需求文档.docx", SizeBytes: 12}
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "based on the docs",
+		DeliveredFiles:        []DeliveredFileMeta{delivered},
+		IssueCommentAttachments: []ChatAttachmentMeta{
+			{ID: "att-lib", Filename: "需求文档.docx", WorkspaceFileID: "wf-x", Sha256: "aa"},
+			{ID: "att-plain", Filename: "shot.png", ContentType: "image/png"},
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{
+		"ALREADY ON DISK at /root/ws/.files/v1/ws/wf-x/需求文档.docx",
+		"do not download",
+		"id=att-plain filename=\"shot.png\"",
+		"multica attachment download <id>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	// A delivered file must not also be listed for download.
+	if strings.Contains(out, "id=att-lib") {
+		t.Errorf("delivered file also offered for download\n--- output ---\n%s", out)
+	}
+
+	// The chat prompt renders the same contract.
+	chatOut := buildChatPrompt(Task{
+		ChatSessionID: "sess-1",
+		ChatMessage:   "summarize the doc",
+		DeliveredFiles: []DeliveredFileMeta{delivered},
+		ChatMessageAttachments: []ChatAttachmentMeta{
+			{ID: "att-lib", Filename: "需求文档.docx", WorkspaceFileID: "wf-x", Sha256: "aa"},
+		},
+	})
+	if !strings.Contains(chatOut, "ALREADY ON DISK at /root/ws/.files/v1/ws/wf-x/需求文档.docx") {
+		t.Errorf("chat prompt missing delivered path\n--- output ---\n%s", chatOut)
+	}
+}
+
 func TestBuildChatPromptChannelAwareness(t *testing.T) {
 	t.Run("slack-backed prompt teaches both read commands", func(t *testing.T) {
 		out := buildChatPrompt(Task{

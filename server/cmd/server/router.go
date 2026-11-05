@@ -1463,6 +1463,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/claim", h.ClaimTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/prepare-lease", h.ExtendTaskPrepareLease)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/skill-bundles/resolve", h.ResolveTaskSkillBundles)
+		// Stream a claim-delivered workspace library file to the runtime for
+		// sha256-verified materialization before the agent starts.
+		r.Get("/runtimes/{runtimeId}/tasks/{taskId}/files/{attachmentId}/content", h.ServeTaskWorkspaceFile)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
@@ -2120,6 +2123,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// from the attachment row.
 			r.Get("/api/attachments/{id}/content", h.GetAttachmentContent)
 			r.Delete("/api/attachments/{id}", h.DeleteAttachment)
+
+			// Workspace file library
+			r.Post("/api/workspace-files", h.UploadWorkspaceFile)
+			r.Get("/api/workspace-files", h.ListWorkspaceFiles)
+			r.Delete("/api/workspace-files/{id}", h.DeleteWorkspaceFile)
+			r.Post("/api/workspace-files/{id}/attach", h.AttachWorkspaceFile)
+			r.Get("/api/workspace-files/{id}/download", h.DownloadWorkspaceFile)
 
 			// Comments
 			r.Route("/api/comments/{commentId}", func(r chi.Router) {

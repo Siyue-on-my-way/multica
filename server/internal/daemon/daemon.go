@@ -373,11 +373,12 @@ type repoCacheBackend interface {
 
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
-	cfg        Config
-	client     *Client
-	repoCache  repoCacheBackend
-	skillCache *SkillBundleCache
-	logger     *slog.Logger
+	cfg           Config
+	client        *Client
+	repoCache     repoCacheBackend
+	skillCache    *SkillBundleCache
+	taskFileCache *TaskFileCache
+	logger        *slog.Logger
 
 	mu           sync.Mutex
 	workspaces   map[string]*workspaceState
@@ -642,6 +643,7 @@ type profileLaunchSpec struct {
 func New(cfg Config, logger *slog.Logger) *Daemon {
 	cacheRoot := filepath.Join(cfg.WorkspacesRoot, ".repos")
 	skillCacheRoot := filepath.Join(cfg.WorkspacesRoot, ".skill-cache", "v1")
+	taskFileCacheRoot := filepath.Join(cfg.WorkspacesRoot, taskFilesCacheDirName, taskFilesCacheVersion)
 	client := NewClient(cfg.ServerBaseURL)
 	// Tag every daemon HTTP request with the daemon's CLI version so the
 	// server can split logs/metrics by client version (parallel to the CLI).
@@ -651,6 +653,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		client:                    client,
 		repoCache:                 repocache.New(cacheRoot, logger),
 		skillCache:                NewSkillBundleCache(skillCacheRoot),
+		taskFileCache:             NewTaskFileCache(taskFileCacheRoot),
 		logger:                    logger,
 		workspaces:                make(map[string]*workspaceState),
 		runtimeIndex:              make(map[string]Runtime),
@@ -7284,6 +7287,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, err
 	}
 
+	// Materialize workspace-library input files before the agent starts so it
+	// opens verified local copies instead of depending on CLI downloads.
+	// Best-effort per file; failures are logged and the prompt falls back to
+	// CLI download guidance for anything missing.
+	d.ensureTaskFiles(prepareCtx, &task)
+
 	agentName := "agent"
 	var skills []SkillData
 	var instructions string
@@ -8412,7 +8421,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			workdirReused:      envReused,
 		}, time.Now())
 		contextObs.ResumeActual = resumeActualFallback
-		contextObs.FallbackReason = redactForObservation(fallbackReason)
+		contextObs.FallbackReason = fallbackReason
 		reportContextObservation(contextObs)
 
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
