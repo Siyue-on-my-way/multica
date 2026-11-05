@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { Paperclip } from "lucide-react";
+import { FolderOpen, Paperclip } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
@@ -9,6 +9,9 @@ import { cn } from "@multica/ui/lib/utils";
 interface FileUploadButtonProps {
   /** Called with the selected File — caller handles upload. */
   onSelect: (file: File) => void;
+  /** When set, renders a second affordance that opens the workspace file
+   *  library picker — attach existing library files without re-uploading. */
+  onSelectFromLibrary?: () => void;
   disabled?: boolean;
   className?: string;
   size?: "sm" | "default";
@@ -17,6 +20,7 @@ interface FileUploadButtonProps {
 
 function FileUploadButton({
   onSelect,
+  onSelectFromLibrary,
   disabled,
   className,
   size = "default",
@@ -25,6 +29,7 @@ function FileUploadButton({
   const { t } = useTranslation("ui");
   const inputRef = useRef<HTMLInputElement>(null);
   const attachLabel = t(($) => $.attach_file);
+  const libraryLabel = t(($) => $.choose_from_library);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -50,6 +55,20 @@ function FileUploadButton({
       >
         <Paperclip className={iconSize} />
       </Button>
+      {onSelectFromLibrary && (
+        <Button
+          type="button"
+          variant="ghost"
+          size={buttonSize}
+          onClick={onSelectFromLibrary}
+          disabled={disabled}
+          aria-label={libraryLabel}
+          title={libraryLabel}
+          className={cn("text-muted-foreground", className)}
+        >
+          <FolderOpen className={iconSize} />
+        </Button>
+      )}
       <input
         ref={inputRef}
         type="file"

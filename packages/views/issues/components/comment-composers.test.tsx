@@ -368,9 +368,11 @@ describe("comment composers", () => {
     activateComposer("comment-composer-shell");
     expect(screen.getByPlaceholderText("Leave a comment...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Attach file" })).toBeInTheDocument();
-    // The composer now includes the draft-only saved-phrase picker next to
-    // upload and submit. Selecting a phrase never submits the comment.
-    expect(container.querySelectorAll("button")).toHaveLength(3);
+    // The composer includes the draft-only saved-phrase picker next to upload
+    // and submit, plus the file-library picker (CommentInput always has a
+    // draft key, so its library button renders). Selecting either never
+    // submits the comment.
+    expect(container.querySelectorAll("button")).toHaveLength(4);
 
     const shell = screen.getByTestId("drop-zone");
     expect(shell.className).not.toMatch(/max-h-/);

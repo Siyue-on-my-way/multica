@@ -18,6 +18,7 @@ declare global {
   interface I18nResources {
     ui: {
       attach_file: string;
+      choose_from_library: string;
       toggle_sidebar: string;
       copy_code: string;
       plain_text: string;

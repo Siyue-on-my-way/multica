@@ -12,6 +12,8 @@ import { useT } from "../../i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
+import { useLibraryAttach } from "./use-library-attach";
+import { LibraryPickerDialog } from "../../files/library-picker-dialog";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
 import { SavedPhrasePicker } from "./saved-phrase-picker";
@@ -74,6 +76,16 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   });
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
+  });
+
+  // Workspace file library picker ("choose from library" next to upload).
+  // Declared after `lazy`: the hook reads the editor's readiness gate.
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const { handleSelectLibraryFiles } = useLibraryAttach({
+    draftKey,
+    editorRef,
+    ready: lazy.ready,
+    activate: lazy.activate,
   });
 
   // Phrase insertion is draft-only. If the lightweight composer shell is
@@ -302,6 +314,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
           size="sm"
           multiple
           onSelect={(file) => lazy.uploadOrQueue([file])}
+          onSelectFromLibrary={() => setLibraryPickerOpen(true)}
         />
         <SubmitButton
           onClick={submit}
@@ -319,6 +332,13 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
         />
       </div>
       {isDragOver && <FileDropOverlay />}
+      {libraryPickerOpen && (
+        <LibraryPickerDialog
+          open={libraryPickerOpen}
+          onOpenChange={setLibraryPickerOpen}
+          onAttach={handleSelectLibraryFiles}
+        />
+      )}
     </div>
   );
 }

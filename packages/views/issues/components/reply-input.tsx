@@ -14,6 +14,8 @@ import { useT } from "../../i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
+import { useLibraryAttach } from "./use-library-attach";
+import { LibraryPickerDialog } from "../../files/library-picker-dialog";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
 import { SavedPhrasePicker } from "./saved-phrase-picker";
 import type { SavedPhrase } from "@multica/core/types";
@@ -100,6 +102,18 @@ function ReplyInput({
   });
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
+  });
+
+  // Workspace file library picker ("choose from library" next to upload).
+  // Only rendered with a draftKey: the persisted upload record is what makes
+  // submit bind the attachment. Declared after `lazy` — the hook reads the
+  // editor's readiness gate.
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const { handleSelectLibraryFiles } = useLibraryAttach({
+    draftKey,
+    editorRef,
+    ready: lazy.ready,
+    activate: lazy.activate,
   });
 
   useEffect(() => {
@@ -317,6 +331,7 @@ function ReplyInput({
             size="sm"
             multiple
             onSelect={(file) => lazy.uploadOrQueue([file])}
+            onSelectFromLibrary={draftKey ? () => setLibraryPickerOpen(true) : undefined}
           />
           <SubmitButton
             onClick={submit}
@@ -334,6 +349,13 @@ function ReplyInput({
           />
         </div>
         {isDragOver && <FileDropOverlay />}
+        {libraryPickerOpen && (
+          <LibraryPickerDialog
+            open={libraryPickerOpen}
+            onOpenChange={setLibraryPickerOpen}
+            onAttach={handleSelectLibraryFiles}
+          />
+        )}
       </div>
     </div>
   );
