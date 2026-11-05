@@ -737,6 +737,13 @@ type ChatAttachmentMeta struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
+	// Workspace-library backing: set when the attachment references a
+	// workspace_file row instead of owning its bytes. A daemon that understands
+	// these fields materializes a sha256-verified copy before the agent starts;
+	// regular uploads keep them empty and fall back to CLI download.
+	WorkspaceFileID string `json:"workspace_file_id,omitempty"`
+	Sha256          string `json:"sha256,omitempty"`
+	SizeBytes       int64  `json:"size_bytes,omitempty"`
 }
 
 // CoalescedCommentData carries the full detail of a comment that was folded
