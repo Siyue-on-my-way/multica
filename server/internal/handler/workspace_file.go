@@ -307,14 +307,16 @@ func (h *Handler) DownloadWorkspaceFile(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Reuse the attachment download machinery by viewing the library file as
-	// an attachment row; only id/filename/url/content_type matter for the
-	// streaming modes below.
+	// an attachment row; id/filename/url/content_type drive the streaming
+	// modes, and SizeBytes is the declared Content-Length on the proxy-range
+	// path — zero there would truncate the body to nothing.
 	att := db.Attachment{
 		ID:          file.ID,
 		WorkspaceID: file.WorkspaceID,
 		Filename:    file.Filename,
 		Url:         file.Url,
 		ContentType: file.ContentType,
+		SizeBytes:   file.SizeBytes,
 	}
 	key := h.Storage.KeyFromURL(file.Url)
 	switch h.resolveAttachmentDownloadMode(file.Url) {
