@@ -12,10 +12,10 @@ stages:
       provider: openai-compatible
       base_url: ${MULTICA_LLM_BASE_URL}
       api_key_env: MULTICA_LLM_API_KEY
-      model: gemini-3.8-flash
-      reasoning_effort: high
+      model: glm-5.3-flash
+      reasoning_effort: xhigh
       temperature: 0.2
-      max_completion_tokens: 8192
+      max_completion_tokens: 30000
       timeout_ms: 90000
       max_retries: 2
 
@@ -53,10 +53,10 @@ stages:
       provider: openai-compatible
       base_url: ${MULTICA_LLM_BASE_URL}
       api_key_env: MULTICA_LLM_API_KEY
-      model: gemini-3.1-pro-preview
-      reasoning_effort: high
+      model: glm-5.3-flash
+      reasoning_effort: xhigh
       temperature: 0.4
-      max_completion_tokens: 8192
+      max_completion_tokens: 30000
       timeout_ms: 120000
       max_retries: 2
 
@@ -124,10 +124,10 @@ stages:
       provider: openai-compatible
       base_url: ${MULTICA_LLM_BASE_URL}
       api_key_env: MULTICA_LLM_API_KEY
-      model: gemini-3.1-pro-preview
-      reasoning_effort: high
+      model: glm-5.3-flash
+      reasoning_effort: xhigh
       temperature: 0.4
-      max_completion_tokens: 8192
+      max_completion_tokens: 30000
       timeout_ms: 120000
       max_retries: 2
 
@@ -192,10 +192,10 @@ stages:
       provider: openai-compatible
       base_url: ${MULTICA_LLM_BASE_URL}
       api_key_env: MULTICA_LLM_API_KEY
-      model: gemini-3.1-pro-preview
-      reasoning_effort: high
+      model: glm-5.3-flash
+      reasoning_effort: xhigh
       temperature: 0.4
-      max_completion_tokens: 8192
+      max_completion_tokens: 30000
       timeout_ms: 120000
       max_retries: 2
 
@@ -260,10 +260,10 @@ stages:
       provider: openai-compatible
       base_url: ${MULTICA_LLM_BASE_URL}
       api_key_env: MULTICA_LLM_API_KEY
-      model: gemini-3.1-pro-preview
-      reasoning_effort: high
+      model: glm-5.3-flash
+      reasoning_effort: xhigh
       temperature: 0.3
-      max_completion_tokens: 16384
+      max_completion_tokens: 30000
       timeout_ms: 180000
       max_retries: 2
 

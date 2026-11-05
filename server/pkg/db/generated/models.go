@@ -663,6 +663,28 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type FileStorageMigration struct {
+	ID                pgtype.UUID        `json:"id"`
+	ObjectType        string             `json:"object_type"`
+	ObjectID          pgtype.UUID        `json:"object_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	OwnerTable        pgtype.Text        `json:"owner_table"`
+	OwnerID           pgtype.UUID        `json:"owner_id"`
+	SourceUrl         string             `json:"source_url"`
+	SourceKey         string             `json:"source_key"`
+	TargetKey         string             `json:"target_key"`
+	TargetUrl         string             `json:"target_url"`
+	Status            string             `json:"status"`
+	Sha256            pgtype.Text        `json:"sha256"`
+	SizeBytes         pgtype.Int8        `json:"size_bytes"`
+	LegacyDeleteAfter pgtype.Timestamptz `json:"legacy_delete_after"`
+	MigratedAt        pgtype.Timestamptz `json:"migrated_at"`
+	LegacyDeletedAt   pgtype.Timestamptz `json:"legacy_deleted_at"`
+	LastError         pgtype.Text        `json:"last_error"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GithubInstallation struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`

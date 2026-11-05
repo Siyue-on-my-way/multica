@@ -12,20 +12,19 @@ import (
 )
 
 const setIssueExecutionContext = `-- name: SetIssueExecutionContext :one
-
 UPDATE issue SET
-    execution_context = $3::jsonb,
+    execution_context = $1::jsonb,
     revision = revision + 1,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
-WHERE id = $1 AND workspace_id = $2
+WHERE id = $2 AND workspace_id = $3
 RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
 `
 
 type SetIssueExecutionContextParams struct {
+	ExecutionContext []byte      `json:"execution_context"`
 	ID               pgtype.UUID `json:"id"`
 	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	ExecutionContext []byte      `json:"execution_context"`
 }
 
 // Writes the issue's structured execution context (SIY-177). Passing NULL
@@ -36,7 +35,7 @@ type SetIssueExecutionContextParams struct {
 // column. A context write is an authored issue edit: revision and
 // last_activity_at move with it, exactly like a description edit does.
 func (q *Queries) SetIssueExecutionContext(ctx context.Context, arg SetIssueExecutionContextParams) (Issue, error) {
-	row := q.db.QueryRow(ctx, setIssueExecutionContext, arg.ID, arg.WorkspaceID, arg.ExecutionContext)
+	row := q.db.QueryRow(ctx, setIssueExecutionContext, arg.ExecutionContext, arg.ID, arg.WorkspaceID)
 	var i Issue
 	err := row.Scan(
 		&i.ID,

@@ -6,10 +6,10 @@ llm:
   provider: openai-compatible
   base_url: ${MULTICA_LLM_BASE_URL}
   api_key_env: MULTICA_LLM_API_KEY
-  model: gemini-3.8-flash
+  model: glm-5.3-flash
   reasoning_effort: high
   temperature: 0.1
-  max_completion_tokens: 768
+  max_completion_tokens: 30000
   timeout_ms: 30000
   max_retries: 2
 

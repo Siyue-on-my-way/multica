@@ -60,17 +60,17 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 // to IssueService.Create. The handler owns the parsing step that turns its
 // request payload into this struct; the service stays transport-agnostic.
 type IssueCreateParams struct {
-	WorkspaceID   pgtype.UUID
-	Title         string
-	Description   pgtype.Text
-	Status        string
-	Priority      string
-	AssigneeType  pgtype.Text
-	AssigneeID    pgtype.UUID
-	CreatorType   string // "agent" or "member"
-	CreatorID     pgtype.UUID
-	ParentIssueID pgtype.UUID
-	ProjectID     pgtype.UUID
+	WorkspaceID    pgtype.UUID
+	Title          string
+	Description    pgtype.Text
+	Status         string
+	Priority       string
+	AssigneeType   pgtype.Text
+	AssigneeID     pgtype.UUID
+	CreatorType    string // "agent" or "member"
+	CreatorID      pgtype.UUID
+	ParentIssueID  pgtype.UUID
+	ProjectID      pgtype.UUID
 	StartDate      pgtype.Date
 	DueDate        pgtype.Date
 	OriginType     pgtype.Text
@@ -341,22 +341,22 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	var assignedTask db.AgentTaskQueue
 	if p.OriginType.Valid {
 		issue, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
-			ID:            dbid.NewV7(),
-			WorkspaceID:   p.WorkspaceID,
-			Title:         p.Title,
-			Description:   p.Description,
-			Status:        p.Status,
-			Priority:      p.Priority,
-			AssigneeType:  p.AssigneeType,
-			AssigneeID:    p.AssigneeID,
-			CreatorType:   p.CreatorType,
-			CreatorID:     p.CreatorID,
-			ParentIssueID: p.ParentIssueID,
-			Position:      newPosition,
-			StartDate:     p.StartDate,
-			DueDate:       p.DueDate,
-			Number:        issueNumber,
-			ProjectID:     projectID,
+			ID:             dbid.NewV7(),
+			WorkspaceID:    p.WorkspaceID,
+			Title:          p.Title,
+			Description:    p.Description,
+			Status:         p.Status,
+			Priority:       p.Priority,
+			AssigneeType:   p.AssigneeType,
+			AssigneeID:     p.AssigneeID,
+			CreatorType:    p.CreatorType,
+			CreatorID:      p.CreatorID,
+			ParentIssueID:  p.ParentIssueID,
+			Position:       newPosition,
+			StartDate:      p.StartDate,
+			DueDate:        p.DueDate,
+			Number:         issueNumber,
+			ProjectID:      projectID,
 			OriginType:     p.OriginType,
 			OriginID:       p.OriginID,
 			Stage:          p.Stage,
@@ -734,6 +734,9 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 }
 
 func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string, agentRunFireAt time.Time) pgtype.UUID {
+	if s == nil || s.TaskService == nil {
+		return pgtype.UUID{}
+	}
 	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return pgtype.UUID{}
 	}

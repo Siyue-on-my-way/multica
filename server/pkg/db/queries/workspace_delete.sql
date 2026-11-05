@@ -223,6 +223,9 @@ deleted_channel_task_deliveries AS (
 ),
 deleted_draft_restores AS (
     DELETE FROM chat_draft_restore WHERE task_id IN (SELECT id FROM batch)
+),
+deleted_context_observations AS (
+    DELETE FROM task_context_observation WHERE task_id IN (SELECT id FROM batch)
 )
 DELETE FROM agent_task_queue WHERE id IN (SELECT id FROM batch);
 
@@ -533,6 +536,10 @@ WITH
 deleted_report_history AS (
     DELETE FROM report_history WHERE report_history.workspace_id = $1
 ),
+deleted_issue_result_reads AS (
+    DELETE FROM issue_agent_result_read
+    WHERE issue_id IN (SELECT id FROM issue WHERE issue.workspace_id = $1)
+),
 deleted_issue_status_history AS (
     DELETE FROM issue_status_history WHERE issue_status_history.workspace_id = $1
 ),
@@ -553,6 +560,17 @@ deleted_issue_view_preferences AS (
     WHERE issue_view_preference.workspace_id = $1
 )
 DELETE FROM quick_action WHERE quick_action.workspace_id = $1;
+
+-- name: DeleteWorkspaceReportSnapshots :exec
+-- report_snapshot carries workspace_id itself, so it is swept directly rather
+-- than leaning on the report_history FK cascade (house rule: the cascade is a
+-- safety net, the explicit delete is the mechanism).
+DELETE FROM report_snapshot WHERE report_snapshot.workspace_id = $1;
+
+-- name: DeleteWorkspaceReportTemplates :exec
+-- Only the workspace's own templates go; workspace_id IS NULL rows are the
+-- shared global catalog and must survive the teardown.
+DELETE FROM report_templates WHERE report_templates.workspace_id = $1;
 
 -- name: DeleteWorkspaceAutopilotRuns :exec
 DELETE FROM autopilot_run

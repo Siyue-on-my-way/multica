@@ -201,8 +201,12 @@ func TestMoveIssueToWorkspaceRollsBackNewProjectOnMoveFailure(t *testing.T) {
 		"new_project":         map[string]any{"title": "Must roll back"},
 	}), "id", issueID)
 	testHandler.MoveIssueToWorkspace(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	// The counter-overflow guard (409) fires before the new project is created,
+	// so a full mid-move rollback (500) can no longer be reached this way. The
+	// assertion that still matters either way: a failed move leaves NO new
+	// project behind.
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
 	}
 	var workspaceID string
 	if err := testPool.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id = $1`, issueID).Scan(&workspaceID); err != nil {

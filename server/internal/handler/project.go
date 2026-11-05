@@ -840,6 +840,11 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to count project issues")
 		return
 	}
+	// The issue set comes from project_migration_issue_ids (already scoped to
+	// the source workspace), so this statement binds only the two parameters
+	// it actually references. The previous shape bound the source issue id as
+	// an unused $2, which Postgres rejects ("could not determine data type of
+	// parameter $2") — project migration 500'd for every project with issues.
 	if _, err = tx.Exec(r.Context(), `
 		WITH moving AS (
 			SELECT i.id, ($1 + ROW_NUMBER() OVER (ORDER BY i.created_at, i.id))::int AS next_number
@@ -847,13 +852,13 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 			JOIN project_migration_issue_ids ids ON ids.id = i.id
 		)
 		UPDATE issue AS i
-		SET workspace_id = $3,
+		SET workspace_id = $2,
 			number = moving.next_number,
 			assignee_type = NULL,
 			assignee_id = NULL,
 			updated_at = now()
 		FROM moving
-		WHERE i.id = moving.id`, targetIssueCounter, idUUID, targetUUID); err != nil {
+		WHERE i.id = moving.id`, targetIssueCounter, targetUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate issues")
 		return
 	}
@@ -871,7 +876,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 		  AND EXISTS (
 			SELECT 1 FROM project_migration_issue_ids ids
 			WHERE ids.id = il.issue_id
-		  )`, targetUUID); err != nil {
+		  )`); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remap issue labels")
 		return
 	}
@@ -893,7 +898,7 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 			)
 			GROUP BY i2.id
 		) AS mapped
-		WHERE i.id = mapped.id`, targetUUID); err != nil {
+		WHERE i.id = mapped.id`); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remap issue properties")
 		return
 	}
@@ -903,17 +908,17 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE comment
 		SET workspace_id = $1
-		WHERE workspace_id = $3
+		WHERE workspace_id = $2
 		  AND issue_id IN (
 			SELECT id FROM project_migration_issue_ids
-		  )`, targetUUID, idUUID, sourceUUID); err != nil {
+		  )`, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate comments")
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE comment_reaction
 		SET workspace_id = $1
-		WHERE workspace_id = $3
+		WHERE workspace_id = $2
 		  AND comment_id IN (
 			SELECT c.id FROM comment c
 			JOIN project_migration_issue_ids ids ON ids.id = c.issue_id
@@ -925,17 +930,17 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE issue_reaction
 		SET workspace_id = $1
-		WHERE workspace_id = $3
+		WHERE workspace_id = $2
 		  AND issue_id IN (
 			SELECT id FROM project_migration_issue_ids
-		  )`, targetUUID, idUUID, sourceUUID); err != nil {
+		  )`, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate issue reactions")
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE attachment
 		SET workspace_id = $1
-		WHERE workspace_id = $3
+		WHERE workspace_id = $2
 		  AND (
 			issue_id IN (
 				SELECT id FROM project_migration_issue_ids
@@ -965,20 +970,20 @@ func (h *Handler) MigrateProject(w http.ResponseWriter, r *http.Request) {
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE activity_log
 		SET workspace_id = $1
-		WHERE workspace_id = $3
+		WHERE workspace_id = $2
 		  AND issue_id IN (
 			SELECT id FROM project_migration_issue_ids
-		  )`, targetUUID, idUUID, sourceUUID); err != nil {
+		  )`, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate activity history")
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `
 		UPDATE inbox_item
 		SET workspace_id = $1
-		WHERE workspace_id = $3
+		WHERE workspace_id = $2
 		  AND issue_id IN (
 			SELECT id FROM project_migration_issue_ids
-		  )`, targetUUID, idUUID, sourceUUID); err != nil {
+		  )`, targetUUID, sourceUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to migrate notifications")
 		return
 	}

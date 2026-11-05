@@ -36,6 +36,9 @@ deleted_channel_task_deliveries AS (
 ),
 deleted_draft_restores AS (
     DELETE FROM chat_draft_restore WHERE task_id IN (SELECT id FROM batch)
+),
+deleted_context_observations AS (
+    DELETE FROM task_context_observation WHERE task_id IN (SELECT id FROM batch)
 )
 DELETE FROM agent_task_queue WHERE id IN (SELECT id FROM batch)
 `
@@ -230,6 +233,10 @@ const deleteWorkspaceIssueRoots = `-- name: DeleteWorkspaceIssueRoots :exec
 WITH
 deleted_report_history AS (
     DELETE FROM report_history WHERE report_history.workspace_id = $1
+),
+deleted_issue_result_reads AS (
+    DELETE FROM issue_agent_result_read
+    WHERE issue_id IN (SELECT id FROM issue WHERE issue.workspace_id = $1)
 ),
 deleted_issue_status_history AS (
     DELETE FROM issue_status_history WHERE issue_status_history.workspace_id = $1
@@ -572,6 +579,29 @@ DELETE FROM vcs_pull_request WHERE vcs_pull_request.workspace_id = $1
 
 func (q *Queries) DeleteWorkspacePullRequests(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWorkspacePullRequests, workspaceID)
+	return err
+}
+
+const deleteWorkspaceReportSnapshots = `-- name: DeleteWorkspaceReportSnapshots :exec
+DELETE FROM report_snapshot WHERE report_snapshot.workspace_id = $1
+`
+
+// report_snapshot carries workspace_id itself, so it is swept directly rather
+// than leaning on the report_history FK cascade (house rule: the cascade is a
+// safety net, the explicit delete is the mechanism).
+func (q *Queries) DeleteWorkspaceReportSnapshots(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceReportSnapshots, workspaceID)
+	return err
+}
+
+const deleteWorkspaceReportTemplates = `-- name: DeleteWorkspaceReportTemplates :exec
+DELETE FROM report_templates WHERE report_templates.workspace_id = $1
+`
+
+// Only the workspace's own templates go; workspace_id IS NULL rows are the
+// shared global catalog and must survive the teardown.
+func (q *Queries) DeleteWorkspaceReportTemplates(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceReportTemplates, workspaceID)
 	return err
 }
 

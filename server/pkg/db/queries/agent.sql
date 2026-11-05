@@ -312,11 +312,14 @@ SELECT
     COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE),
     sqlc.narg(handoff_note),
     sqlc.narg(squad_id),
-    CASE
-        WHEN COALESCE(sqlc.narg('head_sha')::text, '') <> ''
-        THEN jsonb_build_object('head_sha', sqlc.narg('head_sha')::text)
-        ELSE NULL
-    END,
+    COALESCE(
+        sqlc.narg('task_context')::jsonb,
+        CASE
+            WHEN COALESCE(sqlc.narg('head_sha')::text, '') <> ''
+            THEN jsonb_build_object('head_sha', sqlc.narg('head_sha')::text)
+            ELSE NULL
+        END
+    ),
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     sqlc.narg(runtime_mcp_overlay),

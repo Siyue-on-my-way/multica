@@ -6,10 +6,12 @@ llm:
   provider: openai-compatible
   base_url: ${MULTICA_LLM_BASE_URL}
   api_key_env: MULTICA_LLM_API_KEY
-  model: gemini-3.1-pro-preview
+  model: glm-5.3-flash
+  reasoning_effort: xhigh
   temperature: 0.3
-  max_completion_tokens: 2048
-  timeout_ms: 8000
+  max_completion_tokens: 30000
+  # high 思考档实测 ~9s 起步，8s 超时每次都打满失败；放开到 20s 留足余量
+  timeout_ms: 20000
   max_retries: 2
 
 prompt:

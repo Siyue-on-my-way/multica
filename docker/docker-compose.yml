@@ -1,43 +1,10 @@
 name: multica
 
 services:
-  multica-postgres:
-    image: pgvector/pgvector:pg17
-    env_file:
-      - ./.env
-    volumes:
-      - ./volumes/pgdata:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  multica-redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    volumes:
-      - ./volumes/redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   multica-backend:
     build:
       context: ..
       dockerfile: Dockerfile
-    depends_on:
-      multica-postgres:
-        condition: service_healthy
-      multica-redis:
-        condition: service_healthy
     volumes:
       - ./volumes/backend_uploads:/app/data/uploads
       - ./config:/app/config/llm:ro

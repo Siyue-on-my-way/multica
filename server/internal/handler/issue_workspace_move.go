@@ -153,7 +153,8 @@ func (h *Handler) MoveIssueToWorkspace(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT count(*) FILTER (WHERE parent_issue_id IS NULL)::int,
 		       count(*) FILTER (WHERE cycle)::int,
-		       count(*) FILTER (WHERE workspace_id IS DISTINCT FROM $2 OR project_id IS DISTINCT FROM $3)::int,
+		       count(*) FILTER (WHERE workspace_id IS DISTINCT FROM $2
+		                         OR (project_id IS DISTINCT FROM $3 AND project_id IS NOT NULL))::int,
 		       count(*) FILTER (WHERE parent_issue_id IS NOT NULL AND NOT EXISTS (
 			       SELECT 1 FROM issue p WHERE p.id = ancestors.parent_issue_id
 		       ))::int
@@ -182,7 +183,11 @@ func (h *Handler) MoveIssueToWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Traverse all descendants, including inconsistent rows, so cross-tenant
-	// data is rejected instead of silently omitted from the move.
+	// data is rejected instead of silently omitted from the move. A NULL
+	// project_id on a relative is NOT inconsistent — sub-issues routinely
+	// carry no project (the same state MigrateProject moves by the parent
+	// relationship); they follow the moved root. A DIFFERENT non-null project
+	// is, because the move would silently rip the row out of that project.
 	var treeCycles, treeMismatches int32
 	if err = tx.QueryRow(ctx, `
 		WITH RECURSIVE tree AS (
@@ -194,7 +199,8 @@ func (h *Handler) MoveIssueToWorkspace(w http.ResponseWriter, r *http.Request) {
 			WHERE NOT t.cycle
 		)
 		SELECT count(*) FILTER (WHERE cycle)::int,
-		       count(*) FILTER (WHERE workspace_id IS DISTINCT FROM $2 OR project_id IS DISTINCT FROM $3)::int
+		       count(*) FILTER (WHERE workspace_id IS DISTINCT FROM $2
+		                         OR (project_id IS DISTINCT FROM $3 AND project_id IS NOT NULL))::int
 		FROM tree`, rootID, sourceWS, sourceIssue.ProjectID).Scan(&treeCycles, &treeMismatches); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to validate issue descendants")
 		return

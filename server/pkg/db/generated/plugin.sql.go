@@ -1573,7 +1573,7 @@ func (q *Queries) UpsertPluginSecret(ctx context.Context, arg UpsertPluginSecret
 const upsertPluginSkill = `-- name: UpsertPluginSkill :one
 INSERT INTO skill (workspace_id, name, description, content, config, created_by, plugin_installation_id)
 VALUES ($1, $2, $3, $4, '{}'::jsonb, $6, $5)
-ON CONFLICT (workspace_id, name) DO UPDATE SET
+ON CONFLICT (workspace_id, name) WHERE NOT is_global DO UPDATE SET
     description = EXCLUDED.description,
     content = EXCLUDED.content,
     updated_at = now()
@@ -1593,7 +1593,9 @@ type UpsertPluginSkillParams struct {
 // A plugin's skill resource, as an ordinary workspace skill.
 //
 // Upsert on (workspace_id, name) because that is the table's own uniqueness
-// rule and an upgrade re-installs the same skill. The WHERE clause is the
+// rule and an upgrade re-installs the same skill. The conflict target must
+// carry the partial index's predicate (unique applies to non-global skills
+// only) or Postgres rejects the statement outright. The WHERE clause is the
 // important half: it refuses to overwrite a skill a PERSON created, or one
 // another installation owns. A plugin claiming a name someone already used must
 // fail the install loudly, not silently replace their work.

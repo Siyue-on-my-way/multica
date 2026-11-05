@@ -1254,6 +1254,19 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			// Swept explicitly (own workspace_id column) instead of leaning on
+			// the report_history cascade — same house rule as the rest of the
+			// teardown graph.
+			name: "delete report snapshots",
+			run:  func() error { return qtx.DeleteWorkspaceReportSnapshots(ctx, requester.WorkspaceID) },
+		},
+		{
+			// Global templates (workspace_id IS NULL) are the shared catalog
+			// and stay; only the workspace's own rows are removed.
+			name: "delete report templates",
+			run:  func() error { return qtx.DeleteWorkspaceReportTemplates(ctx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete issue roots",
 			run:  func() error { return qtx.DeleteWorkspaceIssueRoots(ctx, requester.WorkspaceID) },
 		},
