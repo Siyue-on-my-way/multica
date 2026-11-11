@@ -6,7 +6,7 @@
 // source document and avoids turning the course into four unrelated copies.
 /* eslint-disable i18next/no-literal-string */
 
-import type { LucideIcon } from "lucide-react";
+import type { IconComponent } from "@multica/ui/icons";
 import {
   ArrowDown,
   ArrowRight,
@@ -15,7 +15,7 @@ import {
   Check,
   CheckCircle2,
   CircleAlert,
-  ClipboardCheck,
+  ListChecks,
   Code2,
   Database,
   Eye,
@@ -24,7 +24,7 @@ import {
   History,
   Layers,
   MessageSquare,
-  PanelTop,
+  PanelRight,
   RefreshCw,
   Server,
   ShieldCheck,
@@ -32,7 +32,7 @@ import {
   Terminal,
   Workflow,
   Zap,
-} from "lucide-react";
+} from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../layout/page-header";
 
@@ -76,7 +76,7 @@ interface Layer {
   carrier: string;
   goal: string;
   tone: Tone;
-  icon: LucideIcon;
+  icon: IconComponent;
 }
 
 const layers: Layer[] = [
@@ -88,7 +88,7 @@ const layers: Layer[] = [
     carrier: "AGENTS.md / CLAUDE.md",
     goal: "可发现、可缓存",
     tone: "blue",
-    icon: PanelTop,
+    icon: PanelRight,
   },
   {
     id: "L2",
@@ -125,13 +125,13 @@ const layers: Layer[] = [
 interface FlowStep {
   label: string;
   description: string;
-  icon: LucideIcon;
+  icon: IconComponent;
   tone: Tone;
 }
 
 const flowSteps: FlowStep[] = [
   { label: "事件", description: "assignment / comment / chat", icon: Zap, tone: "amber" },
-  { label: "Claim", description: "enrich Task + ancestor", icon: ClipboardCheck, tone: "blue" },
+  { label: "Claim", description: "enrich Task + ancestor", icon: ListChecks, tone: "blue" },
   { label: "连续性 gates", description: "session / runtime / workdir", icon: ShieldCheck, tone: "emerald" },
   { label: "execenv", description: "Brief + sidecar", icon: Terminal, tone: "violet" },
   { label: "Prompt", description: "本轮任务边界", icon: MessageSquare, tone: "blue" },
@@ -194,7 +194,7 @@ const options = [
     summary: "首轮传 refs、digest、必须读取的 thread IDs 和优先级，正文由 Agent 按协议补齐。",
     benefit: "预算可控、可审计、可重放；遗漏可以对账。",
     cost: "首轮多几次 CLI 读取，需要用指标验证召回率。",
-    icon: ClipboardCheck,
+    icon: ListChecks,
     tone: "emerald" as Tone,
     recommended: true,
   },
@@ -313,7 +313,7 @@ function ComparisonPanel({
   items,
   tone,
 }: {
-  icon: LucideIcon;
+  icon: IconComponent;
   title: string;
   description: string;
   items: string[];
@@ -631,7 +631,7 @@ export function ContextCoursewarePage() {
               </div>
               <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.05] p-4">
                 <div className="flex items-start gap-3">
-                  <ClipboardCheck className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-300" aria-hidden="true" />
+                  <ListChecks className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-300" aria-hidden="true" />
                   <p className="text-caption leading-5 text-foreground"><strong className="font-semibold">建议的验证顺序：</strong>保留同 Agent 的 warm resume；先把方案 B 做成 context manifest，记录 ancestor refs、comment IDs、handoff 版本和 truncated IDs，再用覆盖率、首轮 token、resume 成功率和切换后返工率做 A/B 对照。</p>
                 </div>
               </div>

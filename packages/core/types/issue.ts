@@ -1,15 +1,15 @@
 import type { Label } from "./label";
 import type { IssuePropertyValues } from "./property";
 
-/**
- * A status CATEGORY — the behavior equivalence class an issue's status belongs
- * to. There are exactly 7, and each is also the key of the built-in status that
- * defines it, which is why this stayed a closed union while `Issue.status`
- * became open. Board columns, filters and the presentation config are all keyed
- * off categories, so their shape is fixed no matter how many custom statuses a
- * workspace defines. (MUL-6243)
- */
+/** Four lifecycle classifications. User-facing columns group by status key. */
 export type IssueStatusCategory =
+  | "unstarted"
+  | "started"
+  | "done"
+  | "closed";
+
+/** The seven built-in status keys kept for issue/API compatibility. */
+export type BuiltInIssueStatus =
   | "backlog"
   | "todo"
   | "in_progress"
@@ -28,7 +28,7 @@ export type IssueStatusCategory =
  * must resolve the key to its CATEGORY first — `useIssueStatuses(wsId)` in a
  * component, `statusCategoryOfKey` in a pure path. (MUL-6243)
  */
-export type IssueStatus = IssueStatusCategory | (string & {});
+export type IssueStatus = BuiltInIssueStatus | (string & {});
 
 export type IssuePriority = "urgent" | "high" | "medium" | "low" | "none";
 
@@ -105,6 +105,8 @@ export interface SourceContextCommentSnapshot {
   updated_at: string;
   revision: number;
   attachments: SourceContextAttachment[];
+  /** A comment deleted while it had replies: kept, empty, so they keep their parent. */
+  deleted?: boolean;
 }
 
 export interface SourceContextSnapshot {
@@ -243,6 +245,30 @@ export interface ResolvedExecutionContext {
   sources: ExecutionContextSource[];
 }
 
+/**
+ * An issue with an agent result the viewer has not seen yet
+ * (`GET /api/issues/unread`). `outcome` is `completed` | `failed` for a run, or
+ * `manual` when the viewer marked it unread; `agent_id` and `task_id` are null
+ * for manual. `comment_id` is the last comment that run left on the issue, null
+ * when it left none.
+ */
+export interface IssueUnread {
+  issue_id: string;
+  outcome: string;
+  agent_id: string | null;
+  task_id: string | null;
+  comment_id: string | null;
+  created_at: string;
+}
+
+/** The original a duplicate points at: enough to link it and show its status. */
+export interface IssueDuplicateOf {
+  id: string;
+  identifier: string;
+  title: string;
+  status: IssueStatus;
+}
+
 export interface Issue {
   id: string;
   workspace_id: string;
@@ -260,9 +286,8 @@ export interface Issue {
   execution_context?: ExecutionContext | null;
   /**
    * The category `status` belongs to, when the endpoint resolved it. Optional
-   * because a BUILT-IN status is its own category and needs no resolution —
-   * use `issueStatusCategory(issue)` rather than reading this directly.
-   * (MUL-6243)
+   * because older backends did not emit it. Built-in keys map to a category
+   * locally; use `issueStatusCategory(issue)` rather than reading this directly.
    */
   status_category?: IssueStatusCategory;
   /**
@@ -280,14 +305,20 @@ export interface Issue {
   creator_type: IssueAssigneeType;
   creator_id: string;
   parent_issue_id: string | null;
+  /**
+   * The original this issue duplicates (MUL-7349): present only while the
+   * issue is cancelled and the original still exists, resolved by the server.
+   * Absent when connected to an older backend.
+   */
+  duplicate_of?: IssueDuplicateOf | null;
   project_id: string | null;
   position: number;
   manual_position_locked?: boolean;
   agent_result_at?: string | null;
   has_unread_agent_result?: boolean;
   // Ordered barrier group among sibling sub-issues (null = unstaged). The
-  // parent assignee is notified/woken only when every sub-issue in a stage
-  // finishes; see server/internal/handler/issue_child_done.go.
+  // parent assignee is woken when a stage closes while a later one waits;
+  // see server/internal/service/issue_wakeup_system.go.
   stage: number | null;
   // Calendar days as date-only "YYYY-MM-DD" (no time, no timezone). Use the
   // helpers in @multica/core/issues/date to format/compare — never `new Date()`

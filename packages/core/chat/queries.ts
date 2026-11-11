@@ -1,4 +1,5 @@
-import { infiniteQueryOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions, useQuery, type QueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { api } from "../api";
 import type { TaskMessagePayload } from "../types/events";
 import type {
@@ -22,12 +23,10 @@ import type {
  */
 export const QUICK_ACTIONS_PENDING_TIMEOUT_MS = 12_000;
 
-// NOTE on workspace scoping:
-// `wsId` is used only as part of queryKey for cache isolation per workspace.
-// The actual workspace context comes from ApiClient's X-Workspace-Slug header,
-// which is set by the URL-driven [workspaceSlug] layout. Callers must ensure
-// the header is in sync with the wsId they pass here — otherwise cache writes
-// will be misattributed during a workspace switch race window.
+// Sessions, pinned agents, pending tasks, and the running indicator explicitly
+// bind requests to the workspace UUID in their query key. Other session/task
+// queries still use ApiClient's current workspace header, which callers must
+// keep aligned with the resource's workspace and any wsId in the query key.
 
 export const chatKeys = {
   all: (wsId: string) => ["chat", wsId] as const,
@@ -76,7 +75,7 @@ export function isTaskMessageTaskId(taskId: string | null | undefined): taskId i
 export function chatSessionsOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.sessions(wsId),
-    queryFn: () => api.listChatSessions({ status: "all" }),
+    queryFn: () => api.listChatSessions({ status: "all" }, { workspaceId: wsId }),
     staleTime: Infinity,
   });
 }
@@ -95,12 +94,16 @@ function sessionActivityTime(s: ChatSession): number {
  * order when pin timestamps aren't carried in the list payload.
  */
 export function sortChatSessions(sessions: ChatSession[]): ChatSession[] {
-  return [...sessions].sort((a, b) => {
-    const ap = a.pinned ? 1 : 0;
-    const bp = b.pinned ? 1 : 0;
-    if (ap !== bp) return bp - ap;
-    return sessionActivityTime(b) - sessionActivityTime(a);
-  });
+  // Parse dates once per session, rather than on each comparison.
+  return sessions
+    .map((session) => ({ session, activity: sessionActivityTime(session) }))
+    .sort((a, b) => {
+      const ap = a.session.pinned ? 1 : 0;
+      const bp = b.session.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return b.activity - a.activity;
+    })
+    .map(({ session }) => session);
 }
 
 /**
@@ -120,7 +123,7 @@ export function countUnreadChatSessions(sessions: ChatSession[]): number {
 export function chatPinnedAgentsOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.pinnedAgents(wsId),
-    queryFn: () => api.listChatPinnedAgents(),
+    queryFn: () => api.listChatPinnedAgents({ workspaceId: wsId }),
     staleTime: Infinity,
   });
 }
@@ -211,6 +214,26 @@ export function taskMessagesOptions(taskId: string) {
         next as TaskMessagePayload[],
       ),
   });
+}
+
+/** A visible run follows WS updates and backfills on mount and completion. */
+export function useTaskMessages(taskId: string, isLive: boolean, enabled = true) {
+  const query = useQuery({
+    ...taskMessagesOptions(taskId),
+    enabled: enabled && isTaskMessageTaskId(taskId),
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+  });
+  const previous = useRef({ isLive, enabled });
+  const { refetch } = query;
+  useEffect(() => {
+    if (enabled && isTaskMessageTaskId(taskId)
+      && (!previous.current.enabled || (previous.current.isLive && !isLive))) {
+      void refetch({ cancelRefetch: false });
+    }
+    previous.current = { isLive, enabled };
+  }, [taskId, isLive, enabled, refetch]);
+  return query;
 }
 
 /**
@@ -314,7 +337,7 @@ export function isTaskMessageTimelineHeld(
 export function pendingChatTasksOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.pendingTasks(wsId),
-    queryFn: () => api.listPendingChatTasks(),
+    queryFn: () => api.listPendingChatTasks({ workspaceId: wsId }),
     staleTime: Infinity,
   });
 }
@@ -329,7 +352,7 @@ export function pendingChatTasksOptions(wsId: string) {
 export function hasPendingChatTasksOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.pendingTasksHasAny(wsId),
-    queryFn: () => api.hasAnyPendingChatTasks(),
+    queryFn: () => api.hasAnyPendingChatTasks({ workspaceId: wsId }),
     staleTime: Infinity,
   });
 }

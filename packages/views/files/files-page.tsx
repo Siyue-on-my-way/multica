@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Download, File as FileIcon, Loader2, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
+import { Download, File as FileIcon, Loader2, Plus, RefreshCw, Search, Trash2, Upload } from "@multica/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -25,7 +25,6 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import {
   CollectionPageHeader,
-  CollectionPageHeaderAction,
 } from "../layout/collection-page";
 import { useT } from "../i18n";
 
@@ -106,22 +105,28 @@ export function FilesPage() {
       <CollectionPageHeader
         icon={FileIcon}
         title={t(($) => $.page.title)}
-        count={data?.total}
-        description={t(($) => $.page.tagline)}
-        actions={
+        tools={
           <>
-            <CollectionPageHeaderAction
-              icon={RefreshCw}
-              label={t(($) => $.page.refresh)}
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => void refetch()}
               disabled={isFetching}
-            />
-            <CollectionPageHeaderAction
-              icon={Plus}
-              label={t(($) => $.page.upload)}
+              aria-label={t(($) => $.page.refresh)}
+              title={t(($) => $.page.refresh)}
+            >
+              <RefreshCw aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadMutation.isPending}
-            />
+              aria-label={t(($) => $.page.upload)}
+              title={t(($) => $.page.upload)}
+            >
+              <Plus aria-hidden="true" />
+            </Button>
           </>
         }
       />

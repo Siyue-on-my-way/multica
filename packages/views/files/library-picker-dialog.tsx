@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { File as FileIcon, Loader2, Plus, Search } from "lucide-react";
+import { File as FileIcon, Loader2, Plus, Search } from "@multica/ui/icons";
 import { toast } from "sonner";
 
 import type { Attachment } from "@multica/core/types";

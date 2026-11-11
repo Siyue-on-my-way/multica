@@ -27,12 +27,12 @@ func (h *Handler) buildClaimedPlanOnlyTaskResponse(
 	runtime db.AgentRuntime,
 	runtimeID,
 	runtimeWorkspaceID string,
-) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
+) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, issueSnapshot []byte, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	deliveredCommentIDs = []pgtype.UUID{}
 	resp = planOnlyTaskResponse(*task, runtimeWorkspaceID)
 
-	reject := func(message, outcome string, reason taskfailure.Reason, status int) (AgentTaskResponse, []pgtype.UUID, int, int, *claimBuildFailure) {
-		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+	reject := func(message, outcome string, reason taskfailure.Reason, status int) (AgentTaskResponse, []pgtype.UUID, []byte, int, int, *claimBuildFailure) {
+		return resp, deliveredCommentIDs, nil, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
 			r.Context(), task, message, reason, outcome, status, message,
 		)
 	}
@@ -64,7 +64,7 @@ func (h *Handler) buildClaimedPlanOnlyTaskResponse(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("plan-only task issue no longer exists", "error_plan_only_issue_missing", taskfailure.ReasonInvalidTaskIdentity, http.StatusConflict)
 		}
-		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "plan-only issue", uuidToString(task.IssueID))
+		return resp, deliveredCommentIDs, nil, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "plan-only issue", uuidToString(task.IssueID))
 	}
 	if issue.WorkspaceID != runtime.WorkspaceID || uuidToString(issue.ID) != planContext.IssueID {
 		return reject("plan-only task issue workspace isolation check failed", "error_plan_only_issue_workspace", taskfailure.ReasonInvalidTaskIdentity, http.StatusForbidden)
@@ -79,7 +79,7 @@ func (h *Handler) buildClaimedPlanOnlyTaskResponse(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("plan-only planning job no longer exists", "error_plan_only_job_missing", taskfailure.ReasonInvalidTaskIdentity, http.StatusConflict)
 		}
-		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "plan-only planning job", planContext.JobID)
+		return resp, deliveredCommentIDs, nil, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "plan-only planning job", planContext.JobID)
 	}
 	if job.IssueID != issue.ID || !job.TaskID.Valid || job.TaskID != task.ID || !job.AgentID.Valid || job.AgentID != task.AgentID || (job.Status != "queued" && job.Status != "running") || job.SourceSnapshotDigest != planContext.SourceSnapshotDigest {
 		return reject("plan-only planning job binding is invalid", "error_plan_only_job_binding", taskfailure.ReasonInvalidTaskIdentity, http.StatusConflict)
@@ -90,7 +90,7 @@ func (h *Handler) buildClaimedPlanOnlyTaskResponse(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("plan-only task agent no longer exists", "error_plan_only_agent_missing", taskfailure.ReasonInvalidTaskIdentity, http.StatusConflict)
 		}
-		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "plan-only task agent", uuidToString(task.AgentID))
+		return resp, deliveredCommentIDs, nil, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "plan-only task agent", uuidToString(task.AgentID))
 	}
 	if agent.WorkspaceID != runtime.WorkspaceID || agent.ArchivedAt.Valid || agent.Kind != "user" || !agent.RuntimeID.Valid || agent.RuntimeID != task.RuntimeID {
 		return reject("plan-only task agent/runtime binding is invalid", "error_plan_only_agent_binding", taskfailure.ReasonInvalidTaskIdentity, http.StatusConflict)
@@ -101,7 +101,7 @@ func (h *Handler) buildClaimedPlanOnlyTaskResponse(
 
 	resp.Agent = planOnlyAgentData(agent)
 	resp.LeaderRoleResolved = true
-	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
+	return resp, deliveredCommentIDs, nil, agentSkillCount, builtinSkillCount, nil
 }
 
 func planOnlyTaskResponse(task db.AgentTaskQueue, workspaceID string) AgentTaskResponse {

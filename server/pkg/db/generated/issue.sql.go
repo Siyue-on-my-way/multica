@@ -52,10 +52,101 @@ func (q *Queries) ChildIssueProgress(ctx context.Context, arg ChildIssueProgress
 	return items, nil
 }
 
+const clearIssueDuplicatesOf = `-- name: ClearIssueDuplicatesOf :many
+UPDATE issue
+SET duplicate_of_issue_id = NULL,
+    revision = revision + 1,
+    updated_at = now(),
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now())
+WHERE workspace_id = $1
+  AND duplicate_of_issue_id = $2::uuid
+  AND NOT COALESCE(id = ANY($3::uuid[]), false)
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
+`
+
+type ClearIssueDuplicatesOfParams struct {
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	IssueID          pgtype.UUID   `json:"issue_id"`
+	ExcludedIssueIds []pgtype.UUID `json:"excluded_issue_ids"`
+}
+
+// Deleting an issue clears the pointers of its duplicates, the way deleting a
+// parent detaches its children. They stay cancelled. Issues deleted in the
+// same batch are skipped.
+func (q *Queries) ClearIssueDuplicatesOf(ctx context.Context, arg ClearIssueDuplicatesOfParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, clearIssueDuplicatesOf, arg.WorkspaceID, arg.IssueID, arg.ExcludedIssueIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.WorkingBranch,
+			&i.AgentStatus,
+			&i.HandoffSummary,
+			&i.ManualPositionLocked,
+			&i.AgentResultAt,
+			&i.Revision,
+			&i.LastActivityAt,
+			&i.ManualCheckpoint,
+			&i.ManualCheckpointVersion,
+			&i.ManualCheckpointSource,
+			&i.ManualCheckpointUpdatedAt,
+			&i.DerivedSummary,
+			&i.DerivedSummaryVersion,
+			&i.DerivedSummarySource,
+			&i.DerivedSummaryUpdatedAt,
+			&i.DerivedSummarySourceRevision,
+			&i.DerivedSummarySourceCommentID,
+			&i.DerivedSummarySourceTaskID,
+			&i.DerivedSummaryLatencyMs,
+			&i.HandoffVersion,
+			&i.ExecutionContext,
+			&i.TriageState,
+			&i.DuplicateOfIssueID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearIssueManualPositionLock = `-- name: ClearIssueManualPositionLock :one
 UPDATE issue SET manual_position_locked = false
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type ClearIssueManualPositionLockParams struct {
@@ -114,6 +205,8 @@ func (q *Queries) ClearIssueManualPositionLock(ctx context.Context, arg ClearIss
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -173,14 +266,16 @@ WHERE i.workspace_id = $1
   AND ($5::uuid[] IS NULL OR i.assignee_id = ANY($5::uuid[]))
   AND ($6::uuid IS NULL OR i.creator_id = $6)
   AND ($7::uuid IS NULL OR i.project_id = $7)
-  AND ($8::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
-  AND ($9::jsonb IS NULL OR i.metadata @> $9::jsonb)
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($8::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY($8::uuid[])))
+  AND ($9::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
+  AND ($10::jsonb IS NULL OR i.metadata @> $10::jsonb)
   AND (
-    $10::uuid IS NULL
+    $11::uuid IS NULL
     OR (i.assignee_type = 'agent' AND i.assignee_id IN (
           SELECT a.id FROM agent a
            WHERE a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
           SELECT sm.squad_id
@@ -188,14 +283,14 @@ WHERE i.workspace_id = $1
             JOIN squad s ON s.id = sm.squad_id
            WHERE s.workspace_id = $1
              AND sm.member_type = 'member'
-             AND sm.member_id   = $10::uuid
+             AND sm.member_id   = $11::uuid
           UNION
           SELECT s.id
             FROM squad s
             JOIN agent a ON a.id = s.leader_id
            WHERE s.workspace_id = $1
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
           UNION
           SELECT sm.squad_id
             FROM squad_member sm
@@ -204,22 +299,23 @@ WHERE i.workspace_id = $1
            WHERE s.workspace_id = $1
              AND sm.member_type = 'agent'
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
   )
 `
 
 type CountIssuesParams struct {
-	WorkspaceID    pgtype.UUID   `json:"workspace_id"`
-	Status         pgtype.Text   `json:"status"`
-	Priority       pgtype.Text   `json:"priority"`
-	AssigneeID     pgtype.UUID   `json:"assignee_id"`
-	AssigneeIds    []pgtype.UUID `json:"assignee_ids"`
-	CreatorID      pgtype.UUID   `json:"creator_id"`
-	ProjectID      pgtype.UUID   `json:"project_id"`
-	Scheduled      pgtype.Bool   `json:"scheduled"`
-	MetadataFilter []byte        `json:"metadata_filter"`
-	InvolvesUserID pgtype.UUID   `json:"involves_user_id"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	Status           pgtype.Text   `json:"status"`
+	Priority         pgtype.Text   `json:"priority"`
+	AssigneeID       pgtype.UUID   `json:"assignee_id"`
+	AssigneeIds      []pgtype.UUID `json:"assignee_ids"`
+	CreatorID        pgtype.UUID   `json:"creator_id"`
+	ProjectID        pgtype.UUID   `json:"project_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
+	Scheduled        pgtype.Bool   `json:"scheduled"`
+	MetadataFilter   []byte        `json:"metadata_filter"`
+	InvolvesUserID   pgtype.UUID   `json:"involves_user_id"`
 }
 
 // See ListIssues for the semantics of involves_user_id.
@@ -232,10 +328,32 @@ func (q *Queries) CountIssues(ctx context.Context, arg CountIssuesParams) (int64
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.HiddenProjectIds,
 		arg.Scheduled,
 		arg.MetadataFilter,
 		arg.InvolvesUserID,
 	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countIssuesInTriage = `-- name: CountIssuesInTriage :one
+SELECT count(*) FROM issue
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+  AND triage_state IS NOT NULL
+`
+
+type CountIssuesInTriageParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	IssueIds    []pgtype.UUID `json:"issue_ids"`
+}
+
+// How many of these issues are in Triage. The batch parent-write guard only
+// needs "any", and a count keeps the check one round trip regardless of size.
+func (q *Queries) CountIssuesInTriage(ctx context.Context, arg CountIssuesInTriageParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countIssuesInTriage, arg.WorkspaceID, arg.IssueIds)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -273,7 +391,7 @@ INSERT INTO issue (
     parent_issue_id, position, start_date, due_date, number, project_id,
     stage, working_branch, agent_status, handoff_summary,
     manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source,
-    manual_checkpoint_updated_at, handoff_version, last_activity_at, id
+    manual_checkpoint_updated_at, handoff_version, properties, last_activity_at, id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     $16, $17, $18,
@@ -283,8 +401,8 @@ INSERT INTO issue (
     CASE WHEN $19::jsonb IS NULL THEN 'agent' ELSE 'agent' END,
     CASE WHEN $19::jsonb IS NULL THEN NULL ELSE now() END,
     CASE WHEN $19::jsonb IS NULL THEN 0 ELSE 1 END,
-    now(), COALESCE($20::uuid, gen_random_uuid())
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+    COALESCE($20::jsonb, '{}'::jsonb), now(), COALESCE($21::uuid, gen_random_uuid())
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type CreateIssueParams struct {
@@ -307,6 +425,7 @@ type CreateIssueParams struct {
 	WorkingBranch  pgtype.Text `json:"working_branch"`
 	AgentStatus    pgtype.Text `json:"agent_status"`
 	HandoffSummary []byte      `json:"handoff_summary"`
+	Properties     []byte      `json:"properties"`
 	ID             pgtype.UUID `json:"id"`
 }
 
@@ -331,6 +450,7 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		arg.WorkingBranch,
 		arg.AgentStatus,
 		arg.HandoffSummary,
+		arg.Properties,
 		arg.ID,
 	)
 	var i Issue
@@ -382,6 +502,8 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -393,7 +515,7 @@ INSERT INTO issue (
     parent_issue_id, position, start_date, due_date, number, project_id,
     origin_type, origin_id, stage, working_branch, agent_status, handoff_summary,
     manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source,
-    manual_checkpoint_updated_at, handoff_version, last_activity_at, id
+    manual_checkpoint_updated_at, handoff_version, properties, last_activity_at, id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     $16, $17, $18,
@@ -403,8 +525,8 @@ INSERT INTO issue (
     'agent',
     CASE WHEN $21::jsonb IS NULL THEN NULL ELSE now() END,
     CASE WHEN $21::jsonb IS NULL THEN 0 ELSE 1 END,
-    now(), COALESCE($22::uuid, gen_random_uuid())
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+    COALESCE($22::jsonb, '{}'::jsonb), now(), COALESCE($23::uuid, gen_random_uuid())
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type CreateIssueWithOriginParams struct {
@@ -429,6 +551,7 @@ type CreateIssueWithOriginParams struct {
 	WorkingBranch  pgtype.Text `json:"working_branch"`
 	AgentStatus    pgtype.Text `json:"agent_status"`
 	HandoffSummary []byte      `json:"handoff_summary"`
+	Properties     []byte      `json:"properties"`
 	ID             pgtype.UUID `json:"id"`
 }
 
@@ -455,6 +578,7 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		arg.WorkingBranch,
 		arg.AgentStatus,
 		arg.HandoffSummary,
+		arg.Properties,
 		arg.ID,
 	)
 	var i Issue
@@ -506,6 +630,8 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -517,8 +643,35 @@ WITH target AS (
 cleared_status_history AS (
     DELETE FROM issue_status_history WHERE issue_id IN (SELECT target.id FROM target)
 ),
+cleared_wakeup_receipts AS (
+ DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target))
+),
+cleared_wakeups AS (
+ DELETE FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_child_events AS (
+ DELETE FROM issue_child_event WHERE parent_id IN (SELECT target.id FROM target) OR child_id IN (SELECT target.id FROM target)
+),
+cleared_task_supplements AS (
+ DELETE FROM task_supplement WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_task_supplement_capabilities AS (
+ DELETE FROM task_supplement_capability WHERE issue_id IN (SELECT target.id FROM target)
+),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_pr_automation AS (
+    DELETE FROM issue_pr_automation WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_pr_exclusions AS (
+    DELETE FROM issue_pull_request_exclusion WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_unread AS (
+    DELETE FROM issue_unread WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_environments AS (
+    DELETE FROM issue_environment WHERE issue_id IN (SELECT target.id FROM target)
 )
 DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target)
 `
@@ -552,15 +705,12 @@ func (q *Queries) DeleteIssue(ctx context.Context, arg DeleteIssueParams) error 
 const deleteIssueMetadataKey = `-- name: DeleteIssueMetadataKey :one
 UPDATE issue SET
     metadata = metadata - $1::text,
-    revision = revision + CASE WHEN metadata ? $1::text THEN 1 ELSE 0 END,
-    last_activity_at = CASE
-        WHEN metadata ? $1::text
-        THEN GREATEST(COALESCE(last_activity_at, updated_at), now())
-        ELSE last_activity_at
-    END,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+  AND metadata ? $1::text
+RETURNING id, workspace_id, metadata, revision
 `
 
 type DeleteIssueMetadataKeyParams struct {
@@ -569,59 +719,23 @@ type DeleteIssueMetadataKeyParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
+type DeleteIssueMetadataKeyRow struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Metadata    []byte      `json:"metadata"`
+	Revision    int64       `json:"revision"`
+}
+
 // Atomically removes a single key from the issue's metadata JSONB.
-// Deleting a missing key is a no-op (still returns the row).
-func (q *Queries) DeleteIssueMetadataKey(ctx context.Context, arg DeleteIssueMetadataKeyParams) (Issue, error) {
+// Deleting a missing key is a no-op (returns no rows).
+func (q *Queries) DeleteIssueMetadataKey(ctx context.Context, arg DeleteIssueMetadataKeyParams) (DeleteIssueMetadataKeyRow, error) {
 	row := q.db.QueryRow(ctx, deleteIssueMetadataKey, arg.Key, arg.ID, arg.WorkspaceID)
-	var i Issue
+	var i DeleteIssueMetadataKeyRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.AssigneeType,
-		&i.AssigneeID,
-		&i.CreatorType,
-		&i.CreatorID,
-		&i.ParentIssueID,
-		&i.AcceptanceCriteria,
-		&i.ContextRefs,
-		&i.Position,
-		&i.DueDate,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Number,
-		&i.ProjectID,
-		&i.OriginType,
-		&i.OriginID,
-		&i.FirstExecutedAt,
-		&i.StartDate,
 		&i.Metadata,
-		&i.Stage,
-		&i.Properties,
-		&i.WorkingBranch,
-		&i.AgentStatus,
-		&i.HandoffSummary,
-		&i.ManualPositionLocked,
-		&i.AgentResultAt,
 		&i.Revision,
-		&i.LastActivityAt,
-		&i.ManualCheckpoint,
-		&i.ManualCheckpointVersion,
-		&i.ManualCheckpointSource,
-		&i.ManualCheckpointUpdatedAt,
-		&i.DerivedSummary,
-		&i.DerivedSummaryVersion,
-		&i.DerivedSummarySource,
-		&i.DerivedSummaryUpdatedAt,
-		&i.DerivedSummarySourceRevision,
-		&i.DerivedSummarySourceCommentID,
-		&i.DerivedSummarySourceTaskID,
-		&i.DerivedSummaryLatencyMs,
-		&i.HandoffVersion,
-		&i.ExecutionContext,
 	)
 	return i, err
 }
@@ -636,7 +750,7 @@ SET parent_issue_id = NULL,
 WHERE workspace_id = $1
   AND parent_issue_id = $2
   AND NOT COALESCE(id = ANY($3::uuid[]), false)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type DetachDirectChildIssuesParams struct {
@@ -702,6 +816,8 @@ func (q *Queries) DetachDirectChildIssues(ctx context.Context, arg DetachDirectC
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
 			&i.ExecutionContext,
+			&i.TriageState,
+			&i.DuplicateOfIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -714,10 +830,14 @@ func (q *Queries) DetachDirectChildIssues(ctx context.Context, arg DetachDirectC
 }
 
 const findActiveDuplicateIssue = `-- name: FindActiveDuplicateIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains active.
   AND NOT (status = ANY($2::text[]))
+  -- An entry waiting in Triage has not been taken on, so it never blocks
+  -- someone filing the same work; a duplicate there is resolved by merging
+  -- it out of Triage (MUL-7189 §2.6).
+  AND triage_state IS NULL
   AND project_id IS NOT DISTINCT FROM $3::uuid
   AND parent_issue_id IS NOT DISTINCT FROM $4::uuid
   AND lower(btrim(regexp_replace(title, '[[:space:]]+', ' ', 'g'))) = $5
@@ -790,15 +910,21 @@ func (q *Queries) FindActiveDuplicateIssue(ctx context.Context, arg FindActiveDu
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
 const findRecentAutopilotDuplicateIssue = `-- name: FindRecentAutopilotDuplicateIssue :one
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context FROM issue i
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context, i.triage_state, i.duplicate_of_issue_id FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains active.
   AND NOT (i.status = ANY($3::text[]))
+  -- An entry waiting in Triage has not been taken on, so it never blocks
+  -- someone filing the same work; a duplicate there is resolved by merging
+  -- it out of Triage (MUL-7189 §2.6).
+  AND i.triage_state IS NULL
   AND i.origin_type = 'autopilot'
   AND i.origin_id = $2
   AND i.project_id IS NOT DISTINCT FROM $4::uuid
@@ -882,12 +1008,14 @@ func (q *Queries) FindRecentAutopilotDuplicateIssue(ctx context.Context, arg Fin
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE id = $1
 `
 
@@ -942,12 +1070,14 @@ func (q *Queries) GetIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
 const getIssueByNumber = `-- name: GetIssueByNumber :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE workspace_id = $1 AND number = $2
 `
 
@@ -1007,12 +1137,14 @@ func (q *Queries) GetIssueByNumber(ctx context.Context, arg GetIssueByNumberPara
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
 const getIssueByOrigin = `-- name: GetIssueByOrigin :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
@@ -1081,6 +1213,8 @@ func (q *Queries) GetIssueByOrigin(ctx context.Context, arg GetIssueByOriginPara
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -1105,7 +1239,7 @@ func (q *Queries) GetIssueGCStatus(ctx context.Context, id pgtype.UUID) (GetIssu
 }
 
 const getIssueInWorkspace = `-- name: GetIssueInWorkspace :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1165,12 +1299,108 @@ func (q *Queries) GetIssueInWorkspace(ctx context.Context, arg GetIssueInWorkspa
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
+const getIssueMetadataInWorkspace = `-- name: GetIssueMetadataInWorkspace :one
+SELECT metadata, revision FROM issue
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetIssueMetadataInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type GetIssueMetadataInWorkspaceRow struct {
+	Metadata []byte `json:"metadata"`
+	Revision int64  `json:"revision"`
+}
+
+// Reloads the committed metadata snapshot after a conditional mutation
+// returns no rows, without fetching the rest of the issue payload.
+func (q *Queries) GetIssueMetadataInWorkspace(ctx context.Context, arg GetIssueMetadataInWorkspaceParams) (GetIssueMetadataInWorkspaceRow, error) {
+	row := q.db.QueryRow(ctx, getIssueMetadataInWorkspace, arg.ID, arg.WorkspaceID)
+	var i GetIssueMetadataInWorkspaceRow
+	err := row.Scan(&i.Metadata, &i.Revision)
+	return i, err
+}
+
+const getIssueRefInWorkspace = `-- name: GetIssueRefInWorkspace :one
+SELECT id, number, title, status FROM issue
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetIssueRefInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type GetIssueRefInWorkspaceRow struct {
+	ID     pgtype.UUID `json:"id"`
+	Number int32       `json:"number"`
+	Title  string      `json:"title"`
+	Status string      `json:"status"`
+}
+
+// The summary a duplicate's response carries for its original (MUL-7349).
+func (q *Queries) GetIssueRefInWorkspace(ctx context.Context, arg GetIssueRefInWorkspaceParams) (GetIssueRefInWorkspaceRow, error) {
+	row := q.db.QueryRow(ctx, getIssueRefInWorkspace, arg.ID, arg.WorkspaceID)
+	var i GetIssueRefInWorkspaceRow
+	err := row.Scan(
+		&i.ID,
+		&i.Number,
+		&i.Title,
+		&i.Status,
+	)
+	return i, err
+}
+
+const getIssueTriageState = `-- name: GetIssueTriageState :one
+SELECT triage_state FROM issue WHERE id = $1
+`
+
+// Answers "is this issue in Triage" for the queue door, which runs immediately
+// before an INSERT and must see the status its own transaction wrote. NULL is
+// an ordinary issue.
+func (q *Queries) GetIssueTriageState(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getIssueTriageState, id)
+	var triage_state pgtype.Text
+	err := row.Scan(&triage_state)
+	return triage_state, err
+}
+
+const issueHasDuplicates = `-- name: IssueHasDuplicates :one
+
+SELECT EXISTS (
+    SELECT 1 FROM issue
+    WHERE workspace_id = $1
+      AND duplicate_of_issue_id = $2::uuid
+      AND status = 'cancelled'
+) AS has_duplicates
+`
+
+type IssueHasDuplicatesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+// A mark only counts while the duplicate is cancelled and its original still
+// exists. Writes keep that true, but a server predating this feature (after a
+// rollback that kept the column) can reopen a duplicate or delete an original
+// without touching the pointer, so every read applies the rule itself.
+func (q *Queries) IssueHasDuplicates(ctx context.Context, arg IssueHasDuplicatesParams) (bool, error) {
+	row := q.db.QueryRow(ctx, issueHasDuplicates, arg.WorkspaceID, arg.IssueID)
+	var has_duplicates bool
+	err := row.Scan(&has_duplicates)
+	return has_duplicates, err
+}
+
 const listChildIssues = `-- name: ListChildIssues :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE parent_issue_id = $1
 ORDER BY number ASC
 `
@@ -1238,6 +1468,8 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
 			&i.ExecutionContext,
+			&i.TriageState,
+			&i.DuplicateOfIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -1250,7 +1482,7 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 }
 
 const listChildrenByParents = `-- name: ListChildrenByParents :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id = ANY($2::uuid[])
 ORDER BY parent_issue_id, number ASC
@@ -1325,6 +1557,91 @@ func (q *Queries) ListChildrenByParents(ctx context.Context, arg ListChildrenByP
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
 			&i.ExecutionContext,
+			&i.TriageState,
+			&i.DuplicateOfIssueID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueDuplicates = `-- name: ListIssueDuplicates :many
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
+WHERE workspace_id = $1
+  AND duplicate_of_issue_id = $2::uuid
+  AND status = 'cancelled'
+ORDER BY created_at ASC, id ASC
+`
+
+type ListIssueDuplicatesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) ListIssueDuplicates(ctx context.Context, arg ListIssueDuplicatesParams) ([]Issue, error) {
+	rows, err := q.db.Query(ctx, listIssueDuplicates, arg.WorkspaceID, arg.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Issue{}
+	for rows.Next() {
+		var i Issue
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeType,
+			&i.AssigneeID,
+			&i.CreatorType,
+			&i.CreatorID,
+			&i.ParentIssueID,
+			&i.AcceptanceCriteria,
+			&i.ContextRefs,
+			&i.Position,
+			&i.DueDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Number,
+			&i.ProjectID,
+			&i.OriginType,
+			&i.OriginID,
+			&i.FirstExecutedAt,
+			&i.StartDate,
+			&i.Metadata,
+			&i.Stage,
+			&i.Properties,
+			&i.WorkingBranch,
+			&i.AgentStatus,
+			&i.HandoffSummary,
+			&i.ManualPositionLocked,
+			&i.AgentResultAt,
+			&i.Revision,
+			&i.LastActivityAt,
+			&i.ManualCheckpoint,
+			&i.ManualCheckpointVersion,
+			&i.ManualCheckpointSource,
+			&i.ManualCheckpointUpdatedAt,
+			&i.DerivedSummary,
+			&i.DerivedSummaryVersion,
+			&i.DerivedSummarySource,
+			&i.DerivedSummaryUpdatedAt,
+			&i.DerivedSummarySourceRevision,
+			&i.DerivedSummarySourceCommentID,
+			&i.DerivedSummarySourceTaskID,
+			&i.DerivedSummaryLatencyMs,
+			&i.HandoffVersion,
+			&i.ExecutionContext,
+			&i.TriageState,
+			&i.DuplicateOfIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -1374,13 +1691,58 @@ func (q *Queries) ListIssueGCStatuses(ctx context.Context, arg ListIssueGCStatus
 	return items, nil
 }
 
+const listIssueRefsInWorkspace = `-- name: ListIssueRefsInWorkspace :many
+SELECT id, number, title, status FROM issue
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+`
+
+type ListIssueRefsInWorkspaceParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	Ids         []pgtype.UUID `json:"ids"`
+}
+
+type ListIssueRefsInWorkspaceRow struct {
+	ID     pgtype.UUID `json:"id"`
+	Number int32       `json:"number"`
+	Title  string      `json:"title"`
+	Status string      `json:"status"`
+}
+
+// GetIssueRefInWorkspace for a page: every original the page's duplicates
+// point at, in one read.
+func (q *Queries) ListIssueRefsInWorkspace(ctx context.Context, arg ListIssueRefsInWorkspaceParams) ([]ListIssueRefsInWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, listIssueRefsInWorkspace, arg.WorkspaceID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueRefsInWorkspaceRow{}
+	for rows.Next() {
+		var i ListIssueRefsInWorkspaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Title,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIssues = `-- name: ListIssues :many
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
        i.working_branch, i.agent_status, i.handoff_summary,
        i.manual_position_locked, i.agent_result_at,
-       i.revision
+       i.revision, i.duplicate_of_issue_id
 FROM issue i
 WHERE i.workspace_id = $1
   AND ($4::text IS NULL OR i.status = $4)
@@ -1389,15 +1751,17 @@ WHERE i.workspace_id = $1
   AND ($7::uuid[] IS NULL OR i.assignee_id = ANY($7::uuid[]))
   AND ($8::uuid IS NULL OR i.creator_id = $8)
   AND ($9::uuid IS NULL OR i.project_id = $9)
-  AND ($10::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
-  AND ($11::jsonb IS NULL OR i.metadata @> $11::jsonb)
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($10::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY($10::uuid[])))
+  AND ($11::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
+  AND ($12::jsonb IS NULL OR i.metadata @> $12::jsonb)
   AND (
-    $12::uuid IS NULL
+    $13::uuid IS NULL
     -- (1) assignee is an agent owned by the user
     OR (i.assignee_type = 'agent' AND i.assignee_id IN (
           SELECT a.id FROM agent a
            WHERE a.workspace_id = $1
-             AND a.owner_id     = $12::uuid
+             AND a.owner_id     = $13::uuid
     ))
     -- (2)(3)(4) assignee is a squad related to the user — three relations
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
@@ -1407,7 +1771,7 @@ WHERE i.workspace_id = $1
             JOIN squad s ON s.id = sm.squad_id
            WHERE s.workspace_id = $1
              AND sm.member_type = 'member'
-             AND sm.member_id   = $12::uuid
+             AND sm.member_id   = $13::uuid
           UNION
           -- (3) the squad's canonical leader is an agent owned by the user.
           -- We read squad.leader_id directly rather than relying on a
@@ -1418,7 +1782,7 @@ WHERE i.workspace_id = $1
             JOIN agent a ON a.id = s.leader_id
            WHERE s.workspace_id = $1
              AND a.workspace_id = $1
-             AND a.owner_id     = $12::uuid
+             AND a.owner_id     = $13::uuid
           UNION
           -- (4) the squad has an agent member owned by the user
           SELECT sm.squad_id
@@ -1428,7 +1792,7 @@ WHERE i.workspace_id = $1
            WHERE s.workspace_id = $1
              AND sm.member_type = 'agent'
              AND a.workspace_id = $1
-             AND a.owner_id     = $12::uuid
+             AND a.owner_id     = $13::uuid
     ))
   )
 ORDER BY i.position ASC, i.created_at DESC
@@ -1436,18 +1800,19 @@ LIMIT $2 OFFSET $3
 `
 
 type ListIssuesParams struct {
-	WorkspaceID    pgtype.UUID   `json:"workspace_id"`
-	Limit          int32         `json:"limit"`
-	Offset         int32         `json:"offset"`
-	Status         pgtype.Text   `json:"status"`
-	Priority       pgtype.Text   `json:"priority"`
-	AssigneeID     pgtype.UUID   `json:"assignee_id"`
-	AssigneeIds    []pgtype.UUID `json:"assignee_ids"`
-	CreatorID      pgtype.UUID   `json:"creator_id"`
-	ProjectID      pgtype.UUID   `json:"project_id"`
-	Scheduled      pgtype.Bool   `json:"scheduled"`
-	MetadataFilter []byte        `json:"metadata_filter"`
-	InvolvesUserID pgtype.UUID   `json:"involves_user_id"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	Limit            int32         `json:"limit"`
+	Offset           int32         `json:"offset"`
+	Status           pgtype.Text   `json:"status"`
+	Priority         pgtype.Text   `json:"priority"`
+	AssigneeID       pgtype.UUID   `json:"assignee_id"`
+	AssigneeIds      []pgtype.UUID `json:"assignee_ids"`
+	CreatorID        pgtype.UUID   `json:"creator_id"`
+	ProjectID        pgtype.UUID   `json:"project_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
+	Scheduled        pgtype.Bool   `json:"scheduled"`
+	MetadataFilter   []byte        `json:"metadata_filter"`
+	InvolvesUserID   pgtype.UUID   `json:"involves_user_id"`
 }
 
 type ListIssuesRow struct {
@@ -1479,6 +1844,7 @@ type ListIssuesRow struct {
 	ManualPositionLocked bool               `json:"manual_position_locked"`
 	AgentResultAt        pgtype.Timestamptz `json:"agent_result_at"`
 	Revision             int64              `json:"revision"`
+	DuplicateOfIssueID   pgtype.UUID        `json:"duplicate_of_issue_id"`
 }
 
 // involves_user_id widens the assignee filter to surface issues where the user
@@ -1498,6 +1864,7 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.HiddenProjectIds,
 		arg.Scheduled,
 		arg.MetadataFilter,
 		arg.InvolvesUserID,
@@ -1538,6 +1905,7 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 			&i.ManualPositionLocked,
 			&i.AgentResultAt,
 			&i.Revision,
+			&i.DuplicateOfIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -1555,7 +1923,7 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
        i.working_branch, i.agent_status, i.handoff_summary,
        i.manual_position_locked, i.agent_result_at,
-       i.revision
+       i.revision, i.duplicate_of_issue_id
 FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains visible.
@@ -1565,7 +1933,9 @@ WHERE i.workspace_id = $1
   AND ($5::uuid[] IS NULL OR i.assignee_id = ANY($5::uuid[]))
   AND ($6::uuid IS NULL OR i.creator_id = $6)
   AND ($7::uuid IS NULL OR i.project_id = $7)
-  AND ($8::jsonb IS NULL OR i.metadata @> $8::jsonb)
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($8::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY($8::uuid[])))
+  AND ($9::jsonb IS NULL OR i.metadata @> $9::jsonb)
   -- properties_filter is a jsonb array of groups, each group an array of
   -- patterns (built by parsePropertiesFilterParam): the issue must match at
   -- least one pattern from EVERY group (AND of ORs). Three pattern shapes:
@@ -1583,10 +1953,10 @@ WHERE i.workspace_id = $1
   -- terminal-status predicate intentionally remains a filter rather than a
   -- positive index narrowing so unknown legacy status keys stay visible.
   AND (
-    $9::jsonb IS NULL
+    $10::jsonb IS NULL
     OR NOT EXISTS (
       SELECT 1
-      FROM jsonb_array_elements($9::jsonb) AS pf(alternatives)
+      FROM jsonb_array_elements($10::jsonb) AS pf(alternatives)
       WHERE NOT EXISTS (
         SELECT 1
         FROM jsonb_array_elements(pf.alternatives) AS alt(pattern)
@@ -1624,11 +1994,11 @@ WHERE i.workspace_id = $1
     )
   )
   AND (
-    $10::uuid IS NULL
+    $11::uuid IS NULL
     OR (i.assignee_type = 'agent' AND i.assignee_id IN (
           SELECT a.id FROM agent a
            WHERE a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
           SELECT sm.squad_id
@@ -1636,14 +2006,14 @@ WHERE i.workspace_id = $1
             JOIN squad s ON s.id = sm.squad_id
            WHERE s.workspace_id = $1
              AND sm.member_type = 'member'
-             AND sm.member_id   = $10::uuid
+             AND sm.member_id   = $11::uuid
           UNION
           SELECT s.id
             FROM squad s
             JOIN agent a ON a.id = s.leader_id
            WHERE s.workspace_id = $1
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
           UNION
           SELECT sm.squad_id
             FROM squad_member sm
@@ -1652,7 +2022,7 @@ WHERE i.workspace_id = $1
            WHERE s.workspace_id = $1
              AND sm.member_type = 'agent'
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
   )
 ORDER BY i.position ASC, i.created_at DESC
@@ -1666,6 +2036,7 @@ type ListOpenIssuesParams struct {
 	AssigneeIds        []pgtype.UUID `json:"assignee_ids"`
 	CreatorID          pgtype.UUID   `json:"creator_id"`
 	ProjectID          pgtype.UUID   `json:"project_id"`
+	HiddenProjectIds   []pgtype.UUID `json:"hidden_project_ids"`
 	MetadataFilter     []byte        `json:"metadata_filter"`
 	PropertiesFilter   []byte        `json:"properties_filter"`
 	InvolvesUserID     pgtype.UUID   `json:"involves_user_id"`
@@ -1700,6 +2071,7 @@ type ListOpenIssuesRow struct {
 	ManualPositionLocked bool               `json:"manual_position_locked"`
 	AgentResultAt        pgtype.Timestamptz `json:"agent_result_at"`
 	Revision             int64              `json:"revision"`
+	DuplicateOfIssueID   pgtype.UUID        `json:"duplicate_of_issue_id"`
 }
 
 // See ListIssues for the semantics of involves_user_id (mirrors the 4-branch
@@ -1713,6 +2085,7 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.HiddenProjectIds,
 		arg.MetadataFilter,
 		arg.PropertiesFilter,
 		arg.InvolvesUserID,
@@ -1753,6 +2126,7 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 			&i.ManualPositionLocked,
 			&i.AgentResultAt,
 			&i.Revision,
+			&i.DuplicateOfIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -1809,6 +2183,35 @@ func (q *Queries) LockIssueDuplicateKey(ctx context.Context, dollar_1 string) er
 	return err
 }
 
+const lockIssueForAttachmentWrite = `-- name: LockIssueForAttachmentWrite :one
+SELECT id FROM issue
+WHERE id = $1 AND workspace_id = $2
+FOR NO KEY UPDATE
+`
+
+type LockIssueForAttachmentWriteParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Owner-first guard for a write to one of an issue's attachments: take the
+// issue before the attachment row, so a writer that reaches the same row
+// through the issue — teardown's issue_id cascade, or the revision bump this
+// write itself performs — either waits for this transaction or is waited on,
+// never both.
+//
+// FOR NO KEY UPDATE, the mode of that revision bump, is the weakest mode that
+// actually serializes issue writers. FOR KEY SHARE is NOT enough: it is
+// compatible with FOR NO KEY UPDATE (see LockLiveComment), so a concurrent
+// CreateComment would take the issue anyway, wait on the attachment this
+// transaction holds, and deadlock with its bump.
+func (q *Queries) LockIssueForAttachmentWrite(ctx context.Context, arg LockIssueForAttachmentWriteParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockIssueForAttachmentWrite, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockIssueForChannelMediaBind = `-- name: LockIssueForChannelMediaBind :one
 SELECT id FROM issue
 WHERE id = $1 AND workspace_id = $2
@@ -1853,7 +2256,7 @@ func (q *Queries) LockIssueForDelete(ctx context.Context, arg LockIssueForDelete
 }
 
 const lockIssueForDescriptionUpdate = `-- name: LockIssueForDescriptionUpdate :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -1918,13 +2321,64 @@ func (q *Queries) LockIssueForDescriptionUpdate(ctx context.Context, arg LockIss
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
+const lockIssuesForDuplicateMark = `-- name: LockIssuesForDuplicateMark :many
+SELECT i.id,
+       (i.status = 'cancelled' AND EXISTS (
+           SELECT 1 FROM issue AS original
+           WHERE original.id = i.duplicate_of_issue_id
+             AND original.workspace_id = i.workspace_id
+       ))::boolean AS is_duplicate
+FROM issue AS i
+WHERE i.workspace_id = $1
+  AND i.id = ANY($2::uuid[])
+ORDER BY i.id
+FOR UPDATE OF i
+`
+
+type LockIssuesForDuplicateMarkParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	IssueIds    []pgtype.UUID `json:"issue_ids"`
+}
+
+type LockIssuesForDuplicateMarkRow struct {
+	ID          pgtype.UUID `json:"id"`
+	IsDuplicate bool        `json:"is_duplicate"`
+}
+
+// Locks the issue being marked and its target, in id order, before the mark is
+// validated. Two marks that share an issue (A -> B racing B -> A, or C -> A
+// racing A -> B) then run one after the other, so the second one validates
+// against what the first wrote. A target outside the workspace is not returned.
+// is_duplicate applies the same validity rule as the reads below.
+func (q *Queries) LockIssuesForDuplicateMark(ctx context.Context, arg LockIssuesForDuplicateMarkParams) ([]LockIssuesForDuplicateMarkRow, error) {
+	rows, err := q.db.Query(ctx, lockIssuesForDuplicateMark, arg.WorkspaceID, arg.IssueIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockIssuesForDuplicateMarkRow{}
+	for rows.Next() {
+		var i LockIssuesForDuplicateMarkRow
+		if err := rows.Scan(&i.ID, &i.IsDuplicate); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markIssueAgentResult = `-- name: MarkIssueAgentResult :one
 WITH current_issue AS (
-    SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context FROM issue WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+    SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id FROM issue WHERE id = $1 AND workspace_id = $2 FOR UPDATE
 ), top_position AS (
     SELECT COALESCE(MIN(i.position) - 1, 0)::double precision AS position
     FROM issue i, current_issue c
@@ -1940,7 +2394,7 @@ SET agent_result_at = now(),
     END,
     updated_at = now()
 WHERE issue.id = $1 AND issue.workspace_id = $2
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type MarkIssueAgentResultParams struct {
@@ -1999,6 +2453,8 @@ func (q *Queries) MarkIssueAgentResult(ctx context.Context, arg MarkIssueAgentRe
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -2073,7 +2529,7 @@ SET description = CASE
     updated_at = now()
 WHERE id = $4
   AND workspace_id = $5
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type MaterializeIssueChannelMediaMarkdownParams struct {
@@ -2148,6 +2604,8 @@ func (q *Queries) MaterializeIssueChannelMediaMarkdown(ctx context.Context, arg 
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -2169,7 +2627,7 @@ WHERE id = $7
   AND workspace_id = $8
   AND revision = $3::bigint
   AND handoff_version = $9::bigint
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type SetIssueDerivedSummaryCASParams struct {
@@ -2251,6 +2709,8 @@ func (q *Queries) SetIssueDerivedSummaryCAS(ctx context.Context, arg SetIssueDer
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -2267,7 +2727,7 @@ SET manual_checkpoint = $1::jsonb,
 WHERE id = $3
   AND workspace_id = $4
   AND handoff_version = $5::bigint
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type SetIssueManualCheckpointCASParams struct {
@@ -2341,6 +2801,8 @@ func (q *Queries) SetIssueManualCheckpointCAS(ctx context.Context, arg SetIssueM
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -2349,15 +2811,12 @@ const setIssueMetadataKey = `-- name: SetIssueMetadataKey :one
 
 UPDATE issue SET
     metadata = jsonb_set(metadata, ARRAY[$1::text], $2::jsonb),
-    revision = revision + CASE WHEN metadata -> $1::text IS DISTINCT FROM $2::jsonb THEN 1 ELSE 0 END,
-    last_activity_at = CASE
-        WHEN metadata -> $1::text IS DISTINCT FROM $2::jsonb
-        THEN GREATEST(COALESCE(last_activity_at, updated_at), now())
-        ELSE last_activity_at
-    END,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = $3 AND workspace_id = $4
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+  AND metadata -> $1::text IS DISTINCT FROM $2::jsonb
+RETURNING id, workspace_id, metadata, revision
 `
 
 type SetIssueMetadataKeyParams struct {
@@ -2367,92 +2826,66 @@ type SetIssueMetadataKeyParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
+type SetIssueMetadataKeyRow struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Metadata    []byte      `json:"metadata"`
+	Revision    int64       `json:"revision"`
+}
+
 // SearchIssues: moved to handler (dynamic SQL for multi-word search support).
 // Atomically sets a single key in the issue's metadata JSONB. The
 // workspace_id filter is the authorization gate — handler resolves the
-// issue first so this is also the tenant check.
-func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataKeyParams) (Issue, error) {
+// issue first so this is also the tenant check. A no-op, a missing issue, or
+// a workspace mismatch returns no rows; callers that must distinguish those
+// cases need a separate workspace-scoped read.
+func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataKeyParams) (SetIssueMetadataKeyRow, error) {
 	row := q.db.QueryRow(ctx, setIssueMetadataKey,
 		arg.Key,
 		arg.Value,
 		arg.ID,
 		arg.WorkspaceID,
 	)
-	var i Issue
+	var i SetIssueMetadataKeyRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.AssigneeType,
-		&i.AssigneeID,
-		&i.CreatorType,
-		&i.CreatorID,
-		&i.ParentIssueID,
-		&i.AcceptanceCriteria,
-		&i.ContextRefs,
-		&i.Position,
-		&i.DueDate,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Number,
-		&i.ProjectID,
-		&i.OriginType,
-		&i.OriginID,
-		&i.FirstExecutedAt,
-		&i.StartDate,
 		&i.Metadata,
-		&i.Stage,
-		&i.Properties,
-		&i.WorkingBranch,
-		&i.AgentStatus,
-		&i.HandoffSummary,
-		&i.ManualPositionLocked,
-		&i.AgentResultAt,
 		&i.Revision,
-		&i.LastActivityAt,
-		&i.ManualCheckpoint,
-		&i.ManualCheckpointVersion,
-		&i.ManualCheckpointSource,
-		&i.ManualCheckpointUpdatedAt,
-		&i.DerivedSummary,
-		&i.DerivedSummaryVersion,
-		&i.DerivedSummarySource,
-		&i.DerivedSummaryUpdatedAt,
-		&i.DerivedSummarySourceRevision,
-		&i.DerivedSummarySourceCommentID,
-		&i.DerivedSummarySourceTaskID,
-		&i.DerivedSummaryLatencyMs,
-		&i.HandoffVersion,
-		&i.ExecutionContext,
 	)
 	return i, err
 }
 
 const updateIssue = `-- name: UpdateIssue :one
-WITH actor_config AS (
+WITH wakeup_source AS MATERIALIZED (SELECT set_config('multica.source_task_id', COALESCE($9::uuid::text, ''), true)),
+actor_config AS (
     SELECT
         set_config(
             'multica.issue_status_actor_type',
-            COALESCE($9::text, 'system'),
+            COALESCE($10::text, 'system'),
             true
         ),
         set_config(
             'multica.issue_status_actor_id',
-            COALESCE($10::uuid::text, ''),
+            COALESCE($11::uuid::text, ''),
             true
         )
-), candidate AS (
+), candidate AS MATERIALIZED (
+    -- FOR UPDATE, so every next_* value below is computed from the row this
+    -- statement is about to write rather than from the snapshot the statement
+    -- started with. Without it a write that waits here behind a concurrent one
+    -- resumes with stale values and writes them back: an ordinary priority edit
+    -- could restore a duplicate mark another transaction had just cleared, and
+    -- did_change/did_activity would be decided against the pre-wait row too.
+    -- Materialized so the locking clause is never inlined away.
     SELECT
-        i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context,
-        COALESCE($11::text, i.title) AS next_title,
-        COALESCE($12::text, i.description) AS next_description,
-        COALESCE($13::text, i.status) AS next_status,
-        COALESCE($14::text, i.priority) AS next_priority,
-        $15::text AS next_assignee_type,
-        $16::uuid AS next_assignee_id,
+        i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context, i.triage_state, i.duplicate_of_issue_id,
+        COALESCE($12::text, i.title) AS next_title,
+        COALESCE($13::text, i.description) AS next_description,
+        COALESCE($14::text, i.status) AS next_status,
+        COALESCE($15::text, i.priority) AS next_priority,
+        $16::text AS next_assignee_type,
+        $17::uuid AS next_assignee_id,
         CASE
             -- An explicit position wins. Cross-column drag-and-drop sends
             -- status and position together and means the slot it dropped on.
@@ -2475,52 +2908,69 @@ WITH actor_config AS (
             --
             -- Fork: an explicit drag sets manual_position_locked, and a locked
             -- issue keeps its slot on a pure status move (253_issue_handoff_fields).
-            WHEN i.status IS DISTINCT FROM COALESCE($13::text, i.status)
+            WHEN i.status IS DISTINCT FROM COALESCE($14::text, i.status)
                  AND NOT i.manual_position_locked
                 THEN (
                     SELECT COALESCE(MIN(target.position), 0) - 1
                     FROM issue AS target
                     WHERE target.workspace_id = i.workspace_id
-                      AND target.status = $13::text
+                      AND target.status = $14::text
                 )
             ELSE i.position
         END AS next_position,
-        $17::date AS next_start_date,
-        $18::date AS next_due_date,
-		$19::uuid AS next_parent_issue_id,
-		$20::uuid AS next_project_id,
-		$21::integer AS next_stage,
-		CASE
-			WHEN COALESCE($7::bool, false)
-				THEN COALESCE($4::jsonb, i.derived_summary)
-			ELSE COALESCE(i.manual_checkpoint, i.derived_summary, i.handoff_summary)
-		END AS next_handoff_summary,
-		COALESCE($7::bool, false) AS handoff_summary_touched
+        $18::date AS next_start_date,
+        $19::date AS next_due_date,
+        $20::uuid AS next_parent_issue_id,
+        $21::uuid AS next_project_id,
+        $22::integer AS next_stage,
+        CASE
+            WHEN COALESCE($7::bool, false)
+                THEN COALESCE($4::jsonb, i.derived_summary)
+            ELSE COALESCE(i.manual_checkpoint, i.derived_summary, i.handoff_summary)
+        END AS next_handoff_summary,
+        COALESCE($7::bool, false) AS handoff_summary_touched,
+        -- A supplied pointer marks the issue (the handler also sets cancelled).
+        -- Otherwise a mark only survives a write that leaves an already
+        -- cancelled issue cancelled. Every other write drops it: reopening is
+        -- how a mark is removed, and re-entering cancelled does not revive a
+        -- pointer that a server predating this rule left on a reopened issue.
+        CASE
+            WHEN $23::uuid IS NOT NULL
+                THEN $23::uuid
+            WHEN i.status = 'cancelled' AND COALESCE($14::text, i.status) = 'cancelled'
+                THEN i.duplicate_of_issue_id
+            ELSE NULL
+        END AS next_duplicate_of_issue_id
     FROM issue AS i
     WHERE i.id = $1
       AND ($6::bigint IS NULL OR i.revision = $6::bigint)
+    FOR UPDATE
 ), changed AS (
     SELECT
-        candidate.id, candidate.workspace_id, candidate.title, candidate.description, candidate.status, candidate.priority, candidate.assignee_type, candidate.assignee_id, candidate.creator_type, candidate.creator_id, candidate.parent_issue_id, candidate.acceptance_criteria, candidate.context_refs, candidate.position, candidate.due_date, candidate.created_at, candidate.updated_at, candidate.number, candidate.project_id, candidate.origin_type, candidate.origin_id, candidate.first_executed_at, candidate.start_date, candidate.metadata, candidate.stage, candidate.properties, candidate.working_branch, candidate.agent_status, candidate.handoff_summary, candidate.manual_position_locked, candidate.agent_result_at, candidate.revision, candidate.last_activity_at, candidate.manual_checkpoint, candidate.manual_checkpoint_version, candidate.manual_checkpoint_source, candidate.manual_checkpoint_updated_at, candidate.derived_summary, candidate.derived_summary_version, candidate.derived_summary_source, candidate.derived_summary_updated_at, candidate.derived_summary_source_revision, candidate.derived_summary_source_comment_id, candidate.derived_summary_source_task_id, candidate.derived_summary_latency_ms, candidate.handoff_version, candidate.execution_context, candidate.next_title, candidate.next_description, candidate.next_status, candidate.next_priority, candidate.next_assignee_type, candidate.next_assignee_id, candidate.next_position, candidate.next_start_date, candidate.next_due_date, candidate.next_parent_issue_id, candidate.next_project_id, candidate.next_stage, candidate.next_handoff_summary, candidate.handoff_summary_touched,
+        candidate.id, candidate.workspace_id, candidate.title, candidate.description, candidate.status, candidate.priority, candidate.assignee_type, candidate.assignee_id, candidate.creator_type, candidate.creator_id, candidate.parent_issue_id, candidate.acceptance_criteria, candidate.context_refs, candidate.position, candidate.due_date, candidate.created_at, candidate.updated_at, candidate.number, candidate.project_id, candidate.origin_type, candidate.origin_id, candidate.first_executed_at, candidate.start_date, candidate.metadata, candidate.stage, candidate.properties, candidate.working_branch, candidate.agent_status, candidate.handoff_summary, candidate.manual_position_locked, candidate.agent_result_at, candidate.revision, candidate.last_activity_at, candidate.manual_checkpoint, candidate.manual_checkpoint_version, candidate.manual_checkpoint_source, candidate.manual_checkpoint_updated_at, candidate.derived_summary, candidate.derived_summary_version, candidate.derived_summary_source, candidate.derived_summary_updated_at, candidate.derived_summary_source_revision, candidate.derived_summary_source_comment_id, candidate.derived_summary_source_task_id, candidate.derived_summary_latency_ms, candidate.handoff_version, candidate.execution_context, candidate.triage_state, candidate.duplicate_of_issue_id, candidate.next_title, candidate.next_description, candidate.next_status, candidate.next_priority, candidate.next_assignee_type, candidate.next_assignee_id, candidate.next_position, candidate.next_start_date, candidate.next_due_date, candidate.next_parent_issue_id, candidate.next_project_id, candidate.next_stage, candidate.next_handoff_summary, candidate.handoff_summary_touched, candidate.next_duplicate_of_issue_id,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
             position, start_date, due_date, parent_issue_id, project_id, stage,
-			working_branch, agent_status,
-			COALESCE(manual_checkpoint, derived_summary, handoff_summary)
+            working_branch, agent_status,
+            COALESCE(manual_checkpoint, derived_summary, handoff_summary),
+            duplicate_of_issue_id
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
             next_assignee_type, next_assignee_id, next_position, next_start_date,
             next_due_date, next_parent_issue_id, next_project_id, next_stage,
-			$2::text, $3::text,
-			next_handoff_summary
+            $2::text, $3::text,
+            next_handoff_summary,
+            next_duplicate_of_issue_id
         ) AS did_change,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
-            start_date, due_date, parent_issue_id, project_id, stage
+            start_date, due_date, parent_issue_id, project_id, stage,
+            duplicate_of_issue_id
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
-            next_assignee_type, next_assignee_id, next_start_date,
-            next_due_date, next_parent_issue_id, next_project_id, next_stage
+            next_assignee_type, next_assignee_id, next_start_date, next_due_date,
+            next_parent_issue_id, next_project_id, next_stage,
+            next_duplicate_of_issue_id
         ) AS did_activity
     FROM candidate
 )
@@ -2555,13 +3005,14 @@ UPDATE issue AS i SET
     handoff_version = i.handoff_version + CASE WHEN changed.handoff_summary_touched THEN 1 ELSE 0 END,
     handoff_summary = changed.next_handoff_summary,
     manual_position_locked = i.manual_position_locked OR ($5::double precision IS NOT NULL),
+    duplicate_of_issue_id = changed.next_duplicate_of_issue_id,
     revision = i.revision + changed.did_change::integer,
     last_activity_at = CASE WHEN changed.did_activity
         THEN GREATEST(COALESCE(i.last_activity_at, i.updated_at), now())
         ELSE i.last_activity_at
     END,
     updated_at = CASE WHEN changed.did_change THEN now() ELSE i.updated_at END
-FROM changed
+FROM changed CROSS JOIN wakeup_source
 WHERE i.id = changed.id
   -- Re-check the precondition on the row version that UPDATE actually locks.
   -- Under READ COMMITTED, concurrent statements may both populate candidate
@@ -2573,7 +3024,7 @@ WHERE i.id = changed.id
   -- Referenced so the actor_config CTE always executes; the issue_status_history
   -- trigger reads these transaction-local settings (259_issue_status_history_trigger).
   AND (SELECT true FROM actor_config)
-RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context
+RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context, i.triage_state, i.duplicate_of_issue_id
 `
 
 type UpdateIssueParams struct {
@@ -2585,6 +3036,7 @@ type UpdateIssueParams struct {
 	ExpectedRevision       pgtype.Int8   `json:"expected_revision"`
 	HandoffSummaryTouched  pgtype.Bool   `json:"handoff_summary_touched"`
 	ExpectedHandoffVersion pgtype.Int8   `json:"expected_handoff_version"`
+	SourceTaskID           pgtype.UUID   `json:"source_task_id"`
 	ChangedByType          pgtype.Text   `json:"changed_by_type"`
 	ChangedByID            pgtype.UUID   `json:"changed_by_id"`
 	Title                  pgtype.Text   `json:"title"`
@@ -2598,6 +3050,7 @@ type UpdateIssueParams struct {
 	ParentIssueID          pgtype.UUID   `json:"parent_issue_id"`
 	ProjectID              pgtype.UUID   `json:"project_id"`
 	Stage                  pgtype.Int4   `json:"stage"`
+	DuplicateOfIssueID     pgtype.UUID   `json:"duplicate_of_issue_id"`
 }
 
 func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue, error) {
@@ -2610,6 +3063,7 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		arg.ExpectedRevision,
 		arg.HandoffSummaryTouched,
 		arg.ExpectedHandoffVersion,
+		arg.SourceTaskID,
 		arg.ChangedByType,
 		arg.ChangedByID,
 		arg.Title,
@@ -2623,6 +3077,7 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		arg.ParentIssueID,
 		arg.ProjectID,
 		arg.Stage,
+		arg.DuplicateOfIssueID,
 	)
 	var i Issue
 	err := row.Scan(
@@ -2673,26 +3128,33 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
 
 const updateIssueStatus = `-- name: UpdateIssueStatus :one
-WITH actor_config AS (
+WITH wakeup_source AS MATERIALIZED (SELECT set_config('multica.source_task_id', COALESCE($4::uuid::text, ''), true)),
+actor_config AS (
     SELECT
         set_config(
             'multica.issue_status_actor_type',
-            COALESCE($4::text, 'system'),
+            COALESCE($5::text, 'system'),
             true
         ),
         set_config(
             'multica.issue_status_actor_id',
-            COALESCE($5::uuid::text, ''),
+            COALESCE($6::uuid::text, ''),
             true
         )
 )
 UPDATE issue AS i SET
     status = $2,
+    -- Same rule as UpdateIssue: a mark only survives cancelled -> cancelled.
+    -- Background writers (GitHub, task recovery) go through here, so they
+    -- cannot leave a pointer on a reopened issue.
+    duplicate_of_issue_id = CASE WHEN $2 = 'cancelled' AND i.status = 'cancelled' THEN i.duplicate_of_issue_id ELSE NULL END,
     position = CASE WHEN i.status IS DISTINCT FROM $2 AND NOT i.manual_position_locked THEN (
         SELECT COALESCE(MIN(target.position), 0) - 1
         FROM issue AS target
@@ -2705,15 +3167,17 @@ UPDATE issue AS i SET
         ELSE i.last_activity_at
     END,
     updated_at = now()
+FROM wakeup_source
 WHERE i.id = $1 AND i.workspace_id = $3
   AND (SELECT true FROM actor_config)
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context, i.triage_state, i.duplicate_of_issue_id
 `
 
 type UpdateIssueStatusParams struct {
 	ID            pgtype.UUID `json:"id"`
 	Status        string      `json:"status"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	SourceTaskID  pgtype.UUID `json:"source_task_id"`
 	ChangedByType string      `json:"changed_by_type"`
 	ChangedByID   pgtype.UUID `json:"changed_by_id"`
 }
@@ -2728,6 +3192,7 @@ func (q *Queries) UpdateIssueStatus(ctx context.Context, arg UpdateIssueStatusPa
 		arg.ID,
 		arg.Status,
 		arg.WorkspaceID,
+		arg.SourceTaskID,
 		arg.ChangedByType,
 		arg.ChangedByID,
 	)
@@ -2780,6 +3245,8 @@ func (q *Queries) UpdateIssueStatus(ctx context.Context, arg UpdateIssueStatusPa
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }

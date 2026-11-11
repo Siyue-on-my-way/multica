@@ -126,7 +126,7 @@ SET properties = properties - $1::text,
     END,
     updated_at = CASE WHEN properties ? $1::text THEN now() ELSE updated_at END
 WHERE id = $2::uuid AND workspace_id = $3::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type DeleteIssuePropertyValueParams struct {
@@ -186,6 +186,8 @@ func (q *Queries) DeleteIssuePropertyValue(ctx context.Context, arg DeleteIssueP
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }
@@ -299,7 +301,7 @@ SET properties = jsonb_set(properties, ARRAY[$1::text], $2::jsonb, true),
     END,
     updated_at = CASE WHEN properties -> $1::text IS DISTINCT FROM $2::jsonb THEN now() ELSE updated_at END
 WHERE id = $3::uuid AND workspace_id = $4::uuid
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, working_branch, agent_status, handoff_summary, manual_position_locked, agent_result_at, revision, last_activity_at, manual_checkpoint, manual_checkpoint_version, manual_checkpoint_source, manual_checkpoint_updated_at, derived_summary, derived_summary_version, derived_summary_source, derived_summary_updated_at, derived_summary_source_revision, derived_summary_source_comment_id, derived_summary_source_task_id, derived_summary_latency_ms, handoff_version, execution_context, triage_state, duplicate_of_issue_id
 `
 
 type SetIssuePropertyValueParams struct {
@@ -309,8 +311,9 @@ type SetIssuePropertyValueParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-// Single-key atomic write (mirror of SetIssueMetadataKey): concurrent writers
-// on different property keys never clobber each other.
+// Single-key atomic write: concurrent writers on different property keys
+// never clobber each other. Unlike SetIssueMetadataKey, a no-op still updates
+// and returns the issue row.
 func (q *Queries) SetIssuePropertyValue(ctx context.Context, arg SetIssuePropertyValueParams) (Issue, error) {
 	row := q.db.QueryRow(ctx, setIssuePropertyValue,
 		arg.Key,
@@ -367,6 +370,8 @@ func (q *Queries) SetIssuePropertyValue(ctx context.Context, arg SetIssuePropert
 		&i.DerivedSummaryLatencyMs,
 		&i.HandoffVersion,
 		&i.ExecutionContext,
+		&i.TriageState,
+		&i.DuplicateOfIssueID,
 	)
 	return i, err
 }

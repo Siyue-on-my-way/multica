@@ -14,23 +14,31 @@ import (
 )
 
 type InboxItemResponse struct {
-	ID            string          `json:"id"`
-	WorkspaceID   string          `json:"workspace_id"`
-	RecipientType string          `json:"recipient_type"`
-	RecipientID   string          `json:"recipient_id"`
-	Type          string          `json:"type"`
-	Severity      string          `json:"severity"`
-	IssueID       *string         `json:"issue_id"`
-	Title         string          `json:"title"`
-	Body          *string         `json:"body"`
-	Read          bool            `json:"read"`
-	Archived      bool            `json:"archived"`
-	CreatedAt     string          `json:"created_at"`
-	IssueStatus   *string         `json:"issue_status"`
-	IssuePriority *string         `json:"issue_priority"`
-	ActorType     *string         `json:"actor_type"`
-	ActorID       *string         `json:"actor_id"`
-	Details       json.RawMessage `json:"details"`
+	ID            string  `json:"id"`
+	WorkspaceID   string  `json:"workspace_id"`
+	RecipientType string  `json:"recipient_type"`
+	RecipientID   string  `json:"recipient_id"`
+	Type          string  `json:"type"`
+	Severity      string  `json:"severity"`
+	IssueID       *string `json:"issue_id"`
+	Title         string  `json:"title"`
+	Body          *string `json:"body"`
+	Read          bool    `json:"read"`
+	Archived      bool    `json:"archived"`
+	CreatedAt     string  `json:"created_at"`
+	IssueStatus   *string `json:"issue_status"`
+	IssuePriority *string `json:"issue_priority"`
+	// Issue fields the inbox filters match on. List rows always carry them
+	// (an empty label list included), which is how a client tells a server
+	// that supports those filters from an older one.
+	IssueProjectID    *string         `json:"issue_project_id"`
+	IssueAssigneeType *string         `json:"issue_assignee_type"`
+	IssueAssigneeID   *string         `json:"issue_assignee_id"`
+	IssueDueDate      *string         `json:"issue_due_date"`
+	IssueLabelIDs     []string        `json:"issue_label_ids"`
+	ActorType         *string         `json:"actor_type"`
+	ActorID           *string         `json:"actor_id"`
+	Details           json.RawMessage `json:"details"`
 }
 
 func inboxToResponse(i db.InboxItem) InboxItemResponse {
@@ -53,26 +61,94 @@ func inboxToResponse(i db.InboxItem) InboxItemResponse {
 	}
 }
 
+// inboxListBodyPreviewLimit caps, in characters, the body a comment
+// notification carries in the inbox LIST responses. The ellipsis counts
+// toward it.
+//
+// A comment notification stores the full comment it was raised for, and the
+// list shipped that verbatim — a several-thousand-character agent reply went
+// over the wire, through JSON parsing and into the client cache, only for
+// every client to render it as a single truncated line. 200 leaves ample room
+// for that one line at any width or script, while bounding what each row can
+// cost.
+const inboxListBodyPreviewLimit = 200
+
+// inboxListBody returns the body a notification carries in the inbox list:
+// comment notifications on an issue get a bounded preview, everything else is
+// returned as stored. The database keeps the full text.
+//
+// Scoped to exactly the rows whose full body no client ever reads from the
+// list. Opening an issue-backed notification renders the issue itself, and the
+// comment it points at is found through `details.comment_id`, which is left
+// intact — on every client already installed, so none needs to change. Other
+// notification types are NOT shortened: issue-less notifications render their
+// body in the detail pane straight from the list cache, and Quick Create
+// failures refill the composer from `details` — cutting those would lose
+// content, not just bytes.
+//
+// Truncation is by code point, so a multi-byte character is never split into
+// invalid UTF-8. A grapheme cluster (an emoji sequence, a letter with a
+// combining mark) can still be cut at the boundary; that lands ~200 characters
+// in, far past the single line any client shows.
+//
+// One pass that stops at the limit, rather than counting or converting the
+// whole string: the work per row stays bounded by the preview, not by however
+// long the comment happens to be.
+func inboxListBody(notifType string, issueID pgtype.UUID, body pgtype.Text) *string {
+	full := textToPtr(body)
+	if full == nil || notifType != "new_comment" || !issueID.Valid {
+		return full
+	}
+	// `range` yields the byte offset where each character starts. `cut` ends
+	// up where the ellipsis goes: after limit-1 characters.
+	cut, seen := 0, 0
+	for offset := range *full {
+		if seen == inboxListBodyPreviewLimit-1 {
+			cut = offset
+		}
+		if seen++; seen > inboxListBodyPreviewLimit {
+			preview := (*full)[:cut] + "…"
+			return &preview
+		}
+	}
+	return full
+}
+
+// inboxRowToResponse maps a LIST row — the main inbox and, through
+// archivedInboxRowToResponse, the archived view. Single-item responses go
+// through inboxToResponse and keep the full body.
 func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
 	return InboxItemResponse{
-		ID:            uuidToString(r.ID),
-		WorkspaceID:   uuidToString(r.WorkspaceID),
-		RecipientType: r.RecipientType,
-		RecipientID:   uuidToString(r.RecipientID),
-		Type:          r.Type,
-		Severity:      r.Severity,
-		IssueID:       uuidToPtr(r.IssueID),
-		Title:         r.Title,
-		Body:          textToPtr(r.Body),
-		Read:          r.Read,
-		Archived:      r.Archived,
-		CreatedAt:     timestampToString(r.CreatedAt),
-		IssueStatus:   textToPtr(r.IssueStatus),
-		IssuePriority: textToPtr(r.IssuePriority),
-		ActorType:     textToPtr(r.ActorType),
-		ActorID:       uuidToPtr(r.ActorID),
-		Details:       json.RawMessage(r.Details),
+		ID:                uuidToString(r.ID),
+		WorkspaceID:       uuidToString(r.WorkspaceID),
+		RecipientType:     r.RecipientType,
+		RecipientID:       uuidToString(r.RecipientID),
+		Type:              r.Type,
+		Severity:          r.Severity,
+		IssueID:           uuidToPtr(r.IssueID),
+		Title:             r.Title,
+		Body:              inboxListBody(r.Type, r.IssueID, r.Body),
+		Read:              r.Read,
+		Archived:          r.Archived,
+		CreatedAt:         timestampToString(r.CreatedAt),
+		IssueStatus:       textToPtr(r.IssueStatus),
+		IssuePriority:     textToPtr(r.IssuePriority),
+		IssueProjectID:    uuidToPtr(r.IssueProjectID),
+		IssueAssigneeType: textToPtr(r.IssueAssigneeType),
+		IssueAssigneeID:   uuidToPtr(r.IssueAssigneeID),
+		IssueDueDate:      dateToPtr(r.IssueDueDate),
+		IssueLabelIDs:     inboxLabelIDs(r.IssueLabelIds),
+		ActorType:         textToPtr(r.ActorType),
+		ActorID:           uuidToPtr(r.ActorID),
+		Details:           json.RawMessage(r.Details),
 	}
+}
+
+func inboxLabelIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 // ListArchivedInboxItemsRow carries the same columns as ListInboxItemsRow (both
@@ -93,6 +169,17 @@ func (h *Handler) enrichInboxResponse(ctx context.Context, resp InboxItemRespons
 		resp.IssueStatus = &s
 		p := issue.Priority
 		resp.IssuePriority = &p
+		resp.IssueProjectID = uuidToPtr(issue.ProjectID)
+		resp.IssueAssigneeType = textToPtr(issue.AssigneeType)
+		resp.IssueAssigneeID = uuidToPtr(issue.AssigneeID)
+		resp.IssueDueDate = dateToPtr(issue.DueDate)
+		labels, err := h.Queries.ListLabelsByIssue(ctx, db.ListLabelsByIssueParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
+		if err == nil {
+			resp.IssueLabelIDs = make([]string, len(labels))
+			for i, label := range labels {
+				resp.IssueLabelIDs[i] = uuidToString(label.ID)
+			}
+		}
 	}
 	return resp
 }
@@ -108,10 +195,18 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Notifications about private-project issues are not written for
+	// outsiders (CreateInboxItem); this read filter also drops older rows once
+	// the reader loses access.
+	hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+	if !ok {
+		return
+	}
 	items, err := h.Queries.ListInboxItems(r.Context(), db.ListInboxItemsParams{
-		WorkspaceID:   wsUUID,
-		RecipientType: "member",
-		RecipientID:   parseUUID(userID),
+		WorkspaceID:      wsUUID,
+		RecipientType:    "member",
+		RecipientID:      parseUUID(userID),
+		HiddenProjectIds: hidden.Param(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list inbox")
@@ -146,10 +241,15 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+	if !ok {
+		return
+	}
 	items, err := h.Queries.ListArchivedInboxItems(r.Context(), db.ListArchivedInboxItemsParams{
-		WorkspaceID:   wsUUID,
-		RecipientType: "member",
-		RecipientID:   parseUUID(userID),
+		WorkspaceID:      wsUUID,
+		RecipientType:    "member",
+		RecipientID:      parseUUID(userID),
+		HiddenProjectIds: hidden.Param(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list archived inbox")
@@ -164,6 +264,9 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// MarkInboxRead reads the item and, when it belongs to an issue, every other
+// unread active item the caller has on that issue: selecting a row in the inbox
+// opens the whole issue (MUL-8618, see the query comment).
 func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prev, ok := h.loadInboxItemForUser(w, r, id)
@@ -192,7 +295,8 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 // act on: the inbox auto-marks an item read the moment it is selected, which
 // otherwise makes "opened" and "handled" the same signal.
 //
-// Scope is the single item, matching MarkInboxRead — see the query comment.
+// Scope is the single item, the newest one the row shows, unlike MarkInboxRead
+// — see the query comment.
 func (h *Handler) MarkInboxUnread(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prev, ok := h.loadInboxItemForUser(w, r, id)
@@ -303,10 +407,15 @@ func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+	if !ok {
+		return
+	}
 	count, err := h.Queries.CountUnreadInbox(r.Context(), db.CountUnreadInboxParams{
-		WorkspaceID:   wsUUID,
-		RecipientType: "member",
-		RecipientID:   parseUUID(userID),
+		WorkspaceID:      wsUUID,
+		RecipientType:    "member",
+		RecipientID:      parseUUID(userID),
+		HiddenProjectIds: hidden.Param(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count unread inbox")
@@ -377,6 +486,50 @@ func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
 		"recipient_id": userID,
 		"count":        count,
 	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"count": count})
+}
+
+// MarkIssueInboxRead marks every unread active notification the caller has on
+// one issue read (see MarkInboxReadByIssue). The client calls it while the
+// issue is on screen outside the inbox, so reading an issue anywhere also
+// reads it in the inbox (MUL-8588). The update
+// is scoped to the caller's own rows, so an issue id from another workspace
+// matches nothing.
+func (h *Handler) MarkIssueInboxRead(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+	issueUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "issueId"), "issue id")
+	if !ok {
+		return
+	}
+
+	count, err := h.Queries.MarkInboxReadByIssue(r.Context(), db.MarkInboxReadByIssueParams{
+		WorkspaceID: wsUUID,
+		RecipientID: parseUUID(userID),
+		IssueID:     issueUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark issue inbox read")
+		return
+	}
+
+	// Opening an issue with nothing unread is the common case. It changes no
+	// row, so it must not make every open client refetch its inbox.
+	if count > 0 {
+		h.publish(protocol.EventInboxBatchRead, workspaceID, "member", userID, map[string]any{
+			"recipient_id": userID,
+			"count":        count,
+			"issue_id":     uuidToString(issueUUID),
+		})
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }

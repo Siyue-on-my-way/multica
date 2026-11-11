@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarRange, ClipboardList, History, Loader2 } from "lucide-react";
+import { CalendarDays, ListChecks, History, Loader2 } from "@multica/ui/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
@@ -898,7 +898,7 @@ export function ProjectReportDialog({
                 <DateOnlyPicker
                   value={startDate}
                   onChange={setStartDate}
-                  icon={<CalendarRange className="h-3.5 w-3.5 text-muted-foreground" />}
+                  icon={<CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />}
                   placeholder={t(($) => $.detail.report_dialog.select_date)}
                   emptyLabel={t(($) => $.detail.report_dialog.clear_date)}
                   triggerRender={
@@ -920,7 +920,7 @@ export function ProjectReportDialog({
                 <DateOnlyPicker
                   value={endDate}
                   onChange={setEndDate}
-                  icon={<CalendarRange className="h-3.5 w-3.5 text-muted-foreground" />}
+                  icon={<CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />}
                   placeholder={t(($) => $.detail.report_dialog.select_date)}
                   emptyLabel={t(($) => $.detail.report_dialog.clear_date)}
                   triggerRender={
@@ -958,7 +958,7 @@ export function ProjectReportDialog({
                     aria-pressed={reportView === value}
                     onClick={() => setReportView(value)}
                   >
-                    {value === "raw" && <ClipboardList className="h-3.5 w-3.5" />}
+                    {value === "raw" && <ListChecks className="h-3.5 w-3.5" />}
                     {label}
                   </Button>
                 ))}

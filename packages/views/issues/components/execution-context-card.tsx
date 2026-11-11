@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@multica/ui/icons";
 import type { ResolvedContent, ResolvedExecutionContext } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@multica/ui/components/ui/collapsible";

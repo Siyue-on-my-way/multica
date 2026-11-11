@@ -81,6 +81,9 @@ docker/volumes/
 # Python (agent tooling)
 __pycache__/
 *.pyc
+perf-report/
+# The production example is a tracked template; `.env*` above would hide it.
+!apps/mobile/.env.production.example
 
 # Self-hosted CLI download channel binaries (rebuild via scripts/publish-cli-downloads.sh)
 docker/nginx/downloads/multica-*

@@ -528,7 +528,7 @@ WITH RECURSIVE ancestors AS (
     SELECT issue_id, path, distance, 1::int AS family FROM descendants
     WHERE issue_id <> $2::uuid
 )
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.working_branch, i.agent_status, i.handoff_summary, i.manual_position_locked, i.agent_result_at, i.revision, i.last_activity_at, i.manual_checkpoint, i.manual_checkpoint_version, i.manual_checkpoint_source, i.manual_checkpoint_updated_at, i.derived_summary, i.derived_summary_version, i.derived_summary_source, i.derived_summary_updated_at, i.derived_summary_source_revision, i.derived_summary_source_comment_id, i.derived_summary_source_task_id, i.derived_summary_latency_ms, i.handoff_version, i.execution_context, i.triage_state, i.duplicate_of_issue_id
 FROM issue i
 JOIN related r ON r.issue_id = i.id
 WHERE i.workspace_id = $1::uuid
@@ -602,6 +602,8 @@ func (q *Queries) ListSubissuePlanContextIssues(ctx context.Context, arg ListSub
 			&i.DerivedSummaryLatencyMs,
 			&i.HandoffVersion,
 			&i.ExecutionContext,
+			&i.TriageState,
+			&i.DuplicateOfIssueID,
 		); err != nil {
 			return nil, err
 		}

@@ -35,7 +35,8 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Checking GitHub releases from %s...\n", repository)
 
-	// Check latest version from the configured GitHub repository.
+	// Check the latest version from the configured release source
+	// (MULTICA_UPDATE_REPO / MULTICA_RELEASE_API_BASE_URL).
 	latest, err := cli.FetchLatestRelease()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not check latest version: %v\n", err)
@@ -61,12 +62,12 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Not installed via brew — download binary directly from GitHub Releases.
+	// Not installed via brew — download the binary from the configured release source.
 	if latest == nil {
-		return fmt.Errorf("could not determine latest version; check https://github.com/%s/releases/latest", repository)
+		return fmt.Errorf("could not determine latest version; check the configured release source")
 	}
 	targetVersion := latest.TagName
-	fmt.Fprintf(os.Stderr, "Downloading %s from GitHub Releases...\n", targetVersion)
+	fmt.Fprintf(os.Stderr, "Downloading %s from the configured release source...\n", targetVersion)
 	output, err := cli.UpdateViaDownloadWithTimeout(targetVersion, updateDownloadTimeout)
 	if err != nil {
 		return fmt.Errorf("update failed: %w", err)

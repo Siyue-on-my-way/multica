@@ -183,7 +183,7 @@ func (h *Handler) generateChatSessionTitle(ctx context.Context, sessionID pgtype
 	}
 	// DefaultModel() is used implicitly by GenerateText when model == "": a
 	// deployment configures MULTICA_LLM_DEFAULT_MODEL (or the built-in
-	// gpt-5.6-luna fallback) — no model is threaded through from the frontend.
+	// gpt-6-luna fallback) — no model is threaded through from the frontend.
 	raw, err := h.LLM.GenerateText(ctx, "", chatTitleSystemPrompt, sourceText)
 	if err != nil {
 		return db.ChatSession{}, false, err

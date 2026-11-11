@@ -1,8 +1,10 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
+import type { DaemonConfigStatus, DaemonSetupTarget } from "../runtimes/commands";
 
 interface ConfigState {
   cdnDomain: string;
+  attachmentPublicUrl: string;
   // True when cdnDomain serves private content via time-bounded signed URLs
   // (CloudFront signing enabled server-side). Renderers must not treat a raw
   // storage URL on that domain as a loadable media source (MUL-3254).
@@ -11,10 +13,15 @@ interface ConfigState {
   googleClientId: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
+  daemonConfigStatus: DaemonConfigStatus;
+  daemonSetupTarget: DaemonSetupTarget;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
   // must be hidden. Defaults to false so unknown / older servers behave like
   // the managed-cloud case.
   workspaceCreationDisabled: boolean;
+  // DISABLE_STAR_PROMPT: the deployment opted out of the "Star us on GitHub"
+  // prompt. Defaults to false so older servers keep the prompt.
+  starPromptDisabled: boolean;
   // Self-host-only gate for the Git provider integration (Forgejo / Gitea /
   // GitLab). When false the whole Settings → Integrations "Git providers"
   // section is hidden. Defaults to false so unknown / older servers and the
@@ -36,7 +43,15 @@ interface ConfigState {
   // Older handlers accepted the unknown field and returned success while
   // dropping it, so absent must fail closed.
   agentConversationStartersSupported: boolean;
+  // Whether POST /api/issues atomically persists custom-property values.
+  // Older servers silently drop the field, so absent must fail closed.
+  issueCreatePropertiesSupported: boolean;
+  // Whether deleting a comment keeps its replies (#8296). Older servers
+  // deleted the replies too, so absent must fail closed: the client then
+  // promises nothing about replies and uses the legacy delete route.
+  commentDeleteKeepRepliesSupported: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
+  setAttachmentPublicUrl: (url?: string) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
@@ -46,41 +61,67 @@ interface ConfigState {
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
     daemonAppUrl?: string;
+    daemonSetupTarget?: DaemonSetupTarget;
   }) => void;
+  setDaemonConfigStatus: (status: DaemonConfigStatus) => void;
+  setStarPromptDisabled: (disabled?: boolean) => void;
   setFeatureFlags: (flags?: Record<string, boolean>) => void;
   setServerVersion: (version?: string) => void;
   setLocalWorktreeSupported: (supported?: boolean) => void;
   setAgentConversationStartersSupported: (supported?: boolean) => void;
+  setIssueCreatePropertiesSupported: (supported?: boolean) => void;
+  setCommentDeleteKeepRepliesSupported: (supported?: boolean) => void;
 }
 
 export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
+  attachmentPublicUrl: "",
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
+  daemonConfigStatus: "loading",
+  daemonSetupTarget: "unknown",
   workspaceCreationDisabled: false,
+  starPromptDisabled: false,
   vcsIntegrationAvailable: false,
   featureFlags: {},
   serverVersion: "",
   localWorktreeSupported: false,
   agentConversationStartersSupported: false,
+  issueCreatePropertiesSupported: false,
+  commentDeleteKeepRepliesSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
+  setAttachmentPublicUrl: (url = "") => set({ attachmentPublicUrl: url }),
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
   }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable }),
-  setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
-    set({ daemonServerUrl, daemonAppUrl }),
+  setDaemonConfig: ({
+    daemonServerUrl = "",
+    daemonAppUrl = "",
+    daemonSetupTarget = "unknown",
+  }) => set({
+    daemonServerUrl,
+    daemonAppUrl,
+    daemonSetupTarget,
+    daemonConfigStatus: "ready",
+  }),
+  setDaemonConfigStatus: (daemonConfigStatus) => set({ daemonConfigStatus }),
+  setStarPromptDisabled: (disabled = false) => set({ starPromptDisabled: disabled === true }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
   setServerVersion: (version = "") => set({ serverVersion: version }),
   setLocalWorktreeSupported: (supported = false) =>
     set({ localWorktreeSupported: supported === true }),
   setAgentConversationStartersSupported: (supported = false) =>
     set({ agentConversationStartersSupported: supported === true }),
+  setIssueCreatePropertiesSupported: (supported = false) =>
+    set({ issueCreatePropertiesSupported: supported === true }),
+  setCommentDeleteKeepRepliesSupported: (supported = false) =>
+    set({ commentDeleteKeepRepliesSupported: supported === true }),
 }));
 
 export function useConfigStore(): ConfigState;

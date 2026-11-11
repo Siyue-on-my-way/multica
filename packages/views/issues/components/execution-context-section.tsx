@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil } from "lucide-react";
+import { Pencil } from "@multica/ui/icons";
 import type { ExecutionContext, Issue, ResolvedExecutionContext } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { useUpdateIssue } from "@multica/core/issues/mutations";

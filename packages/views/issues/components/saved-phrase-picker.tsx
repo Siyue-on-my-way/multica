@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Copy, Loader2, Plus, Search } from "lucide-react";
+import { BookOpen, Copy, Loader2, Plus, Search } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useCurrentWorkspace } from "@multica/core/paths";

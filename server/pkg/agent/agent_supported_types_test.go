@@ -43,6 +43,8 @@ func TestSupportedTypesMatchesMigrationWhitelist(t *testing.T) {
 		"kiro": true, "antigravity": true, "qoder": true, "qoderclicn": true, "traecli": true,
 		"grok": true, "qwen": true, "qwenpaw": true, "mcode": true, "dim": true,
 		"zeroclaw": true,
+		// Upstream v0.8.1 additions, each extending the protocol_family CHECK.
+		"muse": true, "devin": true, "museapp": true, "zcode": true,
 	}
 	if len(SupportedTypes) != len(want) {
 		t.Fatalf("SupportedTypes has %d entries, migration whitelist has %d; keep them in lockstep", len(SupportedTypes), len(want))
