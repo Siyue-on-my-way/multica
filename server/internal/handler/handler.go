@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
+	"github.com/multica-ai/multica/server/internal/connectedapps"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dbreader"
 	"github.com/multica-ai/multica/server/internal/entitlement"
@@ -76,6 +77,17 @@ type Config struct {
 	// invitation only. The public /api/config endpoint mirrors this flag so
 	// the UI can hide every "Create workspace" affordance — see #3433.
 	DisableWorkspaceCreation bool
+	// DisableStarPrompt turns off the "Star us on GitHub" prompt for every
+	// user of the deployment: /api/config tells clients not to show it, and
+	// claiming a showing is refused. The Help menu link is unaffected.
+	DisableStarPrompt bool
+	// WorkspaceCreationAllowedEmails, when non-empty, restricts
+	// POST /api/workspaces to callers whose account email matches one of
+	// the entries (case-insensitive). Empty means every signed-in user may
+	// create workspaces. DisableWorkspaceCreation takes precedence. This only
+	// decides who may create a workspace; it grants no cross-workspace
+	// visibility or admin rights (#9400).
+	WorkspaceCreationAllowedEmails []string
 	// VCSIntegrationEnabled gates the self-hosted Git provider integration
 	// (Forgejo / Gitea / GitLab) at the deployment level, independent of whether
 	// MULTICA_VCS_SECRET_KEY is set. It is the product boundary: the feature is
@@ -110,12 +122,15 @@ type Config struct {
 	// without a header-stripping reverse proxy in front.
 	TrustedProxies []netip.Prefix
 	// CloudURL enables the SaaS-only multica-cloud connection when set. Empty
-	// keeps self-hosted deployments explicit: Cloud endpoints return 503 instead
+	// keeps self-hosted deployments explicit: Cloud endpoints return 403 instead
 	// of attempting to dial a hard-coded private service.
 	CloudURL                 string
 	CloudTimeout             time.Duration
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
+	// MaxPreviewSizeBytes bounds text-backed attachment previews independently
+	// of upload/download limits. Zero selects the default 2 MiB limit.
+	MaxPreviewSizeBytes int64
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -135,6 +150,8 @@ type Config struct {
 	//   - LLMBaseURL       -> MULTICA_LLM_BASE_URL (OpenAI or any compatible gateway)
 	//   - LLMDefaultModel  -> MULTICA_LLM_DEFAULT_MODEL (used when a request omits `model`)
 	//   - LLMMaxRetries    -> MULTICA_LLM_MAX_RETRIES (transport retry budget)
+	//   - LLMDisableThinking -> MULTICA_LLM_DISABLE_THINKING (gateway hint to
+	//     turn model reasoning off; see llm.Config.DisableThinking)
 	LLMAPIKey       string
 	LLMBaseURL      string
 	LLMDefaultModel string
@@ -148,11 +165,20 @@ type Config struct {
 	// and cmd/server additionally fails the boot on an out-of-range value before
 	// one reaches this struct. See llm.Config.MaxRetries for the full semantics.
 	LLMMaxRetries *llm.RetryOverride
+	// LLMDisableThinking is the parsed MULTICA_LLM_DISABLE_THINKING switch.
+	// cmd/server validates the raw value before the boot continues, so a
+	// non-boolean never reaches this struct.
+	LLMDisableThinking bool
 	// ServerVersion is the build version of the running API binary (the same
 	// value main.go stamps via -X main.version and reports on /metrics).
 	// Surfaced through /api/config so self-hosted operators can confirm which
 	// server build is deployed. Empty in dev builds.
 	ServerVersion string
+	// GitExtraCACerts is the PEM of the private CAs the operator added to the
+	// backend's trust store through SSL_CERT_DIR (see internal/gitca). It is
+	// handed to daemons with the workspace repos so their git can reach a
+	// repository host the backend already trusts. Empty when none are set.
+	GitExtraCACerts []byte
 }
 
 type cloudRuntimeProxy interface {
@@ -176,6 +202,12 @@ type WorkspaceSetRefreshNotifier interface {
 // (multi-node, fans out through Redis).
 type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
+}
+
+// DaemonTaskSupplementNotifier sends a content-free wakeup for one exact run.
+// The daemon still pulls and authenticates the durable supplement over HTTP.
+type DaemonTaskSupplementNotifier interface {
+	NotifyTaskSupplementAvailable(runtimeID, taskID string)
 }
 
 // RuntimeGoneNotifier invalidates a runtime that was deleted while its daemon
@@ -236,7 +268,8 @@ type Handler struct {
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
 	// correct delivery scope for a single-node deployment.
-	DaemonPendingWork DaemonPendingWorkNotifier
+	DaemonPendingWork    DaemonPendingWorkNotifier
+	DaemonTaskSupplement DaemonTaskSupplementNotifier
 	// ModelCatalogCache serves the last known good model list for a runtime so
 	// the picker can render without waiting for a daemon round trip
 	// (stale-while-revalidate, MUL-5444). Nil-safe: every call site treats a nil
@@ -250,6 +283,7 @@ type Handler struct {
 	PATCache                     *auth.PATCache
 	DaemonTokenCache             *auth.DaemonTokenCache
 	MembershipCache              *auth.MembershipCache
+	QoderRateLimiter             WebhookRateLimiter
 	WebhookRateLimiter           WebhookRateLimiter
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
@@ -260,7 +294,7 @@ type Handler struct {
 	googleOAuthHTTPClient *http.Client
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
-	// handlers return 503 in that case so a misconfigured self-host
+	// handlers return 403 in that case so a misconfigured self-host
 	// deployment surfaces a clear error instead of silently using a
 	// zero key. Wired in cmd/server/router.go after handler.New.
 	LarkInstallations *lark.InstallationService
@@ -281,9 +315,12 @@ type Handler struct {
 	// entry points.
 	LarkAPIClient lark.APIClient
 	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
-	// the composio HTTP handlers return 503 in that case. Wired in
+	// the composio HTTP handlers return 403 in that case. Wired in
 	// cmd/server/router.go after handler.New.
 	Composio *composio.Service
+	// ConnectedApps serves agents' app calls through the MCP gateway (MUL-8516).
+	// Wired together with Composio; nil when Composio is.
+	ConnectedApps *connectedapps.Service
 	// ChannelSupervisor owns the per-installation supervisor goroutines
 	// that hold the §4.4 WS lease and drive each channel.Channel
 	// (MUL-3620 generalized the Feishu-only Hub into this channel-agnostic
@@ -309,6 +346,8 @@ type Handler struct {
 	// where the storage backend exists; main.go starts it as an independent
 	// worker goroutine. Nil when no storage backend is configured.
 	ChannelMediaReconciler *service.ChannelMediaReconciler
+	// LarkTyping owns the durable reaction cleanup worker, started under sweepCtx.
+	LarkTyping *lark.TypingIndicatorManager
 	// SlackInstall owns the bring-your-own-app Slack install lifecycle (register
 	// pasted tokens / list / revoke) and the at-rest encryption of each app's bot
 	// + app tokens (MUL-3666). Nil unless MULTICA_SLACK_SECRET_KEY is set.
@@ -329,16 +368,24 @@ type Handler struct {
 	SlackHistory ChatChannelHistoryReader
 	// WecomStore is the read/write handle over channel_installation rows scoped
 	// to channel_type='wecom'. Nil disables the wecom Web-UI endpoints (they
-	// return 503) and prevents boot from wiring the smart-bot supervisor.
+	// return 403) and prevents boot from wiring the smart-bot supervisor.
 	WecomStore *wecom.Store
 	// WecomCredentials unseals a wecom installation's smart-bot secret for the
 	// WebSocket subscribe frame. Nil disables the wecom integration.
 	WecomCredentials wecom.CredentialsResolver
+	// WecomInstall drives the scan-code install sessions (QR generate + poll).
+	// Nil unless MULTICA_WECOM_SECRET_KEY is set; Configured() is additionally
+	// false without a QR provider, in which case the endpoints return 503 but
+	// in-flight sessions still terminate cleanly.
+	WecomInstall *wecom.InstallService
+	// WecomInstallWorker drives those sessions. Built in cmd/server/router.go;
+	// main.go starts it as an independent worker.
+	WecomInstallWorker *wecom.InstallWorker
 	// WecomBindingTokens mints/redeems the user-binding tokens behind the
 	// "link your Multica account" prompt sent to first-time WeCom users
 	// (their aibot userid is a "T"-prefixed anonymized id with no relation
 	// to their real userid or email, so an explicit binding is required —
-	// see wecom/binding.go). Nil disables the redeem endpoint (returns 503)
+	// see wecom/binding.go). Nil disables the redeem endpoint (returns 403)
 	// and the OutboundReplier's binding-prompt path.
 	WecomBindingTokens WecomBindingRedeemer
 
@@ -394,7 +441,7 @@ type Handler struct {
 	LLMRegistry *llm.BusinessRegistry
 	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
 	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when
-	// MULTICA_VCS_SECRET_KEY is unset; the connect/webhook handlers return 503
+	// MULTICA_VCS_SECRET_KEY is unset; connect returns 403 and webhook returns 404
 	// in that case so a misconfigured self-host deployment surfaces a clear
 	// error rather than silently storing plaintext. Wired in
 	// cmd/server/router.go after New.
@@ -445,23 +492,27 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 
 	llmClient := llm.New(llm.Config{
-		APIKey:       cfg.LLMAPIKey,
-		BaseURL:      cfg.LLMBaseURL,
-		DefaultModel: cfg.LLMDefaultModel,
-		MaxRetries:   cfg.LLMMaxRetries,
+		APIKey:          cfg.LLMAPIKey,
+		BaseURL:         cfg.LLMBaseURL,
+		DefaultModel:    cfg.LLMDefaultModel,
+		MaxRetries:      cfg.LLMMaxRetries,
+		DisableThinking: cfg.LLMDisableThinking,
 	})
 	// Report the effective retry policy so an operator can confirm from the
 	// boot log alone what a misbehaving upstream will cost, instead of inferring
 	// it from an env var whose semantics used to be unguessable (MUL-6364).
 	// Read off the client, not off cfg, so the line cannot drift from what the
 	// SDK actually enforces. Counts and an enum only — never the key or the base
-	// URL, since a self-hosted gateway URL routinely embeds a token.
+	// URL, since a self-hosted gateway URL routinely embeds a token. The
+	// disable_thinking field rides along so the effective request shape is on
+	// the same line.
 	llmRetry := llmClient.RetryBudget()
 	slog.Info("llm retry policy",
 		"max_retries", llmRetry.MaxRetries,
 		"source", llmRetry.Source,
 		"request_timeout", llmRetry.RequestTimeout,
 		"enabled", llmClient.Enabled(),
+		"disable_thinking", llmClient.DisableThinking(),
 	)
 
 	var businessRegistry *llm.BusinessRegistry
@@ -509,6 +560,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		Storage:                      store,
 		CFSigner:                     cfSigner,
 		Analytics:                    analyticsClient,
+		QoderRateLimiter:             NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 6, Window: time.Minute}),
 		WebhookRateLimiter:           NewMemoryWebhookRateLimiter(DefaultWebhookRateLimit()),
 		WebhookIPRateLimiter:         NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
 		WebhookAbsoluteIPRateLimiter: NewMemoryWebhookAbsoluteIPRateLimiter(DefaultWebhookAbsoluteIPRateLimit()),
@@ -538,6 +590,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		slog.Warn("github: PR snapshot pipeline disabled (invalid App private key)", "err", err)
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
+	taskSvc.PRSnapshotsEnabled = h.PRRefresh.Enabled()
 
 	return h
 }
@@ -591,6 +644,13 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // fallback for anything that has not been given a translation yet.
 func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg, "code": code})
+}
+
+// writeFeatureDisabled reports a deliberate deployment or feature gate as a
+// non-retryable refusal. A disabled capability is not a transient service
+// failure: returning 503 would invite retries and pollute availability alerts.
+func writeFeatureDisabled(w http.ResponseWriter, code, msg string) {
+	writeErrorCode(w, http.StatusForbidden, code, msg)
 }
 
 func writeRevisionConflict(w http.ResponseWriter, resourceType string, resourceID pgtype.UUID, expected, actual int64) {
@@ -811,16 +871,19 @@ func (h *Handler) publishTask(eventType, workspaceID, actorType, actorID, taskID
 	})
 }
 
-// publishChat is publish() plus a ChatSessionID hint so the realtime layer
-// can route the event to the per-chat-session scope.
+// publishChat is publish() plus the chat session routing hints. actorID must
+// be the session's creator: every chat endpoint gates on creator ownership
+// before publishing, and the realtime layer delivers the event to that user
+// only.
 func (h *Handler) publishChat(eventType, workspaceID, actorType, actorID, chatSessionID string, payload any) {
 	h.Bus.Publish(events.Event{
-		Type:          eventType,
-		WorkspaceID:   workspaceID,
-		ActorType:     actorType,
-		ActorID:       actorID,
-		ChatSessionID: chatSessionID,
-		Payload:       payload,
+		Type:               eventType,
+		WorkspaceID:        workspaceID,
+		ActorType:          actorType,
+		ActorID:            actorID,
+		ChatSessionID:      chatSessionID,
+		ChatSessionOwnerID: actorID,
+		Payload:            payload,
 	})
 }
 
@@ -854,21 +917,25 @@ func requestUserID(r *http.Request) string {
 // stripped by the agent process. This is the path MUL-2600 relies on to
 // reject agent-process traffic on owner-only endpoints.
 //
-// Fallback signal (legacy CLI / member-token paths): the request MUST
-// carry both X-Agent-ID and a valid X-Task-ID, and the task must belong
-// to the claimed agent. Otherwise we fall back to "member".
+// Fallback signal: the request MUST carry both X-Agent-ID and a valid
+// X-Task-ID, and the task must belong to the claimed agent. Otherwise we
+// fall back to "member".
 //
-// X-Agent-ID alone is not trusted: any workspace member can guess or observe
-// an agent's UUID, and a member-supplied X-Agent-ID would otherwise let that
-// member impersonate the agent and bypass the private-agent gate (#2359
-// review). The daemon always pairs the two headers, so requiring both has
-// no effect on legitimate agent callers but closes the impersonation path.
+// This fallback is NOT a security boundary and must not be read as one. Both
+// ids are observable by any workspace member (GET /api/issues/{id}/task-runs
+// returns the pair), so requiring both proves nothing on its own — the older
+// comment here claimed it "closes the impersonation path", and it did not.
+// What closes it is the Auth / DaemonAuth middleware stripping both headers
+// from every client, leaving the mat_ branch as the only writer (MUL-3428).
+// The fallback survives that strip only for in-process callers and handler
+// unit tests, which set the headers directly.
 //
 // Returns ("agent", agentID) on success, ("member", userID) otherwise.
 func (h *Handler) resolveActor(r *http.Request, userID, workspaceID string) (actorType, actorID string) {
 	if r.Header.Get("X-Actor-Source") == "task_token" {
-		// Server-set header — auth middleware also forced X-Agent-ID
-		// from the token row. Trust it directly without re-querying.
+		// Server-set header — the auth middleware stripped whatever the
+		// client sent and re-stamped X-Agent-ID from the token row. Trust
+		// it directly without re-querying.
 		return "agent", r.Header.Get("X-Agent-ID")
 	}
 	agentID := r.Header.Get("X-Agent-ID")
@@ -1061,6 +1128,9 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+		if !h.requireProjectVisible(w, r, workspaceID, issue.ProjectID, http.StatusNotFound, "issue not found") {
+			return db.Issue{}, false
+		}
 		return issue, true
 	}
 
@@ -1082,6 +1152,11 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "issue not found")
+		return db.Issue{}, false
+	}
+	// MUL-8472: an issue in a private project the caller cannot see does not
+	// exist for them, on every route that loads it through here.
+	if !h.requireProjectVisible(w, r, workspaceID, issue.ProjectID, http.StatusNotFound, "issue not found") {
 		return db.Issue{}, false
 	}
 	return issue, true

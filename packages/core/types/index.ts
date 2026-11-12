@@ -1,12 +1,13 @@
 export type {
   Issue,
-  MoveIssueWorkspaceRequest,
   IssueStatus,
+  BuiltInIssueStatus,
   IssuePriority,
   IssueAssigneeType,
   IssueMetadata,
   IssueMetadataValue,
   IssueReaction,
+  MoveIssueWorkspaceRequest,
   SourceContextAttachment,
   SourceContextAuthor,
   SourceContextIssueSnapshot,
@@ -24,14 +25,35 @@ export type {
   ResolvedExecutionContext,
   ResolvedExecutionContextEntry,
   ResolvedContent,
+  IssueDuplicateOf,
+  IssueUnread,
 } from "./issue";
 export type {
   IssueStatusCategory,
   IssueStatusEntry,
+  IssueStatusIcon,
   ListIssueStatusesResponse,
   CreateIssueStatusRequest,
   UpdateIssueStatusRequest,
 } from "./issue-status";
+export type {
+  IssueWorkflow,
+  IssueWorkflowHandler,
+  IssueWorkflowHandlerType,
+  IssueWorkflowStep,
+  ListIssueWorkflowsResponse,
+  IssueWorkflowWriteRequest,
+  IssueWorkflowMappingRequirement,
+  IssueWorkflowMappingPlan,
+  IssueWorkflowDryRunResponse,
+  SetProjectWorkflowRequest,
+  IssueWorkflowStatusCount,
+  WorkflowHandoffPreview,
+  WorkflowHandoffRun,
+  NewWorkflowStatus,
+  IssueWorkflowStepInput,
+  SetWorkflowHandoffRequest,
+} from "./issue-workflow";
 export type {
   Agent,
   AgentConversationStarter,
@@ -45,6 +67,7 @@ export type {
   TaskUsage,
   TaskAttribution,
   AttributionUser,
+  TaskCancellationActor,
   TaskEvidence,
   AgentActivityBucket,
   AgentRunCount,
@@ -56,6 +79,7 @@ export type {
   RuntimeDevice,
   RuntimeProfile,
   RuntimeProtocolFamily,
+  RuntimeProfileType,
   RuntimeProfileVisibility,
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
@@ -76,6 +100,9 @@ export type {
   DisabledRuntimeSkill,
   SetAgentRuntimeSkillEnabledRequest,
   SkillFile,
+  SkillVersion,
+  SkillVersionSource,
+  SkillVersionSummary,
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
@@ -112,7 +139,7 @@ export type {
   IssueUsageSummary,
   MikaBootstrapResponse,
 } from "./agent";
-export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
+export { RUNTIME_PROFILE_PROTOCOL_FAMILIES, RUNTIME_PROFILE_RUNTIME_TYPES } from "./agent";
 export type { Workspace, WorkspaceRepo, WorkspaceMcpServer, Member, MemberRole, User, MemberWithUser, Invitation, ShareLink, ShareLinkInfo } from "./workspace";
 export type {
   PluginInstallation,
@@ -138,12 +165,12 @@ export type {
   PluginMCPTool,
   PluginTokenIssue,
 } from "./plugin";
-export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
+export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread, ArchivedInboxPage, ArchivedInboxFacets } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
-export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, CommentTriggerOutcome, CommentTriggerStatus, Reaction } from "./comment";
+export type { Comment, CommentType, CommentAuthorType, CommentSupplementReceipt, CommentSupplementStatus, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, CommentTriggerOutcome, CommentTriggerStatus, Reaction } from "./comment";
 export type { Label, LabelResourceType, CreateLabelRequest, UpdateLabelRequest, ListLabelsResponse, IssueLabelsResponse, ResourceLabelsResponse } from "./label";
-export type { IssueProperty, IssuePropertyType, ScalarIssuePropertyType, IssuePropertyOption, IssuePropertyConfig, IssuePropertyValue, IssuePropertyValues, CreatePropertyRequest, UpdatePropertyRequest, ListPropertiesResponse, IssuePropertiesResponse, IssuePropertyActorKind, IssuePropertyActorRef, PropertyFilterOp, PropertyOperatorFilter, PropertyFilterValue } from "./property";
-export { ISSUE_PROPERTY_TYPES, isKnownPropertyType, ISSUE_PROPERTY_ACTOR_KINDS, MAX_ISSUE_PROPERTY_ACTOR_VALUES, isActorPropertyType, isFilterablePropertyType, isScalarPropertyType, formatActorRef, parseActorRef, actorRefsFromValue, actorRefValuesFromValue, hasUnknownActorRef, isPropertyOperatorFilter, isKnownPropertyFilterOp, propertyFilterValueKey, PROPERTY_FILTER_OP_SYMBOLS, PROPERTY_FILTER_OPS_BY_TYPE } from "./property";
+export type { IssueProperty, IssuePropertyType, ScalarIssuePropertyType, ListIssuePropertyType, IssuePropertyOption, IssuePropertyConfig, IssuePropertyValue, IssuePropertyValues, CreatePropertyRequest, UpdatePropertyRequest, ListPropertiesResponse, IssuePropertiesResponse, IssuePropertyActorKind, IssuePropertyActorRef, PropertyFilterOp, PropertyOperatorFilter, PropertyFilterValue } from "./property";
+export { ISSUE_PROPERTY_TYPES, isKnownPropertyType, ISSUE_PROPERTY_ACTOR_KINDS, MAX_ISSUE_PROPERTY_ACTOR_VALUES, MAX_ISSUE_PROPERTY_SELECT_VALUES, MAX_ISSUE_PROPERTY_SELECT_OPTIONS, MAX_ISSUE_PROPERTY_FILTER_VALUES, isActorPropertyType, isFilterablePropertyType, isScalarPropertyType, isListPropertyType, formatActorRef, parseActorRef, actorRefsFromValue, actorRefValuesFromValue, hasUnknownActorRef, isPropertyOperatorFilter, isKnownPropertyFilterOp, propertyFilterValueKey, PROPERTY_FILTER_OP_SYMBOLS, PROPERTY_FILTER_OPS_BY_TYPE } from "./property";
 export type {
   QuickAction,
   QuickActionVisibility,
@@ -182,6 +209,7 @@ export type { Attachment } from "./attachment";
 export {
   attachmentDownloadPath,
   attachmentIdFromDownloadURL,
+  attachmentIdFromStorageURL,
   contentReferencesAttachment,
   stripChannelMediaMarkers,
 } from "./attachment-url";
@@ -211,6 +239,9 @@ export type { StorageAdapter } from "./storage";
 export type {
   Project,
   ProjectStatus,
+  ProjectVisibility,
+  ProjectMember,
+  ListProjectMembersResponse,
   ProjectPriority,
   CreateProjectRequest,
   UpdateProjectRequest,
@@ -254,11 +285,21 @@ export type {
   GitHubPullRequestMergeable,
   GitHubPullRequestMergeStateStatus,
   GitHubPullRequestState,
+  IssuePullRequestsResponse,
+  PRAutoComplete,
+  PRAutoCompleteState,
+  PullRequestLinkSource,
   ListGitHubInstallationsResponse,
   GitHubRepository,
   ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
 } from "./github";
+export type {
+  IssueEnvironment,
+  IssueEnvironmentSource,
+  IssueEnvironmentState,
+  IssueEnvironmentsResponse,
+} from "./environment";
 export type {
   VCSProvider,
   VCSConnection,
@@ -278,6 +319,29 @@ export type {
   ComposioConnection,
   ComposioConnectInitResponse,
 } from "./composio";
+export type {
+  AppAccountScope,
+  AppAccessLevel,
+  AppActionClass,
+  AppActionPolicy,
+  AppCatalogMode,
+  AppConnection,
+  AgentApp,
+  AppsOverview,
+  AppCatalogEntry,
+  AppCatalogResponse,
+  AppRule,
+  AppTool,
+  AppToolCall,
+  AppCallOutcome,
+  IssueAppCall,
+  TeamAppImpact,
+  AppRequestStatus,
+  AppRequest,
+  AppRequestList,
+  UpdateAgentAppsRequest,
+  AppRequestChangedPayload,
+} from "./connected-apps";
 export type {
   SlackInstallation,
   ListSlackInstallationsResponse,
@@ -299,6 +363,8 @@ export type {
   ListWecomInstallationsResponse,
   RegisterWecomBYORequest,
   RedeemWecomBindingTokenResponse,
+  BeginWecomInstallResponse,
+  WecomInstallStatusResponse,
 } from "./wecom";
 export type {
   TelegramInstallation,
@@ -389,3 +455,6 @@ export type {
   WorkspaceSubscriptionSeatReconcileResult,
   CreateWorkspaceSubscriptionPortalResponse,
 } from "./billing";
+export type { IssueWakeup, IssueWakeupInput, SystemWakeup, WorkspaceSystemWakeup, WakeupPreview, IssueWakeupSummaryRow, WakeupCondition, WakeupPausedReason, WakeupRun, PausedWakeup, WakeupSource } from "./issue-wakeup";
+
+export type { WorkspaceWakeup, WorkspaceWakeupPage, WorkspaceWakeupFilters, WakeupScope } from "./issue-wakeup";

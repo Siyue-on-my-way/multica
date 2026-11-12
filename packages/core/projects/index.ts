@@ -1,5 +1,13 @@
+export { canDeleteProject } from "./deletion-permissions";
 export { projectKeys, projectListOptions, projectDetailOptions } from "./queries";
-export { useCreateProject, useCreateProjectInWorkspace, useUpdateProject, useDeleteProject, useMigrateProject } from "./mutations";
+export {
+  useCreateProject,
+  useCreateProjectInWorkspace,
+  useUpdateProject,
+  useDeleteProject,
+  useMigrateProject,
+  ProjectDeletionOfflineError,
+} from "./mutations";
 export { useMoveIssueToWorkspace } from "./move-issue";
 export { useProjectDraftStore } from "./draft-store";
 export {

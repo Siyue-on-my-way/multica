@@ -35,6 +35,7 @@ const (
 	labelGate         = "gate"
 	labelOutcome      = "outcome"
 	labelStage        = "stage"
+	labelClaimPath    = "claim_path"
 	labelResumeActual = "resume_actual"
 )
 
@@ -46,6 +47,7 @@ var businessMetricLabels = map[string][]string{
 	"multica_agent_task_failed_total":                  {labelSource, labelRuntimeMode, labelFailureReason},
 	"multica_agent_task_queue_wait_seconds":            {labelSource, labelRuntimeMode},
 	"multica_agent_task_claimable_wait_seconds":        {labelSource, labelRuntimeMode},
+	"multica_agent_task_claim_decision_total":          {labelClaimPath, labelOutcome, labelReason},
 	"multica_agent_task_run_seconds":                   {labelSource, labelRuntimeMode, labelTerminalStatus},
 	"multica_agent_task_total_seconds":                 {labelSource, labelRuntimeMode, labelTerminalStatus},
 	"multica_agent_task_in_progress":                   {labelSource, labelRuntimeMode},
@@ -67,6 +69,8 @@ var businessMetricLabels = map[string][]string{
 	"multica_handoff_resume_total":                     {labelResumeActual},
 	"multica_handoff_rework_total":                     {labelAction},
 	"multica_issue_rerun_total":                        {labelAction},
+	"multica_issue_metadata_mutation_total":            {labelOp, labelResult},
+	"multica_issue_metadata_mutation_duration_seconds": {labelOp, labelResult},
 
 	// PR3 funnel / community / commercial.
 	"multica_signup_total":                             {labelSignupSource},
@@ -161,8 +165,12 @@ var (
 		"kimi":          "kimi",
 		"reasonix":      "reasonix",
 		"dim":           "dim",
+		"devin":         "devin",
 		"mcode":         "mcode",
+		"muse":          "muse",
 		"zeroclaw":      "zeroclaw",
+		"museapp":       "museapp",
+		"zcode":         "zcode",
 		"multica_agent": "multica_agent",
 		"openclaw":      "openclaw",
 		"opencode":      "opencode",

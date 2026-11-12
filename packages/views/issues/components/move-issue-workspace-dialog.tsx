@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, Loader2 } from "lucide-react";
+import { FolderOpen, Loader2 } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { ApiError } from "@multica/core/api/client";
 import type { Issue } from "@multica/core/types";

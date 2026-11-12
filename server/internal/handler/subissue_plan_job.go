@@ -48,7 +48,8 @@ func (h *Handler) CancelSubissuePlanJob(w http.ResponseWriter, r *http.Request) 
 	}
 	if job.Status == "queued" || job.Status == "running" {
 		if job.TaskID.Valid && h.TaskService != nil {
-			if _, err := h.TaskService.CancelTaskByUser(r.Context(), job.TaskID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			cancelActorType, cancelActorID := h.resolveActor(r, requestUserID(r), uuidToString(workspaceID))
+			if _, err := h.TaskService.CancelTaskByUser(r.Context(), job.TaskID, h.taskCancellationActor(r.Context(), cancelActorType, cancelActorID)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				writeError(w, http.StatusInternalServerError, "failed to cancel planning task")
 				return
 			}

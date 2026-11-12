@@ -34,7 +34,7 @@ WITH inserted AS (
     $14, $15,
     $3, $4, $5, $6, $7, $8
   )
-  RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, workspace_file_id, sha256
+  RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, workspace_file_id, sha256, width, height
 ), bumped_issue AS (
   UPDATE issue
   SET revision = revision + 1
@@ -46,7 +46,7 @@ WITH inserted AS (
   WHERE id IN (SELECT comment_id FROM inserted WHERE comment_id IS NOT NULL)
   RETURNING revision
 )
-SELECT inserted.id, inserted.workspace_id, inserted.issue_id, inserted.comment_id, inserted.uploader_type, inserted.uploader_id, inserted.filename, inserted.url, inserted.content_type, inserted.size_bytes, inserted.created_at, inserted.chat_session_id, inserted.chat_message_id, inserted.task_id, inserted.source_context_id, inserted.workspace_file_id, inserted.sha256,
+SELECT inserted.id, inserted.workspace_id, inserted.issue_id, inserted.comment_id, inserted.uploader_type, inserted.uploader_id, inserted.filename, inserted.url, inserted.content_type, inserted.size_bytes, inserted.created_at, inserted.chat_session_id, inserted.chat_message_id, inserted.task_id, inserted.source_context_id, inserted.workspace_file_id, inserted.sha256, inserted.width, inserted.height,
        COALESCE((SELECT revision FROM bumped_issue), 0)::bigint AS issue_revision,
        COALESCE((SELECT revision FROM bumped_comment), 0)::bigint AS comment_revision
 FROM inserted
@@ -88,6 +88,8 @@ type CreateAttachmentFromWorkspaceFileRow struct {
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
 	WorkspaceFileID pgtype.UUID        `json:"workspace_file_id"`
 	Sha256          string             `json:"sha256"`
+	Width           pgtype.Int4        `json:"width"`
+	Height          pgtype.Int4        `json:"height"`
 	IssueRevision   int64              `json:"issue_revision"`
 	CommentRevision int64              `json:"comment_revision"`
 }
@@ -132,6 +134,8 @@ func (q *Queries) CreateAttachmentFromWorkspaceFile(ctx context.Context, arg Cre
 		&i.SourceContextID,
 		&i.WorkspaceFileID,
 		&i.Sha256,
+		&i.Width,
+		&i.Height,
 		&i.IssueRevision,
 		&i.CommentRevision,
 	)

@@ -1,6 +1,6 @@
 "use client";
 
-import { ListTree } from "lucide-react";
+import { ListTree } from "@multica/ui/icons";
 import type { DiscussionProposal } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";

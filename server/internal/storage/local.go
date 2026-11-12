@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,11 +19,8 @@ type LocalStorage struct {
 	baseURL   string
 }
 
-// metaSuffix is the on-disk extension for the sidecar JSON file that
-// captures an upload's original filename and sniffed content type. The
-// sidecar exists so ServeFile can set Content-Disposition the way S3's
-// PutObject path already does, instead of letting the browser fall back
-// to the storage-key basename for the download filename.
+// metaSuffix identifies legacy sidecar metadata. Uploads retain this on-disk
+// format; HTTP readers use the attachment record for filenames and types.
 const metaSuffix = ".meta.json"
 
 // tempSuffix is the on-disk extension of the staging file writeAtomic renames
@@ -156,12 +153,7 @@ func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, cont
 	if err := writeAtomic(dest, bytes.NewReader(data)); err != nil {
 		return "", err
 	}
-	// Best-effort sidecar so ServeFile can restore the original filename in
-	// Content-Disposition. A failure here is logged but does not fail the
-	// upload — the file is still usable, just without the human-readable
-	// download name. Skip when there's no filename to preserve: a sidecar
-	// without a filename is dead weight, since ServeFile only reads it for
-	// that field.
+	// Retain legacy sidecar metadata without failing an otherwise valid upload.
 	if filename != "" {
 		body, _ := json.Marshal(localMeta{Filename: filename, ContentType: contentType})
 		if err := os.WriteFile(dest+metaSuffix, body, 0644); err != nil {
@@ -247,8 +239,8 @@ func tempPath(dest string) string {
 
 // isInternalLocalPath reports whether key names one of the local backend's own
 // files — the .meta.json sidecar or a .<name>.tmp staging file — rather than an
-// object. Read paths take the key straight from the request URL, so both must
-// be unreachable: a staging file would otherwise expose a half-written body.
+// object. Both must be unreachable through readers: a staging file would
+// otherwise expose a half-written body.
 // Object keys are server-generated (UUID or hash basenames) and never start
 // with a dot, so a user uploading "notes.tmp" (key "<uuid>.tmp") is unaffected.
 func isInternalLocalPath(key string) bool {
@@ -263,6 +255,30 @@ func (s *LocalStorage) GetFilePath(key string) string {
 	return filepath.Join(s.uploadDir, key)
 }
 
+// isUnder reports whether target resolves to a path inside dir (or equal to
+// it). Both inputs are passed through filepath.Clean so trailing slashes and
+// "." segments don't fool the comparison.
+func isUnder(dir, target string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(target))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func (s *LocalStorage) UploadFromReader(ctx context.Context, key string, reader io.Reader, contentType string, filename string) (string, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("local storage ReadAll: %w", err)
+	}
+
+	return s.Upload(ctx, key, data, contentType, filename)
+}
+
+// ServeFile is the compatibility implementation for the public /uploads/*
+// route (storage.LocalUploadServer). Fork note: upstream removed this route in
+// favor of signed downloads, but historical /uploads URLs stay readable while
+// the MinIO migration moves legacy objects.
 func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filename string) {
 	// The sidecar and the staging file are implementation details of the local
 	// backend; refuse to serve them directly so /uploads/<key>.meta.json (or a
@@ -301,17 +317,6 @@ func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filenam
 	http.ServeFile(w, r, filePath)
 }
 
-// isUnder reports whether target resolves to a path inside dir (or equal to
-// it). Both inputs are passed through filepath.Clean so trailing slashes and
-// "." segments don't fool the comparison.
-func isUnder(dir, target string) bool {
-	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(target))
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
 func readLocalMeta(filePath string) (localMeta, bool) {
 	body, err := os.ReadFile(filePath + metaSuffix)
 	if err != nil {
@@ -322,13 +327,4 @@ func readLocalMeta(filePath string) (localMeta, bool) {
 		return localMeta{}, false
 	}
 	return meta, true
-}
-
-func (s *LocalStorage) UploadFromReader(ctx context.Context, key string, reader io.Reader, contentType string, filename string) (string, error) {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return "", fmt.Errorf("local storage ReadAll: %w", err)
-	}
-
-	return s.Upload(ctx, key, data, contentType, filename)
 }

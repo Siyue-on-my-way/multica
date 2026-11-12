@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,6 +27,7 @@ import (
 const (
 	sandboxBinRel = "codex-home/.sandbox-bin"
 	codexTmpRel   = "codex-home/.tmp"
+	chatCacheFile = "workdir/repo/node_modules/dependency/index.js"
 )
 
 // chatGCMux serves a chat gc-check that reports the given status.
@@ -56,10 +59,7 @@ func assertKept(t *testing.T, taskDir string, rels ...string) {
 	}
 }
 
-// TestManagedArtifact_IdleActiveChatReclaimsSandboxBin is the #6782 regression
-// test: an active chat session idle past GCArtifactTTL gives the managed Codex
-// cache back, while everything the session owns survives.
-func TestManagedArtifact_IdleActiveChatReclaimsSandboxBin(t *testing.T) {
+func TestGC_IdleActiveChatReclaimsArtifacts(t *testing.T) {
 	t.Parallel()
 	chatID := "aaaaaaaa-0000-0000-0000-000000000001"
 	d := newGCTestDaemon(t, chatGCMux(chatID, "active"))
@@ -72,34 +72,161 @@ func TestManagedArtifact_IdleActiveChatReclaimsSandboxBin(t *testing.T) {
 	}
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "idle-chat", meta)
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
-	// Everything below must survive: session data, the audit trail, and a
-	// user-owned directory that merely shares the managed basename.
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
+	writeFile(t, filepath.Join(taskDir, "workdir/repo/packages/app/.turbo/cache"), 32)
+	writeFile(t, filepath.Join(taskDir, "workdir/repo/src/index.ts"), 32)
 	writeFile(t, filepath.Join(taskDir, "logs/run.log"), 32)
 	writeFile(t, filepath.Join(taskDir, "output/result.md"), 32)
 	writeFile(t, filepath.Join(taskDir, "codex-home/auth.json"), 32)
 	writeFile(t, filepath.Join(taskDir, "workdir/repo/.sandbox-bin/user-owned"), 32)
 
 	stats := &gcStats{byPattern: map[string]int{}}
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionCleanManagedArtifacts {
-		t.Fatalf("want gcActionCleanManagedArtifacts, got %d", action)
-	}
-	d.applyGCAction(taskDir, action, stats)
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), stats)
 
 	assertGone(t, taskDir, sandboxBinRel)
+	assertGone(t, taskDir, "workdir/repo/node_modules")
+	assertGone(t, taskDir, "workdir/repo/packages/app/.turbo")
 	assertKept(t, taskDir,
+		"workdir/repo/src/index.ts",
 		"logs/run.log",
 		"output/result.md",
 		"codex-home/auth.json",
 		"workdir/repo/.sandbox-bin/user-owned",
 		".gc_meta.json",
 	)
-	if stats.artifactRemoved != 1 {
-		t.Fatalf("artifact_removed = %d, want 1", stats.artifactRemoved)
+	if stats.artifactRemoved != 3 {
+		t.Fatalf("artifact_removed = %d, want 3", stats.artifactRemoved)
 	}
 	if got := stats.byPattern[managedArtifactPatternPrefix+sandboxBinRel]; got != 1 {
 		t.Fatalf("managed pattern count = %d, want 1", got)
 	}
+	if action := d.shouldCleanTaskDir(context.Background(), taskDir); action != gcActionSkip {
+		t.Fatalf("expected no second sweep after removing the caches, got %v", action)
+	}
+}
+
+func TestGC_IdleChatSweepsOncePerCompletionAndPatternSet(t *testing.T) {
+	t.Parallel()
+	chatID := "aaaaaaaa-0000-0000-0000-000000000008"
+	d := newGCTestDaemon(t, chatGCMux(chatID, "active"))
+	meta := execenv.GCMeta{
+		Kind: execenv.GCKindChat, ChatSessionID: chatID, WorkspaceID: "ws",
+		CompletedAt: time.Now().Add(-24 * time.Hour),
+	}
+	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "idle-chat", &meta)
+	ctx := context.Background()
+
+	// A successful sweep with no matches must also be remembered across restarts.
+	d.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+	restarted := New(d.cfg, d.logger)
+	restarted.client = d.client
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
+	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 32)
+	if action := restarted.shouldCleanTaskDir(ctx, taskDir); action != gcActionCleanManagedArtifacts {
+		t.Fatalf("expected only exact-cache cleanup for an already swept run, got %v", action)
+	}
+	restarted.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+	assertKept(t, taskDir, chatCacheFile)
+	assertGone(t, taskDir, sandboxBinRel)
+
+	// Equivalent pattern configurations must not cause another sweep.
+	restarted.cfg.GCArtifactPatterns = []string{".turbo", ".next", "node_modules", ".next"}
+	if action := restarted.shouldCleanTaskDir(ctx, taskDir); action != gcActionSkip {
+		t.Fatalf("expected no cleanup for an already swept run, got %v", action)
+	}
+	restarted.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+	assertKept(t, taskDir, chatCacheFile)
+
+	// A new effective pattern must be considered for this same completed run.
+	restarted.cfg.GCArtifactPatterns = append(restarted.cfg.GCArtifactPatterns, ".cache")
+	writeFile(t, filepath.Join(taskDir, "workdir/repo/.cache/data"), 32)
+	restarted.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+	assertGone(t, taskDir, "workdir/repo/.cache")
+	assertGone(t, taskDir, "workdir/repo/node_modules")
+
+	// A later completed run can create fresh artifacts under the same workdir.
+	meta.CompletedAt = meta.CompletedAt.Add(time.Hour)
+	createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "idle-chat", &meta)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
+	restarted.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+	assertGone(t, taskDir, "workdir/repo/node_modules")
+}
+
+func TestGC_IdleChatSkipsChangedCompletion(t *testing.T) {
+	t.Parallel()
+	chatID := "aaaaaaaa-0000-0000-0000-000000000009"
+	d := newGCTestDaemon(t, chatGCMux(chatID, "active"))
+	meta := execenv.GCMeta{
+		Kind: execenv.GCKindChat, ChatSessionID: chatID, WorkspaceID: "ws",
+		CompletedAt: time.Now().Add(-24 * time.Hour),
+	}
+	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "resumed-chat", &meta)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
+	ctx := context.Background()
+	action, checked := d.taskDirGCDecision(ctx, taskDir)
+	if action != gcActionCleanChatArtifacts {
+		t.Fatalf("expected initial completion to be eligible, got %v", action)
+	}
+
+	// Even if the new completion would otherwise be eligible, it was not
+	// the completion associated with the chat status request.
+	meta.CompletedAt = meta.CompletedAt.Add(time.Hour)
+	createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "resumed-chat", &meta)
+	d.applyGCActionWithChatMeta(ctx, taskDir, action, &gcStats{}, checked)
+	assertKept(t, taskDir, chatCacheFile)
+	assertGone(t, taskDir, chatArtifactSweepFile)
+	d.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+	assertGone(t, taskDir, "workdir/repo/node_modules")
+}
+
+func TestGC_IdleChatRetriesIncompleteSweep(t *testing.T) {
+	t.Parallel()
+	chatID := "aaaaaaaa-0000-0000-0000-00000000000a"
+	for _, reason := range []string{"git lookup failure", "cancelled after first removal"} {
+		t.Run(reason, func(t *testing.T) {
+			d := newGCTestDaemon(t, chatGCMux(chatID, "active"))
+			taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "idle-chat", &execenv.GCMeta{
+				Kind: execenv.GCKindChat, ChatSessionID: chatID, WorkspaceID: "ws",
+				CompletedAt: time.Now().Add(-24 * time.Hour),
+			})
+			writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			gitFile := filepath.Join(taskDir, "workdir/repo/.git")
+			if reason == "git lookup failure" {
+				writeFile(t, gitFile, 32) // malformed checkout metadata makes Git refuse the lookup
+			} else {
+				writeFile(t, filepath.Join(taskDir, "workdir/repo/.next/data"), 32)
+				d.logger = slog.New(cancelAfterArtifactRemoval{slog.NewTextHandler(io.Discard, nil), cancel})
+			}
+			d.gcWorkspace(ctx, filepath.Dir(taskDir), &gcStats{})
+			assertKept(t, taskDir, chatCacheFile)
+			assertGone(t, taskDir, chatArtifactSweepFile)
+			if reason == "git lookup failure" {
+				if err := os.Remove(gitFile); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				assertGone(t, taskDir, "workdir/repo/.next")
+			}
+
+			d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
+			assertGone(t, taskDir, "workdir/repo/node_modules")
+			assertKept(t, taskDir, chatArtifactSweepFile)
+		})
+	}
+}
+
+type cancelAfterArtifactRemoval struct {
+	slog.Handler
+	cancel context.CancelFunc
+}
+
+func (h cancelAfterArtifactRemoval) Handle(ctx context.Context, record slog.Record) error {
+	if record.Message == "gc: artifact removed" {
+		h.cancel()
+	}
+	return h.Handler.Handle(ctx, record)
 }
 
 // TestManagedArtifact_CodexTmpPluginCache pins the second managed cache:
@@ -128,11 +255,16 @@ func TestManagedArtifact_CodexTmpPluginCache(t *testing.T) {
 		writeFile(t, filepath.Join(taskDir, "codex-home/auth.json"), 32)
 
 		stats := &gcStats{byPattern: map[string]int{}}
-		action := d.shouldCleanTaskDir(context.Background(), taskDir)
-		if action != gcActionCleanManagedArtifacts {
-			t.Fatalf("want gcActionCleanManagedArtifacts, got %d", action)
+		// Upstream's chat sweep (CleanChatArtifacts) subsumes the managed
+		// reclaim: its matcher carries ManagedReclaimableArtifactSubpaths, so
+		// codex-home/.tmp goes in the same once-per-completed-run pass. The
+		// sweep revalidates the chat completion from chatMeta, so the action
+		// must be applied through the WithChatMeta variant.
+		action, chatMeta := d.taskDirGCDecision(context.Background(), taskDir)
+		if action != gcActionCleanChatArtifacts {
+			t.Fatalf("want gcActionCleanChatArtifacts, got %d", action)
 		}
-		d.applyGCAction(taskDir, action, stats)
+		d.applyGCActionWithChatMeta(context.Background(), taskDir, action, stats, chatMeta)
 
 		assertGone(t, taskDir, codexTmpRel)
 		assertKept(t, taskDir, "codex-home/auth.json", ".gc_meta.json")
@@ -187,11 +319,10 @@ func TestManagedArtifact_FreshActiveChatKeepsSandboxBin(t *testing.T) {
 		CompletedAt:   time.Now().Add(-1 * time.Hour), // well inside the 12h TTL
 	})
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
 
-	if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
-		t.Fatalf("want gcActionSkip inside the TTL, got %d", got)
-	}
-	assertKept(t, taskDir, sandboxBinRel+"/codex")
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
+	assertKept(t, taskDir, sandboxBinRel+"/codex", chatCacheFile)
 }
 
 // MULTICA_GC_ARTIFACT_TTL=0 disables the managed reclaim along with the rest of
@@ -209,11 +340,10 @@ func TestManagedArtifact_ArtifactTTLZeroDisablesFallback(t *testing.T) {
 		CompletedAt:   time.Now().Add(-365 * 24 * time.Hour),
 	})
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
 
-	if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
-		t.Fatalf("want gcActionSkip with artifact TTL disabled, got %d", got)
-	}
-	assertKept(t, taskDir, sandboxBinRel+"/codex")
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
+	assertKept(t, taskDir, sandboxBinRel+"/codex", chatCacheFile)
 }
 
 // Metadata with no completed_at stays with the per-kind legacy handling rather
@@ -229,11 +359,10 @@ func TestManagedArtifact_ZeroCompletedAtIsLeftAlone(t *testing.T) {
 		WorkspaceID:   "ws",
 	})
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
 
-	if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
-		t.Fatalf("want gcActionSkip for zero completed_at, got %d", got)
-	}
-	assertKept(t, taskDir, sandboxBinRel+"/codex")
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
+	assertKept(t, taskDir, sandboxBinRel+"/codex", chatCacheFile)
 }
 
 // The fallback is a one-way upgrade from skip: it must never weaken a decision
@@ -287,7 +416,7 @@ func TestManagedArtifact_NonTerminalAutopilotAndQuickCreate(t *testing.T) {
 		if action != gcActionCleanManagedArtifacts {
 			t.Fatalf("%s: want gcActionCleanManagedArtifacts, got %d", tc.name, action)
 		}
-		d.applyGCAction(taskDir, action, &gcStats{byPattern: map[string]int{}})
+		d.applyGCAction(context.Background(), taskDir, action, &gcStats{byPattern: map[string]int{}})
 		assertGone(t, taskDir, sandboxBinRel)
 		assertKept(t, taskDir, ".gc_meta.json")
 	}
@@ -307,16 +436,15 @@ func TestManagedArtifact_ActiveEnvRootKeepsSandboxBin(t *testing.T) {
 		CompletedAt:   time.Now().Add(-365 * 24 * time.Hour),
 	})
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
 
 	d.markActiveEnvRoot(taskDir)
-	if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
-		t.Fatalf("want gcActionSkip for an active env root, got %d", got)
-	}
-	assertKept(t, taskDir, sandboxBinRel+"/codex")
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
+	assertKept(t, taskDir, sandboxBinRel+"/codex", chatCacheFile)
 }
 
-// local_directory tasks keep their envRoot forever, so the managed cache is the
-// only thing the GC may ever take from them. The fallback must still apply.
+// Unarchived in-place chats keep their record directory and use the exact
+// managed-cache fallback.
 func TestManagedArtifact_LocalDirectoryChatReclaimsSandboxBin(t *testing.T) {
 	t.Parallel()
 	chatID := "aaaaaaaa-0000-0000-0000-000000000006"
@@ -330,25 +458,21 @@ func TestManagedArtifact_LocalDirectoryChatReclaimsSandboxBin(t *testing.T) {
 		CompletedAt:    time.Now().Add(-24 * time.Hour),
 	})
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, "output/node_modules/dependency/index.js"), 32)
 	writeFile(t, filepath.Join(taskDir, "logs/run.log"), 32)
 
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionCleanManagedArtifacts {
-		t.Fatalf("want gcActionCleanManagedArtifacts, got %d", action)
-	}
-	d.applyGCAction(taskDir, action, &gcStats{byPattern: map[string]int{}})
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
 	assertGone(t, taskDir, sandboxBinRel)
-	assertKept(t, taskDir, "logs/run.log", ".gc_meta.json")
+	assertKept(t, taskDir, "logs/run.log", "output/node_modules/dependency/index.js", ".gc_meta.json")
 }
 
-// Once the cache is gone, a long-lived active chat must stop re-deciding to
-// reclaim it. completed_at never moves again for a session that stays active,
-// so without a presence check the GC would take an env-root reservation and run
-// a removal pass every cycle, forever, for a directory with nothing to give.
-func TestManagedArtifact_SecondCycleIsANoOp(t *testing.T) {
+// Failed chat status checks allow the exact managed-cache fallback only.
+func TestManagedArtifact_ChatStatusUnavailableReclaimsOnlyManagedCache(t *testing.T) {
 	t.Parallel()
 	chatID := "aaaaaaaa-0000-0000-0000-000000000007"
-	d := newGCTestDaemon(t, chatGCMux(chatID, "active"))
+	d := newGCTestDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
 
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "repeat-chat", &execenv.GCMeta{
 		Kind:          execenv.GCKindChat,
@@ -357,13 +481,11 @@ func TestManagedArtifact_SecondCycleIsANoOp(t *testing.T) {
 		CompletedAt:   time.Now().Add(-24 * time.Hour),
 	})
 	writeFile(t, filepath.Join(taskDir, sandboxBinRel, "codex"), 4096)
+	writeFile(t, filepath.Join(taskDir, chatCacheFile), 32)
 
-	first := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if first != gcActionCleanManagedArtifacts {
-		t.Fatalf("first cycle: want gcActionCleanManagedArtifacts, got %d", first)
-	}
-	d.applyGCAction(taskDir, first, &gcStats{byPattern: map[string]int{}})
+	d.gcWorkspace(context.Background(), filepath.Dir(taskDir), &gcStats{})
 	assertGone(t, taskDir, sandboxBinRel)
+	assertKept(t, taskDir, chatCacheFile)
 
 	for cycle := 2; cycle <= 3; cycle++ {
 		if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != gcActionSkip {
@@ -464,13 +586,13 @@ func TestManagedArtifact_LegacyManagedEnvReclaimsOnlyExactCache(t *testing.T) {
 	writeFile(t, filepath.Join(taskDir, "payload.txt"), 32)
 
 	fullStats := &gcStats{byPattern: map[string]int{}}
-	if removed := d.applyGCAction(taskDir, gcActionClean, fullStats); removed != 0 {
+	if removed := d.applyGCAction(context.Background(), taskDir, gcActionClean, fullStats); removed != 0 {
 		t.Fatalf("legacy root allowed full cleanup: removed=%d", removed)
 	}
 	assertKept(t, taskDir, "payload.txt", sandboxBinRel+"/codex")
 
 	artifactStats := &gcStats{byPattern: map[string]int{}}
-	if removed := d.applyGCAction(taskDir, gcActionCleanArtifacts, artifactStats); removed != 0 {
+	if removed := d.applyGCAction(context.Background(), taskDir, gcActionCleanArtifacts, artifactStats); removed != 0 {
 		t.Fatalf("artifact cleanup reported task removal: %d", removed)
 	}
 	assertGone(t, taskDir, sandboxBinRel)
@@ -615,7 +737,7 @@ func TestManagedArtifact_DirectRemovalMatchesTreeWalk(t *testing.T) {
 			setup(t, walked)
 			setup(t, direct)
 
-			wRemoved, wBytes, wPattern := d.cleanTaskArtifactsMatching(walked, walkMatcher)
+			wRemoved, wBytes, wPattern := d.cleanTaskArtifactsMatching(context.Background(), walked, walkMatcher)
 			dRemoved, dBytes, dPattern := d.cleanManagedTaskArtifacts(direct)
 
 			if wRemoved != dRemoved || wBytes != dBytes || fmt.Sprint(wPattern) != fmt.Sprint(dPattern) {

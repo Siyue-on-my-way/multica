@@ -27,7 +27,18 @@ func insertCtxObsTask(t *testing.T, name string) (taskID, agentID string) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	agentID = createHandlerTestAgent(t, name, []byte("[]"))
+	// MUL-8154: daemon routes authorize against the task's runtime binding, so
+	// the fixture runtime must belong to the "legit-daemon" identity the
+	// request carries (owner testUserID via newDaemonTokenRequest).
+	runtimeID := dbfx.Runtime(t, name+" runtime", testutil.Cols{"daemon_id": "legit-daemon"})
+	agentID = dbfx.Agent(t, name, runtimeID, testutil.Cols{
+		"visibility":      "workspace",
+		"permission_mode": "public_to",
+		"instructions":    "",
+		"custom_env":      testutil.Raw("'{}'::jsonb"),
+		"custom_args":     testutil.Raw("'[]'::jsonb"),
+		"mcp_config":      []byte("[]"),
+	})
 
 	issueID := dbfx.Insert(t, "issue", testutil.Cols{
 		"workspace_id": testWorkspaceID,
@@ -43,9 +54,9 @@ func insertCtxObsTask(t *testing.T, name string) (taskID, agentID string) {
 
 	dbfx.QueryRow(t,
 		`INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, completed_at)
-		 VALUES ($1, (SELECT runtime_id FROM agent WHERE id = $1), $2, 'completed', 0, now())
+		 VALUES ($1, $2, $3, 'completed', 0, now())
 		 RETURNING id`,
-		agentID, issueID,
+		agentID, runtimeID, issueID,
 	).Scan(&taskID)
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 	return taskID, agentID

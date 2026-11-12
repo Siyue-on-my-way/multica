@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -25,6 +26,9 @@ type skillCreateInput struct {
 	// creator) can manage it, and it is never auto-attached to a task — a run
 	// picks it up only when its trigger text names the skill.
 	IsGlobal bool
+	// VersionSource labels the skill's first version. Empty means
+	// skillVersionSourceCreate.
+	VersionSource string
 }
 
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
@@ -71,6 +75,17 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 			return SkillWithFilesResponse{}, err
 		}
 		fileResps = append(fileResps, skillFileToResponse(sf))
+	}
+
+	source := input.VersionSource
+	if source == "" {
+		source = skillVersionSourceCreate
+	}
+	if _, err := recordSkillVersion(ctx, qtx, skill.ID, skillVersionRecord{
+		Source:    source,
+		CreatedBy: input.CreatorID,
+	}); err != nil {
+		return SkillWithFilesResponse{}, err
 	}
 
 	return SkillWithFilesResponse{
@@ -138,6 +153,9 @@ type skillOverwriteInput struct {
 	Content        string
 	Config         any
 	Files          []CreateSkillFileRequest
+	// VersionSource labels the version this overwrite records. Empty means
+	// skillVersionSourceImport.
+	VersionSource string
 }
 
 // overwriteSkillWithFiles re-imports a bundle onto an existing skill in a single
@@ -194,6 +212,10 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		return SkillWithFilesResponse{}, errSkillOverwriteNameMismatch
 	}
 
+	if err := ensureSkillVersionBaseline(ctx, qtx, existing.ID); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+
 	// Name stays unset by default (COALESCE keeps the existing name): the
 	// import-conflict overwrite targets the same-name skill, so preserving it
 	// avoids any unique-name churn. Refresh-from-source passes NewName to adopt
@@ -242,6 +264,21 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 			return SkillWithFilesResponse{}, err
 		}
 		fileResps = append(fileResps, skillFileToResponse(sf))
+	}
+
+	source := input.VersionSource
+	if source == "" {
+		source = skillVersionSourceImport
+	}
+	var versionAuthor pgtype.UUID
+	if u, err := util.ParseUUID(input.UserID); err == nil {
+		versionAuthor = u
+	}
+	if _, err := recordSkillVersion(ctx, qtx, skill.ID, skillVersionRecord{
+		Source:    source,
+		CreatedBy: versionAuthor,
+	}); err != nil {
+		return SkillWithFilesResponse{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {

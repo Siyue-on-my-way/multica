@@ -162,7 +162,7 @@ func (d *Daemon) runPlanOnlyTask(ctx context.Context, task Task, provider string
 		return TaskResult{}, fmt.Errorf("create plan-only config root: %w", err)
 	}
 
-	agentEnv := taskMulticaEnvironment(task, task.Agent.Name, token, configRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, workDir)
+	agentEnv := taskMulticaEnvironment(task, provider, task.Agent.Name, token, configRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, workDir)
 	layerCustomEnvAndHermesHome(agentEnv, sanitizeAgentEnv(task.Agent.CustomEnv), "", taskLog)
 	if selfBin, resolveErr := resolveSelfExecutable(); resolveErr == nil {
 		binDir := filepath.Dir(selfBin)
@@ -185,7 +185,7 @@ func (d *Daemon) runPlanOnlyTask(ctx context.Context, task Task, provider string
 		return TaskResult{}, fmt.Errorf("create plan-only agent backend: %w", err)
 	}
 
-	if err := d.client.StartTask(prepareCtx, task.ID); err != nil {
+	if _, err := d.client.StartTask(prepareCtx, task); err != nil {
 		return TaskResult{}, fmt.Errorf("start plan-only task failed: %w", err)
 	}
 	_ = d.client.ReportProgress(ctx, task.ID, "Generating a read-only split plan", 1, 2)

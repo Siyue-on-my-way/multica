@@ -19,7 +19,8 @@ import (
 // it owns. It atomically fails any dispatched/running tasks the server still
 // believes belong to that runtime — those are the tasks the previous daemon
 // process was running when it died — and triggers MaybeRetryFailedTask for
-// each so the user sees a fresh attempt instead of a permanently stuck row.
+// each so retry-safe work gets a fresh attempt. Started Muse executions retain
+// a cleanup fence because their workers can survive the daemon process.
 //
 // This is the targeted fix for "issue stuck at in_progress when daemon
 // restarts mid-task": the runtime heartbeat sweeper takes up to 75s + the
@@ -189,16 +190,8 @@ type RerunIssueRequest struct {
 	WithContextCompress bool `json:"with_context_compress,omitempty"`
 }
 
-// RerunIssue manually re-enqueues an agent run for the issue. By default it
-// targets the issue's current assignee (agent or squad leader); if the
-// request body carries task_id, the rerun targets the agent that ran that
-// specific past task instead. The new task is flagged force_fresh_session=true:
-// the daemon claim handler skips the (agent_id, issue_id) session-resume
-// lookup so the agent starts a clean session. A user clicking rerun has just
-// judged the prior output bad — replaying the same conversation would replay
-// the same poisoned state. (Automatic retry, by contrast, intentionally
-// inherits the session — that path handles infrastructure failures, not bad
-// output.)
+// RerunIssue preserves the issue-scoped API used by installed clients. A
+// task_id repeats that run; an empty body targets the current assignee.
 func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, id)
@@ -244,7 +237,6 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		sourceTaskID = parsed
 	}
-
 	// refresh_summary deliberately does NOT enqueue: it only refreshes the
 	// derived summary. Nothing is cancelled and no run starts — the explicit
 	// cancel endpoint owns cancellation, and the caller decides when the next
@@ -256,6 +248,73 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// new_session always attempts compression, freshness-gated exactly like
+	// the automatic assign path (issue_trigger.go); the legacy
+	// with_context_compress flag forces it even when fresh (the old "compact
+	// and rerun" behaviour). retry never compresses.
+	var compress *bool
+	if action == RerunActionNewSession {
+		compress = &req.WithContextCompress
+	} else if forceCompress {
+		force := true
+		compress = &force
+	}
+	h.rerunIssue(w, r, issue, sourceTaskID, rerunModeFor(action), action == RerunActionRetry, compress, false)
+}
+
+// RerunTaskByUser repeats an issue-linked run without requiring its issue ID.
+func (h *Handler) RerunTaskByUser(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUserID(w, r); !ok {
+		return
+	}
+	workspaceID, ok := parseUUIDOrBadRequest(w, ctxWorkspaceID(r.Context()), "workspace id")
+	if !ok {
+		return
+	}
+	taskID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "taskId"), "task id")
+	if !ok {
+		return
+	}
+	source, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{
+		ID: taskID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if !source.IssueID.Valid {
+		writeError(w, http.StatusBadRequest, "only issue-linked runs can be rerun with this endpoint")
+		return
+	}
+	issue, ok := h.loadIssueForUser(w, r, uuidToString(source.IssueID))
+	if !ok {
+		return
+	}
+	var req struct {
+		Fresh bool `json:"fresh"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	// An explicit fresh rerun goes through the upstream entry point so the
+	// service stamps context.fresh_rerun: the claim path may then never resume
+	// the source session, while a plain rerun keeps the force-fresh-session pin
+	// and lets the claim path judge resume safety itself (MUL-4869).
+	h.rerunIssue(w, r, issue, source.ID, "", false, nil, req.Fresh)
+}
+
+// rerunIssue is the shared rerun body behind RerunIssue and RerunTaskByUser.
+// rerunMode is the audit/behaviour tag persisted on the task row ("" =
+// legacy); allowResume lifts the force-fresh-session pin so a retry can
+// continue the source task's provider session when the claim path judges it
+// un-poisoned. compress, when non-nil, runs the LLM handoff compression before
+// the enqueue; the bool forces regeneration even when the stored digest is
+// fresh. freshRerun, when true, routes through the upstream RerunIssue entry
+// so context.fresh_rerun is stamped for the claim path.
+func (h *Handler) rerunIssue(w http.ResponseWriter, r *http.Request, issue db.Issue, sourceTaskID pgtype.UUID, rerunMode string, allowResume bool, compress *bool, freshRerun bool) {
 	// A manual rerun is a direct human action: attribute the new run to the
 	// rerunning member (MUL-4302 §5). Resolve the actor the same way assign/promote
 	// does; an agent A2A actor is not a human and threads an invalid actor.
@@ -277,28 +336,38 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compression runs BEFORE the enqueue so a slow LLM never delays a task
-	// that already claimed the pending slot. new_session always attempts it,
-	// freshness-gated exactly like the automatic assign path (issue_trigger.go):
-	// a stale or missing digest is rebuilt, a fresh one is kept, and an
-	// authored manual checkpoint is never touched. That makes reopen a single
-	// click — the user no longer has to run refresh_summary first and hope to
-	// remember it. The legacy with_context_compress flag still forces a
-	// regeneration even when fresh (the old "compact and rerun" behaviour).
+	// that already claimed the pending slot. A freshness-gated attempt rebuilds
+	// a stale or missing digest, keeps a fresh one, and never touches an
+	// authored manual checkpoint.
 	var compressResult *CompressHandoffResult
-	if action == RerunActionNewSession {
-		compressResult = h.compressHandoffContext(r.Context(), issue, req.WithContextCompress, "")
-	} else if forceCompress {
-		compressResult = h.compressHandoffContext(r.Context(), issue, true, "")
+	if compress != nil {
+		compressResult = h.compressHandoffContext(r.Context(), issue, *compress, "")
 	}
 
-	allowResume := action == RerunActionRetry
-	task, err := h.TaskService.RerunIssueWithMode(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, canInvoke, rerunModeFor(action), allowResume)
+	var task *db.AgentTaskQueue
+	var err error
+	if freshRerun {
+		task, err = h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, true, canInvoke)
+	} else {
+		task, err = h.TaskService.RerunIssueWithMode(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, canInvoke, rerunMode, allowResume)
+	}
 	if errors.Is(err, service.ErrRerunInvokeNotAllowed) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
 	}
+	if errors.Is(err, service.ErrIssueInTriage) {
+		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonIssueInTriage)
+		return
+	}
+	if errors.Is(err, service.ErrProjectAccessDenied) {
+		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonProjectAccessBlocked)
+		return
+	}
+	// Not a dispatch refusal: the issue may well be runnable, and only the named
+	// source is ineligible. It falls through to the 400 below with the
+	// sentinel's own sentence, like the sibling "does not belong to this issue".
 	if err != nil {
-		slog.Warn("issue rerun failed", "issue_id", id, "error", err)
+		slog.Warn("issue rerun failed", "issue_id", uuidToString(issue.ID), "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -401,7 +470,8 @@ func (h *Handler) CancelActiveTaskForIssue(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	task, err := h.TaskService.CancelTaskByUser(r.Context(), active.ID)
+	cancelActorType, cancelActorID := h.resolveActor(r, requestUserID(r), uuidToString(issue.WorkspaceID))
+	task, err := h.TaskService.CancelTaskByUser(r.Context(), active.ID, h.taskCancellationActor(r.Context(), cancelActorType, cancelActorID))
 	if err != nil {
 		slog.Warn("issue cancel failed", "issue_id", id, "task_id", uuidToString(active.ID), "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())

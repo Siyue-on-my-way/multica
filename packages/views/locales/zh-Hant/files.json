@@ -1,0 +1,36 @@
+{
+  "page": {
+    "title": "Files",
+    "tagline": "Workspace-shared files: reference them in any chat or task, delivered to the agent's machine before it starts",
+    "upload": "Upload file",
+    "total_usage": "{{count}} files · {{size}} total",
+    "search_placeholder": "Search filenames…",
+    "name": "Name",
+    "size": "Size",
+    "uploader": "Uploaded by",
+    "created_at": "Uploaded at",
+    "empty_title": "No files yet",
+    "empty_description": "Upload requirement docs, designs or datasets once, then reference them from any chat or issue",
+    "download": "Download",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "delete_confirm_title": "Delete this file?",
+    "delete_confirm_description": "\"{{filename}}\" will be removed from the server and from every chat/comment that references it. Its storage is freed immediately. This cannot be undone.",
+    "delete_confirm_action": "Delete file",
+    "cancel": "Cancel",
+    "delete_failed": "Delete failed",
+    "upload_failed": "Upload failed",
+    "fileTooLarge": "File exceeds the 100 MB limit",
+    "attached": "Attached to chat"
+  },
+  "picker": {
+    "title": "Choose from file library",
+    "description": "Files are attached without re-uploading — the agent receives a verified local copy before it starts",
+    "upload_new": "Upload new file",
+    "attach_selected": "Attach selected",
+    "selected": "{{count}} selected",
+    "empty": "The library is empty — upload a file first",
+    "search_placeholder": "Search filenames…",
+    "attach_failed": "Failed to attach file"
+  }
+}

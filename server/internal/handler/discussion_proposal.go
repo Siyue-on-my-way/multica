@@ -649,7 +649,8 @@ func (h *Handler) CreateProposalGeneration(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to create proposal generation: "+err.Error())
+		slog.Error("proposal generation create failed", "workspace_id", uuidToString(workspaceID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create proposal generation")
 		return
 	}
 	response := proposalGenerationResponseFromResult(h, r, result, workspaceID)

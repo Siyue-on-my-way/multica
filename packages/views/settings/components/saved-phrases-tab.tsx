@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Loader2, Plus, Save, Star } from "lucide-react";
+import { Archive, Loader2, Plus, Save, Star } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useCurrentWorkspace } from "@multica/core/paths";

@@ -11,7 +11,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { toast } from "sonner";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw } from "@multica/ui/icons";
 import { api } from "@multica/core/api";
 import type { ProviderPreset } from "@multica/core/types";
 
